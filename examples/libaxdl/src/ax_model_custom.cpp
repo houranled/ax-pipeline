@@ -36,7 +36,7 @@ void ax_model_custom::draw_custom(cv::Mat &image, axdl_results_t *results, float
 void ax_model_custom::draw_custom(int chn, axdl_results_t *results, float fontscale, int thickness)
 {
     /*
-     * 用户可以在这里吗，对后处理结果进行绘制。此处使用的是原生的api进行绘制，效率会比opencv快，但是具有一定的限制性
+     * 用户可以在这里，对后处理结果进行绘制。此处使用的是原生的api进行绘制，效率会比opencv快，但是具有一定的限制性
      * 注意：
      * 1、使用 m_drawers[chn] 的接口进行绘制，如果 m_drawers[chn] 不能满足绘制需求，则无法绘制
      * 2、详情可以参考 examples/libaxdl/include/ax_osd_drawer.hpp 定义的结构体
