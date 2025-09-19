@@ -1,4 +1,6 @@
 set(SampleName sample_demux_ivps_npu_rtsp)
+link_directories(${CMAKE_CURRENT_SOURCE_DIR}/../../third-party/libexif/lib)
+link_directories(${CMAKE_CURRENT_SOURCE_DIR}/../../third-party/drm/lib)
 
 file(GLOB SRC_BASE_LIST "*.cpp" "../utilities/*.c")
 

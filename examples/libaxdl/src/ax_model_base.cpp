@@ -219,6 +219,9 @@ void ax_model_base::draw_bbox(int chn, axdl_results_t *results, float fontscale,
 {
     for (int d = 0; d < results->nObjSize; d++)
     {
+	if (results->mObjects[d].prob < 0.6) 
+	    continue;
+
         if (results->mObjects[d].bHasBoxVertices)
         {
             if (results->bObjTrack)
