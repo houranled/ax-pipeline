@@ -20,17 +20,22 @@ protected:
     void draw_custom(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y) override;
     void draw_custom(int chn, axdl_results_t *results, float fontscale, int thickness) override;
     void process_texts(axdl_object_t& obj, int chn,  float fontscale) override;
+    void save_amplitude_to_csv();
     
-    float pixel_height = 0; //传感器画面真实高度 单位像素
-    float occlusion_pixel_height = 0; //画面遮挡部分的高度 单位像素        
-    float origin_x; //原始x像素坐标 单位像素
+    float pixel_height = 768; //传感器画面原始高度 单位像素
+    float occlusion_pixel_height = 30; //画面遮挡部分的高度差 单位像素
+    float origin_x=289; //原始x像素坐标 单位像素
     float f = 0.005;   //焦距 单位m  焦距5mm
     float X = 2.5f;    //扇叶左半边真实长度 单位m 
-    float tan_xita;  //tan(画面上沿视线与摄像头主视线的垂直夹角) 即 原镜头中间水平线到画面上沿的距离长度÷焦距 是个比例值
+    float tan_xita=0;  //tan(画面上沿视线与摄像头主视线的垂直夹角) 即 原镜头中间水平线到画面上沿的距离长度÷焦距 是个比例值
 
     float amplitude = 0; //当前帧检测后计算出的振幅  单位m
     float size_per_pixel = 0.0000001; //像素大小 单位 m/像素
-    float algo_width; 
+    float algo_width=1024;   //摄像头传感器宽度 单位像素
+
+private:
+    std::vector<float> amplitude_datas;  // 存储振幅数据
+    std::chrono::steady_clock::time_point last_save_time;  // 上次保存时
     
 };
 REGISTER(MT_CUSTOM_MODEL, ax_model_custom)

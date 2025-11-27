@@ -1,6 +1,9 @@
 #include "ax_model_custom.hpp"
 #include "../../utilities/sample_log.h"
 
+#include <fstream>
+#include <iomanip>
+
 int ax_model_custom::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results)
 {
     /*
@@ -55,10 +58,48 @@ void ax_model_custom::process_texts(axdl_object_t& obj, int chn,  float fontscal
      * 需要提前知道摄像头上沿视线与摄像头主视线的垂直夹角,
      * 然后通过  tanθ= △Y /△Z    →   △Y = △Z * tan仰角得出△Y, 即振幅.
     */
-    amplitude/*振幅*/= f * X * (1/((algo_width/2 - obj.bbox.x) * size_per_pixel) 
+   if (algo_width/2 == obj.bbox.x || algo_width/2 == origin_x) {
+       amplitude = 0;
+   } else {
+       amplitude/*振幅*/= f * X * (1/((algo_width/2 - obj.bbox.x) * size_per_pixel) 
         - 1/((algo_width/2 - origin_x)*size_per_pixel)) /*△Z*/ * tan_xita /*tan仰角*/;
+   }    
+
+   amplitude_datas.push_back(amplitude);
+   // 检查是否需要保存数据（每秒保存一次）
+   auto current_time = std::chrono::steady_clock::now();
+   if (std::chrono::duration_cast<std::chrono::seconds>(current_time - last_save_time).count() >= 1) {
+       save_amplitude_to_csv();
+       last_save_time = current_time;
+   }
     
     m_drawers[chn].add_text(std::string(obj.objname/*改为时间戳*/) + " " + std::to_string(amplitude),
         {obj.bbox.x, obj.bbox.y},
         {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
+        get_algo_width();
 }
+
+void ax_model_custom::save_amplitude_to_csv() {
+    std::ofstream csv_file;
+    csv_file.open("amplitude_data.csv", std::ios::app);  // 以追加模式打开文件
+    
+    // 写入时间戳
+    auto now = std::chrono::system_clock::now();
+    auto time_t = std::chrono::system_clock::to_time_t(now);
+    csv_file << std::put_time(std::localtime(&time_t), "%Y-%m-%d %H:%M:%S") << " ";
+    
+    // 写入振幅数据
+    for (size_t i = 0; i < amplitude_datas.size(); ++i) {
+        csv_file << amplitude_datas[i];
+        if (i < amplitude_datas.size() - 1) {
+            csv_file << ",";  // 不是最后一个数据时添加逗号
+        } else {
+            csv_file << std::endl;  // 最后一个数据时添加换行符
+        }
+    }
+    
+    amplitude_datas.clear();  // 清空数据
+    
+    csv_file.close();
+}
+
