@@ -4,26 +4,6 @@
 #include <fstream>
 #include <iomanip>
 
-int ax_model_custom::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results)
-{
-    /*
-     *  用户可以在这里进行任意自定义后处理代码编写
-     */
-
-    // 这是用户自定义模型的输出节点的数量
-    int nOutputSize = m_runner->get_num_outputs();
-    // 这是用户自定义模型的输出节点的信息对应的结构体指针，详情请浏览 ax_runner_tensor_t 结构体信息
-    const ax_runner_tensor_t *pOutputsInfo = m_runner->get_outputs_ptr();
-
-    // 后处理代码
-
-    // 用户可以根据后处理结果，在此处对 axdl_results_t *results 进行填充
-    results->nObjSize = 1;
-    results->mObjects[0].label = 0;
-    results->mObjects[0].prob = 1;
-    results->mObjects[0].bbox = {50, 50, 100, 100};
-    return 0;
-}
 
 void ax_model_custom::draw_custom(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y)
 {
@@ -47,7 +27,7 @@ void ax_model_custom::draw_custom(int chn, axdl_results_t *results, float fontsc
     draw_bbox(chn, results, fontscale, thickness);
 }
 
-void ax_model_custom::process_texts(axdl_object_t& obj, int chn,  float fontscale) 
+void ax_model_custom::process_texts(axdl_results_t *results, int &chn, int d, float fontscale)
 {    
     /* 计算振幅
      * 根据x =fX/Z (透视原理. XYZ是监测视点在物理世界的坐标, xy是其在画面屏幕上的坐标)可以得出:  
@@ -58,6 +38,8 @@ void ax_model_custom::process_texts(axdl_object_t& obj, int chn,  float fontscal
      * 需要提前知道摄像头上沿视线与摄像头主视线的垂直夹角,
      * 然后通过  tanθ= △Y /△Z    →   △Y = △Z * tan仰角得出△Y, 即振幅.
     */
+   auto &obj = results->mObjects[d];
+   
    if (algo_width/2 == obj.bbox.x || algo_width/2 == origin_x) {
        amplitude = 0;
    } else {
@@ -69,14 +51,18 @@ void ax_model_custom::process_texts(axdl_object_t& obj, int chn,  float fontscal
    // 检查是否需要保存数据（每秒保存一次）
    auto current_time = std::chrono::steady_clock::now();
    if (std::chrono::duration_cast<std::chrono::seconds>(current_time - last_save_time).count() >= 1) {
-       save_amplitude_to_csv();
-       last_save_time = current_time;
+        // 写入csv   
+        //   save_amplitude_to_csv();
+       
+        // 清空数据
+        amplitude_datas.clear();
+
+        last_save_time = current_time;
    }
     
     m_drawers[chn].add_text(std::string(obj.objname/*改为时间戳*/) + " " + std::to_string(amplitude),
         {obj.bbox.x, obj.bbox.y},
         {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
-        get_algo_width();
 }
 
 void ax_model_custom::save_amplitude_to_csv() {
@@ -96,9 +82,7 @@ void ax_model_custom::save_amplitude_to_csv() {
         } else {
             csv_file << std::endl;  // 最后一个数据时添加换行符
         }
-    }
-    
-    amplitude_datas.clear();  // 清空数据
+    }    
     
     csv_file.close();
 }

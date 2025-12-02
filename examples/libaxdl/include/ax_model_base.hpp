@@ -117,8 +117,8 @@ protected:
         draw_bbox(image, results, fontscale, thickness, offset_x, offset_y);
     }
 
-    // 
-    void draw_bbox(int chn, axdl_results_t *results, float fontscale, int thickness);
+    //
+    void draw_bbox(int chn, axdl_results_t *results, float fontscale, int thickness);    
     void draw_fps(int chn, axdl_results_t *results, float fontscale, int thickness);
     virtual void draw_custom(int chn, axdl_results_t *results, float fontscale, int thickness)
     {
@@ -199,7 +199,7 @@ public:
     virtual int get_algo_width() = 0;
     virtual int get_algo_height() = 0;
     virtual int inference(axdl_image_t *pstFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results) = 0;
-    virtual void process_texts(axdl_object_t& obj, int chn, float fontscale); // 多级模型用
+    virtual void process_texts(axdl_results_t *results, int &chn, int d, float fontscale); // 多级模型用
     virtual void draw_results(cv::Mat&canvas, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y)
     {
         draw_custom(canvas, results, fontscale, thickness, offset_x, offset_y);

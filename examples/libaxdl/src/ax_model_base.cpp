@@ -147,13 +147,6 @@ void ax_model_base::disbale_track()
     b_track = false;
 }
 
-void ax_model_base::process_texts(axdl_object_t& obj, int chn,  float fontscale) 
-{
-    m_drawers[chn].add_text(std::string(obj.objname) + " " + std::to_string(obj.track_id),
-        {obj.bbox.x, obj.bbox.y},
-        {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
-}
-
 
 void ax_model_base::draw_bbox(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y)
 {
@@ -254,17 +247,24 @@ void ax_model_base::draw_bbox(int chn, axdl_results_t *results, float fontscale,
             else
                 m_drawers[chn].add_rect(&results->mObjects[d].bbox, COCO_COLORS_ARGB[results->mObjects[d].label % COCO_COLORS_ARGB.size()], thickness);
 
-            if (results->bObjTrack && b_draw_obj_name)
-            {           
-                process_texts(results->mObjects[d], chn, fontscale);
-            }
-            else if (b_draw_obj_name)
-            {
-                m_drawers[chn].add_text(results->mObjects[d].objname,
-                                        {results->mObjects[d].bbox.x, results->mObjects[d].bbox.y},
-                                        {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
-            }
+            process_texts(results, chn, d, fontscale);
         }
+    }
+}
+
+void ax_model_base::process_texts(axdl_results_t *results, int &chn, int d, float fontscale)
+{
+    if (results->bObjTrack && b_draw_obj_name)
+    {
+        m_drawers[chn].add_text(std::string(results->mObjects[d].objname) + " " + std::to_string(results->mObjects[d].track_id),
+                                {results->mObjects[d].bbox.x, results->mObjects[d].bbox.y},
+                                {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
+    }
+    else if (b_draw_obj_name)
+    {
+        m_drawers[chn].add_text(results->mObjects[d].objname,
+                                {results->mObjects[d].bbox.x, results->mObjects[d].bbox.y},
+                                {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
     }
 }
 
