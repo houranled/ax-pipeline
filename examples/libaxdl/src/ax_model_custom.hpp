@@ -9,7 +9,8 @@ class ax_model_custom : public ax_model_yolov8_native
 public:
 
     ax_model_custom() 
-    {}
+    {        
+    }
 protected:
     // 在这里添加自定义属性 
 
@@ -22,13 +23,16 @@ protected:
 
     float occlusion_pixel_height = 190; //画面遮挡部分的高度差190 单位像素
     float origin_x=0.133f; //原始x像素坐标归一化形式 范围为[0,1]
-    float f = 0.004;   //焦距 单位m  焦距5mm
-    float X = 1.1f;    //扇叶左半边真实长度 单位m
+    float f = 0.0028;   //焦距 单位m  焦距28mm
+    float X = 0.25f;    //扇叶左半边真实长度 单位m
     float size_per_pixel = 0.0000001f; //摄像传感器像素大小 单位 m/像素
 
     float amplitude_now = 0; //当前帧检测后计算出的振幅  单位m
     float amp_max_positive =0; //振幅正向最大值
-    float amp_min_negative =0; //振幅负向最大值
+    float amp_max_negative =0; //振幅负向最大值
+
+    axdl_point_t max_positive_point_pos;
+    axdl_point_t max_negative_point_pos;
 
 private:
     std::vector<float> amplitude_datas;  // 存储振幅数据

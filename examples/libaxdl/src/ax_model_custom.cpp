@@ -24,6 +24,9 @@ void ax_model_custom::draw_custom(int chn, axdl_results_t *results, float fontsc
      * 1、使用 m_drawers[chn] 的接口进行绘制，如果 m_drawers[chn] 不能满足绘制需求，则无法绘制
      * 2、详情可以参考 examples/libaxdl/include/ax_osd_drawer.hpp 定义的结构体
      */
+    axdl_point_t pos = {origin_x, occlusion_pixel_height/m_drawers[chn].get_height()};
+    m_drawers[chn].add_point(&pos, {255, 0, 0, 255}, 6);
+
     draw_bbox(chn, results, fontscale, thickness);
 }
 
@@ -47,15 +50,23 @@ void ax_model_custom::process_texts(axdl_results_t *results, int &chn, int d, fl
    if (0.5f == obj.bbox.x || 0.5f == origin_x) {
        amplitude_now = 0;
    } else {
-       amplitude_now/*振幅*/= f * X /(image_width * size_per_pixel) * (1/(0.5f - obj.bbox.x)  
-        - 1/(0.5f - origin_x)) /*△Z*/ * tan_xita /*tan仰角*/;
+       amplitude_now/*振幅*/= f * X /(image_width * size_per_pixel) * (1/(0.5f - obj.bbox.x)  - 1/(0.5f - origin_x)) /*△Z*/
+         * tan_xita /*tan仰角*/;
    }
 
-   if (amplitude_now > 0) {
-        amp_max_positive = amplitude_now > amp_max_positive ? amplitude_now:amp_max_positive;
-   } else if (amplitude_now < 0) {
-        amp_min_negative = amplitude_now < amp_min_negative ? amplitude_now:amp_min_negative;
+
+   if (amplitude_now > 0 && amplitude_now > amp_max_positive) {
+        amp_max_positive =amplitude_now;
+        max_positive_point_pos = {obj.bbox.x, obj.bbox.y};
+   } else if (amplitude_now < 0 && amplitude_now < amp_max_negative) {
+        amp_max_negative =  amplitude_now;
+        max_positive_point_pos = {obj.bbox.x, obj.bbox.y};
    }
+   if (amp_max_positive)
+        m_drawers[chn].add_point(&max_positive_point_pos, {0, 127, 255, 0}, 6);
+
+   if (amp_max_negative)   
+        m_drawers[chn].add_point(&max_negative_point_pos, {0, 127, 0, 255}, 6);
 
    amplitude_datas.push_back(amplitude_now);
    // 检查是否需要保存数据（每秒保存一次）
@@ -77,9 +88,9 @@ void ax_model_custom::process_texts(axdl_results_t *results, int &chn, int d, fl
     m_drawers[chn].add_text(std::string("positive max") + ":" + std::to_string(amp_max_positive),
         {0.3, 0},
         {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
-    m_drawers[chn].add_text(std::string("negative max") + ":" + std::to_string(amp_min_negative),
+    m_drawers[chn].add_text(std::string("negative max") + ":" + std::to_string(amp_max_negative),
         {0.5, 0},
-        {UCHAR_MAX, 0, 0, 0}, fontscale, 2);    
+        {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
 }
 
 void ax_model_custom::save_amplitude_to_csv() {
