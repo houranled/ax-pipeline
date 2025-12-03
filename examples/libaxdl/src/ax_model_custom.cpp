@@ -45,13 +45,19 @@ void ax_model_custom::process_texts(axdl_results_t *results, int &chn, int d, fl
    auto tan_xita = (m_drawers[chn].get_height() - occlusion_pixel_height) /  m_drawers[chn].get_height(); 
    
    if (0.5f == obj.bbox.x || 0.5f == origin_x) {
-       amplitude = 0;
+       amplitude_now = 0;
    } else {
-       amplitude/*振幅*/= f * X * (1/((0.5f - obj.bbox.x) * image_width * size_per_pixel) 
-        - 1/((0.5f - origin_x)* image_width *size_per_pixel)) /*△Z*/ * tan_xita /*tan仰角*/;
-   }    
+       amplitude_now/*振幅*/= f * X /(image_width * size_per_pixel) * (1/(0.5f - obj.bbox.x)  
+        - 1/(0.5f - origin_x)) /*△Z*/ * tan_xita /*tan仰角*/;
+   }
 
-   amplitude_datas.push_back(amplitude);
+   if (amplitude_now > 0) {
+        amp_max_positive = amplitude_now > amp_max_positive ? amplitude_now:amp_max_positive;
+   } else if (amplitude_now < 0) {
+        amp_min_negative = amplitude_now < amp_min_negative ? amplitude_now:amp_min_negative;
+   }
+
+   amplitude_datas.push_back(amplitude_now);
    // 检查是否需要保存数据（每秒保存一次）
    auto current_time = std::chrono::steady_clock::now();
    if (std::chrono::duration_cast<std::chrono::seconds>(current_time - last_save_time).count() >= 1) {
@@ -64,9 +70,16 @@ void ax_model_custom::process_texts(axdl_results_t *results, int &chn, int d, fl
         last_save_time = current_time;
    }
     
-    m_drawers[chn].add_text(std::string(obj.objname/*改为时间戳*/) + " " + std::to_string(amplitude),
+    m_drawers[chn].add_text(std::string(obj.objname) + ":" + std::to_string(amplitude_now),
         {obj.bbox.x, obj.bbox.y},
         {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
+
+    m_drawers[chn].add_text(std::string("positive max") + ":" + std::to_string(amp_max_positive),
+        {0.3, 0},
+        {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
+    m_drawers[chn].add_text(std::string("negative max") + ":" + std::to_string(amp_min_negative),
+        {0.5, 0},
+        {UCHAR_MAX, 0, 0, 0}, fontscale, 2);    
 }
 
 void ax_model_custom::save_amplitude_to_csv() {

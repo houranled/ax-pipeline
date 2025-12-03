@@ -9,10 +9,7 @@ class ax_model_custom : public ax_model_yolov8_native
 public:
 
     ax_model_custom() 
-    {
-        //tan_xita =  (pixel_height / 2 - occlusion_pixel_height) * size_per_pixel / f;
-        //0.577f; //暂时写死为30°的tan值
-    }
+    {}
 protected:
     // 在这里添加自定义属性 
 
@@ -22,15 +19,16 @@ protected:
     void process_texts(axdl_results_t *results, int &chn, int d, float fontscale) override;
     void save_amplitude_to_csv();
     
-    float pixel_height = 768; //传感器画面原始高度 单位像素
-    float occlusion_pixel_height = 190; //画面遮挡部分的高度差190 单位像素
-    float origin_x=0.333f; //原始x像素坐标归一化形式 范围为[0,1]
-    float f = 0.005;   //焦距 单位m  焦距5mm
-    float X = 2.5f;    //扇叶左半边真实长度 单位m 
-    //float tan_xita=0;
 
-    float amplitude = 0; //当前帧检测后计算出的振幅  单位m
-    float size_per_pixel = 0.0000001; //像素大小 单位 m/像素
+    float occlusion_pixel_height = 190; //画面遮挡部分的高度差190 单位像素
+    float origin_x=0.133f; //原始x像素坐标归一化形式 范围为[0,1]
+    float f = 0.004;   //焦距 单位m  焦距5mm
+    float X = 1.1f;    //扇叶左半边真实长度 单位m
+    float size_per_pixel = 0.0000001f; //摄像传感器像素大小 单位 m/像素
+
+    float amplitude_now = 0; //当前帧检测后计算出的振幅  单位m
+    float amp_max_positive =0; //振幅正向最大值
+    float amp_min_negative =0; //振幅负向最大值
 
 private:
     std::vector<float> amplitude_datas;  // 存储振幅数据
