@@ -38,13 +38,17 @@ void ax_model_custom::process_texts(axdl_results_t *results, int &chn, int d, fl
      * 需要提前知道摄像头上沿视线与摄像头主视线的垂直夹角,
      * 然后通过  tanθ= △Y /△Z    →   △Y = △Z * tan仰角得出△Y, 即振幅.
     */
+   auto image_width = m_drawers[chn].get_width();   //用来反归一化，即像平面的像素宽度， 单位为像素
    auto &obj = results->mObjects[d];
+
+   //tan(画面上沿视线与摄像头主视线的垂直夹角) 即 原镜头中间水平线到画面上沿的距离长度÷焦距 是个比例值
+   auto tan_xita = (m_drawers[chn].get_height() - occlusion_pixel_height) /  m_drawers[chn].get_height(); 
    
-   if (algo_width/2 == obj.bbox.x || algo_width/2 == origin_x) {
+   if (0.5f == obj.bbox.x || 0.5f == origin_x) {
        amplitude = 0;
    } else {
-       amplitude/*振幅*/= f * X * (1/((algo_width/2 - obj.bbox.x) * size_per_pixel) 
-        - 1/((algo_width/2 - origin_x)*size_per_pixel)) /*△Z*/ * tan_xita /*tan仰角*/;
+       amplitude/*振幅*/= f * X * (1/((0.5f - obj.bbox.x) * image_width * size_per_pixel) 
+        - 1/((0.5f - origin_x)* image_width *size_per_pixel)) /*△Z*/ * tan_xita /*tan仰角*/;
    }    
 
    amplitude_datas.push_back(amplitude);
