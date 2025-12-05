@@ -14,6 +14,8 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 
+#include "../../custom_config.h"
+
 typedef struct
 {
     uint8_t *buffer;

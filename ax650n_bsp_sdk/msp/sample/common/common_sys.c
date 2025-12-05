@@ -17,6 +17,7 @@
 #include "common_type.h"
 #include "ax_buffer_tool.h"
 #include "ax_global_type.h"
+#include "../../../../custom_config.h"
 
 AX_U32 COMMON_SYS_AddToPlan(AX_POOL_FLOORPLAN_T *pPoolFloorPlan, AX_U32 nCfgCnt, AX_POOL_CONFIG_T *pPoolConfig)
 {

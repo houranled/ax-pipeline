@@ -5,6 +5,7 @@
 #include "net/Timer.h"
 
 #include "memory.h"
+#include "../../custom_config.h"
 
 class RtspServerWarpper
 {
@@ -58,7 +59,7 @@ public:
         // RtspServerWarpper *rtsp_wapper = (RtspServerWarpper *)rtsp_server;
         xop::MediaSessionId session_id = server->AddSession(session);
 
-        std::cout << "Play URL: " << rtsp_url << "/" << url_suffix << "   seeeisID:" << session_id << std::endl;
+        //std::cout << "Play URL: " << rtsp_url << "/" << url_suffix << "   seeeisID:" << session_id << std::endl;
         return session_id;
     }
 

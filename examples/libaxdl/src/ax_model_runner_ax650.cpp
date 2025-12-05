@@ -11,6 +11,8 @@
 
 #include "../../utilities/sample_log.h"
 
+#include "../../../custom_config.h"
+
 #define AX_CMM_ALIGN_SIZE 128
 
 const char *AX_CMM_SESSION_NAME = "ax-pipeline-npu";

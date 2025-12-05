@@ -29,6 +29,8 @@
 #include "string.h"
 #include "pthread.h"
 
+#include "../../../../custom_config.h"
+
 extern "C"
 {
     // #include "common_vdec_utils.h"

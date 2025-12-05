@@ -26,7 +26,7 @@ typedef enum
     SAMPLE_LOG_MAX
 } SAMPLE_LOG_LEVEL_E;
 
-static SAMPLE_LOG_LEVEL_E log_level = SAMPLE_LOG_INFO;
+static SAMPLE_LOG_LEVEL_E log_level = SAMPLE_LOG_MIN;
 
 #if 1
 #define MACRO_BLACK "\033[1;30;30m"
