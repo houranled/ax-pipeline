@@ -48,7 +48,21 @@ static SAMPLE_LOG_LEVEL_E log_level = SAMPLE_LOG_MIN;
 #define MACRO_END
 #endif
 
-#define ALOGE(fmt, ...) printf(MACRO_RED "[E][%32s][%4d]: " fmt MACRO_END "\n", __FUNCTION__, __LINE__, ##__VA_ARGS__)
+static FILE* log_file = nullptr;
+static void init_log_file() {
+    if (!log_file) {
+        log_file = fopen("apperr.log", "a");
+    }
+}
+
+#define ALOGE(fmt, ...) do { \
+    init_log_file(); \
+    if (log_file) { \
+        fprintf(log_file, "[E][%32s][%4d]: " fmt "\n", __FUNCTION__, __LINE__, ##__VA_ARGS__); \
+        fflush(log_file); \
+    } \
+} while(0)
+
 #define ALOGW(fmt, ...)               \
     if (log_level >= SAMPLE_LOG_WARN) \
     printf(MACRO_YELLOW "[W][%32s][%4d]: " fmt MACRO_END "\n", __FUNCTION__, __LINE__, ##__VA_ARGS__)
