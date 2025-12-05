@@ -56,7 +56,7 @@ void ax_model_custom::process_texts(axdl_results_t *results, int &chn, int d, fl
 
 
    if (amplitude_now > 0 && amplitude_now > amp_max_positive) {
-        amp_max_positive =amplitude_now;
+        amp_max_positive = amplitude_now;
         max_positive_point_pos = {obj.bbox.x, obj.bbox.y};
    } else if (amplitude_now < 0 && amplitude_now < amp_max_negative) {
         amp_max_negative =  amplitude_now;

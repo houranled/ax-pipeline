@@ -152,7 +152,7 @@ int ax_runner_ax650::init(const char *model_file)
         ALOGE("AX_ENGINE_CreateHandle 0x%x", ret);
         return ret;
     }
-    fprintf(stdout, "Engine creating handle is done.\n");
+    //fprintf(stdout, "Engine creating handle is done.\n");
     munmap(mmap_add, model_size);
 
     // 4. create context
@@ -162,7 +162,7 @@ int ax_runner_ax650::init(const char *model_file)
         ALOGE("AX_ENGINE_CreateContext 0x%x", ret);
         return ret;
     }
-    fprintf(stdout, "Engine creating context is done.\n");
+    //fprintf(stdout, "Engine creating context is done.\n");
 
     // {
     //     static int affinity = 0;
@@ -177,7 +177,7 @@ int ax_runner_ax650::init(const char *model_file)
     {
         return ret;
     }
-    fprintf(stdout, "Engine get io info is done. \n");
+    //fprintf(stdout, "Engine get io info is done. \n");
 
     m_handle->algo_width = m_handle->io_info->pInputs[0].pShape[2];
 
@@ -213,7 +213,7 @@ int ax_runner_ax650::init(const char *model_file)
     {
         return ret;
     }
-    fprintf(stdout, "Engine alloc io is done. \n");
+    //fprintf(stdout, "Engine alloc io is done. \n");
 
     for (size_t i = 0; i < m_handle->io_info->nOutputSize; i++)
     {

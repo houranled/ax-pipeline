@@ -31,8 +31,8 @@ protected:
     float amp_max_positive =0; //振幅正向最大值
     float amp_max_negative =0; //振幅负向最大值
 
-    axdl_point_t max_positive_point_pos;
-    axdl_point_t max_negative_point_pos;
+    axdl_point_t max_positive_point_pos; //正向最大振幅点坐标
+    axdl_point_t max_negative_point_pos; //反向最大振幅点坐标
 
 private:
     std::vector<float> amplitude_datas;  // 存储振幅数据
