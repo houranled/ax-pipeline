@@ -54,7 +54,6 @@ void ax_model_custom::process_texts(axdl_results_t *results, int &chn, int d, fl
          * tan_xita /*tan仰角*/;
    }
 
-
    if (amplitude_now > 0 && amplitude_now > amp_max_positive) {
         amp_max_positive = amplitude_now;
         max_positive_point_pos = {obj.bbox.x, obj.bbox.y};
@@ -72,11 +71,8 @@ void ax_model_custom::process_texts(axdl_results_t *results, int &chn, int d, fl
    // 检查是否需要保存数据（每秒保存一次）
    auto current_time = std::chrono::steady_clock::now();
    if (std::chrono::duration_cast<std::chrono::seconds>(current_time - last_save_time).count() >= 1) {
-        // 写入csv   
-        //   save_amplitude_to_csv();
-       
-        // 清空数据
-        amplitude_datas.clear();
+        export_amplitude(); // 输出振幅数据
+        amplitude_datas.clear(); // 清空数据
 
         last_save_time = current_time;
    }
@@ -93,25 +89,20 @@ void ax_model_custom::process_texts(axdl_results_t *results, int &chn, int d, fl
         {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
 }
 
-void ax_model_custom::save_amplitude_to_csv() {
-    std::ofstream csv_file;
-    csv_file.open("amplitude_data.csv", std::ios::app);  // 以追加模式打开文件
-    
+void ax_model_custom::export_amplitude() {
     // 写入时间戳
     auto now = std::chrono::system_clock::now();
     auto time_t = std::chrono::system_clock::to_time_t(now);
-    csv_file << std::put_time(std::localtime(&time_t), "%Y-%m-%d %H:%M:%S") << " ";
+    std::cout << std::put_time(std::localtime(&time_t), "%Y-%m-%d %H:%M:%S") << " ";
     
     // 写入振幅数据
     for (size_t i = 0; i < amplitude_datas.size(); ++i) {
-        csv_file << amplitude_datas[i];
+        std::cout << amplitude_datas[i];
         if (i < amplitude_datas.size() - 1) {
-            csv_file << ",";  // 不是最后一个数据时添加逗号
+            std::cout << ",";  // 不是最后一个数据时添加逗号
         } else {
-            csv_file << std::endl;  // 最后一个数据时添加换行符
+            std::cout << std::endl;  // 最后一个数据时添加换行符
         }
-    }    
-    
-    csv_file.close();
+    }
 }
 

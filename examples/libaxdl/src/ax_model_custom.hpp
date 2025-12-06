@@ -18,7 +18,7 @@ protected:
     void draw_custom(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y) override;
     void draw_custom(int chn, axdl_results_t *results, float fontscale, int thickness) override;
     void process_texts(axdl_results_t *results, int &chn, int d, float fontscale) override;
-    void save_amplitude_to_csv();
+    void export_amplitude();
     
 
     float occlusion_pixel_height = 190; //画面遮挡部分的高度差190 单位像素
