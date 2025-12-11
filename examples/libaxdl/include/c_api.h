@@ -1,5 +1,7 @@
 #ifndef _AXDL_H_
 #define _AXDL_H_
+#include <vector>
+#include <string>
 
 #ifdef __cplusplus
 extern "C"
@@ -173,6 +175,7 @@ extern "C"
     } axdl_image_t;
 
     int axdl_parse_param_init(char *json_file_path, void **pModels);
+    void get_rtsp_urls_from_json(char *json_file_path, std::vector<std::string> &rtsp_urls);
     void axdl_deinit(void **pModels);
 
     /* set it like this in json file:

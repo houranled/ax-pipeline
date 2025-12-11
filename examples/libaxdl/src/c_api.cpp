@@ -80,6 +80,28 @@ int axdl_parse_param_init(char *json_file_path, void **pModels)
     return ret;
 }
 
+void get_rtsp_urls_from_json(char *json_file_path, std::vector<std::string> &rtsp_urls) {
+    std::ifstream f(json_file_path);
+    if (f.fail()) {
+        ALOGE("Failed to open config file: %s", json_file_path);
+        return ;
+    }
+
+    try {
+        auto jsondata = nlohmann::json::parse(f);
+
+        if (jsondata.contains("RTSP_LIST") && jsondata["RTSP_LIST"].is_array()) {
+            for (const auto& url : jsondata["RTSP_LIST"]) {
+                rtsp_urls.push_back(url.get<std::string>());
+            }
+        }
+    } catch (const nlohmann::json::exception& e) {
+        ALOGE("JSON parse error: %s", e.what());
+    }
+
+    f.close();
+}
+
 void axdl_deinit(void **pModels)
 {
     if (pModels && (ax_model_handle_t *)(*pModels) && ((ax_model_handle_t *)(*pModels))->model.get())

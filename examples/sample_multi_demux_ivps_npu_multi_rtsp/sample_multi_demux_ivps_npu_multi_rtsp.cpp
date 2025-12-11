@@ -196,9 +196,12 @@ int main(int argc, char *argv[])
 
     signal(SIGPIPE, SIG_IGN);
     signal(SIGINT, __sigExit);
-    char config_file[256];
+    char config_file[256] = "/wt_tech/app/ax-pipeline/config/wt_rtsp.json"; //默认json配置文件
 
     ALOGN("sample begin\n\n");
+
+    // 从JSON文件读取RTSP URL列表
+    get_rtsp_urls_from_json(config_file, rtsp_urls);
 
     while ((ch = getopt(argc, argv, "p:f:r:h")) != -1)
     {
