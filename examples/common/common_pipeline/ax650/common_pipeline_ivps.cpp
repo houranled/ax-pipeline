@@ -51,7 +51,7 @@ void *_ivps_get_frame_thread(void *arg)
     {
         AX_VIDEO_FRAME_T tVideoFrame = {0};
 
-        AX_S32 ret = AX_IVPS_GetChnFrame(pipe->m_ivps_attr.n_ivps_grp, 0, &tVideoFrame, nMilliSec);
+        AX_S32 ret = AX_IVPS_GetChnFrame(pipe->m_ivps_attr.n_ivps_grp, 0, &tVideoFrame, nMilliSec);//拿到每一帧
 
         if (0 != ret)
         {
@@ -131,7 +131,7 @@ void *_ivps_get_frame_thread(void *arg)
             buf.p_vir = img_data;
             buf.p_phy = tVideoFrame.u64PhyAddr[0];
             buf.p_pipe = pipe;
-            pipe->output_func(&buf);
+            pipe->output_func(&buf); //对每一帧进行推理等处理
         }
 
         ret = AX_IVPS_ReleaseChnFrame(pipe->m_ivps_attr.n_ivps_grp, 0, &tVideoFrame);

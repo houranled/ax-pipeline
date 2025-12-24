@@ -25,19 +25,19 @@ void ax_model_custom::draw_custom(int chn, axdl_results_t *results, float fontsc
      * 2、详情可以参考 examples/libaxdl/include/ax_osd_drawer.hpp 定义的结构体
      */
     axdl_point_t pos = {origin_x, occlusion_pixel_height/m_drawers[chn].get_height()};
-    m_drawers[chn].add_point(&pos, {255, 0, 0, 255}, 6);
+    m_drawers[chn].add_point(&pos, {255, 0, 0, 255}, 6);  //添加初始位置坐标
 
     draw_bbox(chn, results, fontscale, thickness);
 }
 
 void ax_model_custom::process_texts(axdl_results_t *results, int &chn, int d, float fontscale)
-{    
+{
     /* 计算振幅
-     * 根据x =fX/Z (透视原理. XYZ是监测视点在物理世界的坐标, xy是其在画面屏幕上的坐标)可以得出:  
+     * 根据x =fX/Z (透视原理. XYZ是监测视点在物理世界的坐标, xy是其在画面屏幕上的坐标)可以得出:
      * 1、 x' = f*X/Z'  →  Z' = fX/x'       # 第0帧的景深 = 焦距 * 扇叶宽度 / 帧0识别框左上角横坐标
      * 2、 x'' = f*X/Z'' → Z'' = fX/x''      # 第n帧的景深 = 焦距 * 扇叶宽度 / 帧n识别框左上角横坐标
      * 已知x' x'' f  X  ,求出了 Z' 和 Z''两个景深.
-     * 然后计算景深差 △Z = Z'' - Z'   # 景深差 = 第n帧的景深 - 第0帧的景深    
+     * 然后计算景深差 △Z = Z'' - Z'   # 景深差 = 第n帧的景深 - 第0帧的景深
      * 需要提前知道摄像头上沿视线与摄像头主视线的垂直夹角,
      * 然后通过  tanθ= △Y /△Z    →   △Y = △Z * tan仰角得出△Y, 即振幅.
     */
@@ -45,8 +45,8 @@ void ax_model_custom::process_texts(axdl_results_t *results, int &chn, int d, fl
    auto &obj = results->mObjects[d];
 
    //tan(画面上沿视线与摄像头主视线的垂直夹角) 即 原镜头中间水平线到画面上沿的距离长度÷焦距 是个比例值
-   auto tan_xita = (m_drawers[chn].get_height() - occlusion_pixel_height) /  m_drawers[chn].get_height(); 
-   
+   auto tan_xita = (m_drawers[chn].get_height() - occlusion_pixel_height) /  m_drawers[chn].get_height();
+
    if (0.5f == obj.bbox.x || 0.5f == origin_x) {
        amplitude_now = 0;
    } else {
@@ -64,7 +64,7 @@ void ax_model_custom::process_texts(axdl_results_t *results, int &chn, int d, fl
    if (amp_max_positive)
         m_drawers[chn].add_point(&max_positive_point_pos, {0, 127, 255, 0}, 6);
 
-   if (amp_max_negative)   
+   if (amp_max_negative)
         m_drawers[chn].add_point(&max_negative_point_pos, {0, 127, 0, 255}, 6);
 
    amplitude_datas.push_back(amplitude_now);
@@ -76,7 +76,7 @@ void ax_model_custom::process_texts(axdl_results_t *results, int &chn, int d, fl
 
         last_save_time = current_time;
    }
-    
+
     m_drawers[chn].add_text(std::string(obj.objname) + ":" + std::to_string(amplitude_now),
         {obj.bbox.x, obj.bbox.y},
         {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
@@ -94,7 +94,7 @@ void ax_model_custom::export_amplitude() {
     auto now = std::chrono::system_clock::now();
     auto time_t = std::chrono::system_clock::to_time_t(now);
     std::cout << std::put_time(std::localtime(&time_t), "%Y-%m-%d %H:%M:%S") << " ";
-    
+
     // 写入振幅数据
     for (size_t i = 0; i < amplitude_datas.size(); ++i) {
         std::cout << amplitude_datas[i];

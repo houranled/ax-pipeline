@@ -1117,7 +1117,7 @@ int ax_model_yolov8_native::post_process(axdl_image_t *pstFrame, axdl_bbox_t *cr
 
     for (int32_t i = 0; i < m_runner->get_num_outputs(); ++i)
     {
-        auto ptr = (float *)m_runner->get_output(i).pVirAddr;
+        auto ptr = (float *)m_runner->get_output(i).pVirAddr; //从npu获取结果
         detection::generate_proposals_yolov8_native(STRIDES[i], ptr, PROB_THRESHOLD, proposals, get_algo_width(), get_algo_height(), CLASS_NUM);
     }
 

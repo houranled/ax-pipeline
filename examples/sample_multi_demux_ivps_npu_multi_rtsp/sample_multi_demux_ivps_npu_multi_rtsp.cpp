@@ -389,7 +389,7 @@ int main(int argc, char *argv[])
     for (size_t i = 0; i < vpipelines.size(); i++)
     {
         auto &pipelines = vpipelines[i];
-        for (size_t j = 0; j < pipelines.size(); j++)
+        for (size_t j = 0; j < pipelines.size(); j++) //次数j共两次: j = 0和1
         {
             s32Ret = create_pipeline(&pipelines[j]);
             if (s32Ret != 0)
@@ -405,7 +405,7 @@ int main(int argc, char *argv[])
 
         if (g_sample.gModels[i].pipes_need_osd.size() && g_sample.gModels[i].bRunJoint)
         {
-            g_sample.gModels[i].osd_helper.Start(g_sample.gModels[i].gModel, g_sample.gModels[i].pipes_need_osd);
+            g_sample.gModels[i].osd_helper.Start(g_sample.gModels[i].gModel, g_sample.gModels[i].pipes_need_osd);  // 绘制线程启动
             // pthread_create(&g_sample.osd_tid[i], NULL, osd_funcs[i], NULL);
             // g_sample.osd_target_map[pipelines[1].pipeid] = g_sample.gModels[i].pipes_need_osd[0]->pipeid;
             g_sample.osd_target_map[pipelines[1].pipeid] = &g_sample.gModels[i];

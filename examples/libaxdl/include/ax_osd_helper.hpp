@@ -245,7 +245,7 @@ private:
                         tDisp.arrDisp[0].uDisp.tOSD.u64PhyAddr = 0;
                         tDisp.arrDisp[0].uDisp.tOSD.pBitmap = img_overlay.data;
 
-                        int ret = AX_IVPS_RGN_Update(osd_pipe->m_ivps_attr.n_osd_rgn_chn[0], &tDisp);
+                        int ret = AX_IVPS_RGN_Update(osd_pipe->m_ivps_attr.n_osd_rgn_chn[0], &tDisp); //这个是OSD更新，触发视频帧从IVPS流转到VENC
                         if (0 != ret)
                         {
                             static int cnt = 0;

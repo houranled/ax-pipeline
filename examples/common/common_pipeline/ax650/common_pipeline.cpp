@@ -346,7 +346,7 @@ int create_pipeline(pipeline_t *pipe)
         dstMod.enModId = AX_ID_VENC;
         dstMod.s32GrpId = 0;
         dstMod.s32ChnId = pipe->m_venc_attr.n_venc_chn;
-        AX_SYS_Link(&srcMod, &dstMod);
+        AX_SYS_Link(&srcMod, &dstMod); //这里表示将硬件VENC和IVPS直连， 前者解码完的数据会自动直接传入到IVPS中，无需cpu指令发起操作。
         // }
 
         // pipeline_handle.b_init_venc++;
