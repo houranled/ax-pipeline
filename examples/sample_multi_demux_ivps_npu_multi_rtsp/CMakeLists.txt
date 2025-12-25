@@ -15,5 +15,13 @@ list(APPEND SRC_BASE_LIST
 add_executable(${SampleName}
     ${SRC_BASE_LIST}
 )
+
+target_include_directories(${SampleName} PRIVATE
+	../../../camera
+	${CMAKE_SOURCE_DIR}/camera
+)
+
+target_link_libraries(${SampleName} PRIVATE camera)
+
 ax_include_link(${SampleName} "demux")
 install(TARGETS ${SampleName} DESTINATION bin)

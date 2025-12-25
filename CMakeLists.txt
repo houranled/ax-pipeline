@@ -99,6 +99,8 @@ project(ax_pipeline)
 set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -Ofast -Wall -g -fPIC -Wno-unused-function -Wno-unused-label")
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Ofast -Wall -g -fPIC -Wno-unused-function -Wno-unused-label")
 
+add_subdirectory(camera)
+add_subdirectory(alarm)
 add_subdirectory(third-party/RTSP)
 add_subdirectory(third-party/RtspServer)    
 add_subdirectory(third-party/ByteTrack)

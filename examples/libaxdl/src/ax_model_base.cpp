@@ -29,6 +29,7 @@ std::map<std::string, int> ModelTypeTable = {
 
 #include "ax_model_runner_ax650.hpp"
 #include "ax_model_base.hpp"
+#include "ax_model_damage.hpp"
 
 template <typename T>
 void update_val(nlohmann::json &jsondata, const char *key, T *val)
