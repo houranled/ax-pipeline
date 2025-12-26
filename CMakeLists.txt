@@ -101,6 +101,12 @@ set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Ofast -Wall -g -fPIC -W
 
 add_subdirectory(camera)
 add_subdirectory(alarm)
+
+set(CURL_SOURCE_DIR "${CMAKE_SOURCE_DIR}/3rdparty/curl-8.17.0")
+add_subdirectory(${CURL_SOURCE_DIR} ${CMAKE_BINARY_DIR}/curl)
+set(BUILD_CURL_EXE OFF)
+set(ENABLE_MANUAL OFF)
+
 add_subdirectory(third-party/RTSP)
 add_subdirectory(third-party/RtspServer)    
 add_subdirectory(third-party/ByteTrack)

@@ -181,8 +181,7 @@ static AX_VOID PrintHelp(char *testApp)
 
 int main(int argc, char *argv[])
 {
-    std::list<CameraController*> cameras; // 创建一个空的相机控制器列表
-
+    CameraController cc;
     if (SAMPLE_Check_Bsp_Version() != 0)
     {
         return -1;
@@ -262,10 +261,9 @@ int main(int argc, char *argv[])
 
     /* 启动所有摄像机的控制器 */
     for ( auto &rtsp_url : rtsp_urls ) {
-        CameraController *camera = new CameraController();
-        camera->start();
-        cameras.push_back(camera); // 将相机控制器添加到列表中
+        cc.add_camera();
     }
+    cc.start();
 
 #ifdef AXERA_TARGET_CHIP_AX620
     COMMON_SYS_POOL_CFG_T poolcfg[] = {
