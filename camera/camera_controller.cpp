@@ -2,6 +2,7 @@
 #include <iostream>
 #include <curl/curl.h>
 #include <curl/easy.h>
+#include <modbus.h>
 
 CameraController::CameraController()
 {
@@ -129,6 +130,30 @@ Camera::Camera()
     curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 5L);  // 5秒超时
     curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 1L);  // 跟随重定向
 
+
+    { // 初始化 Modbus 连接
+        modbus_ctx = modbus_new_tcp(ip.c_str(), 502); // 默认 Modbus TCP 端口为 502
+        if (!modbus_ctx) {
+            std::cerr << "Failed to create Modbus context: " << modbus_strerror(errno) << std::endl;
+            // 可以选择抛出异常或设置错误标志
+        } else {
+            // 设置 Modbus 超时时间
+            uint32_t to_sec = 1;    // 超时秒数
+            uint32_t to_usec = 0;   // 超时微秒数
+            modbus_set_response_timeout(modbus_ctx, to_sec, to_usec);
+
+            // 连接到 Modbus 服务器
+            if (modbus_connect(modbus_ctx) == -1) {
+                std::cerr << "Modbus connection failed: " << modbus_strerror(errno) << std::endl;
+                modbus_free(modbus_ctx);
+                modbus_ctx = nullptr;
+            } else {
+                // 设置 Modbus 从站 ID（根据实际情况调整）
+                modbus_set_slave(modbus_ctx, 1);
+            }
+        }
+    }
+
     position_thread = std::thread(&Camera::camera_position_switch_loop, this);
 }
 
@@ -191,9 +216,27 @@ int Camera::camera_position_switch_loop()  // TODO
     return 0;
 }
 
-int Camera::set_rotation(int horizontal, int vertical) // TODO
+int Camera::set_rotation(int horizontal, int vertical)
 {
-    //调用modbus库设置云台姿态
+    if (modbus_ctx == nullptr)
+        return -1;
+
+    // 准备要写入的寄存器值
+    uint16_t regs[2];
+    regs[0] = static_cast<uint16_t>(horizontal);  // 水平角度
+    regs[1] = static_cast<uint16_t>(vertical);    // 垂直角度
+
+    // 写入保持寄存器（假设水平角度寄存器地址为 100，垂直角度寄存器地址为 101）
+    int rc = modbus_write_registers(modbus_ctx, 100, 2, regs);
+
+    if (rc == -1) {
+        std::cerr << "Failed to write rotation registers: " << modbus_strerror(errno) << std::endl;
+        return -1;
+    }
+
+    // 更新内部状态
+    panpos = horizontal;
+    tiltpos = vertical;
 
     return 0;
 }

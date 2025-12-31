@@ -28,6 +28,7 @@ private:
 
     std::thread position_thread;
     CURL *curl_handle;  // 持久化的curl句柄
+    modbus_t *modbus_ctx = nullptr;
 
     // a function for executing in new thread to switch the camera state(position...)
     int camera_position_switch_loop();
