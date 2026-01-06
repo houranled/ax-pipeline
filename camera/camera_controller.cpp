@@ -2,12 +2,17 @@
 #include <iostream>
 #include <curl/curl.h>
 #include <curl/easy.h>
-#include <modbus.h>
+#include "../examples/utilities/json.hpp"
+#include <fstream>
+
+
 
 CameraController::CameraController()
 {
     // 初始化libcurl全局环境
     CURLcode res = curl_global_init(CURL_GLOBAL_ALL);
+    //根据json配置文件创建对应的相机实例
+    load_config_from_file(CONFIG_FILE_PATH);
 }
 
 CameraController::~CameraController()
@@ -16,86 +21,158 @@ CameraController::~CameraController()
     curl_global_cleanup();
 }
 
-/* TODO 命令队列（std::queue）
-* 互斥锁保护队列访问
-* 条件变量用于线程同步
+/*
 * 专用的工作线程处理命令执行
+* 通过标准输入与输出进行对上层应用的数据传输
 */
 int CameraController::receive_input_loop() {
-    std::string input;
-
     while (running) {
-        // 读取用户输入
-        std::getline(std::cin, input);
+        std::string json_str;
 
-        // 解析输入命令: id 命令 参数
-        int camera_id = -1;  // 默认为-1，表示未指定ID
+        // 读取标准输入，接收命令以解析
+        std::string input;
+        int brace_count = 0;
+        while (std::getline(std::cin, input)) {
+            for (char c : input) {
+                if (c == '{') brace_count++;
+                if (c == '}') brace_count--;
+            }
+            json_str += input + "\n";
+            if (brace_count == 0) break; // JSON 闭合
+        }
+
+        // 解析JSON字符串(处理JSON命令)
+        nlohmann::json json = nlohmann::json::parse(json_str);
+        nlohmann::json response;
+
         std::string command;
         std::string params;
 
-        // 尝试解析命令中的ID
-        size_t space_pos = input.find(' ');
-        if (space_pos != std::string::npos) {
-            std::string id_str = input.substr(0, space_pos);
-            // 检查是否是数字ID
-            bool is_id = true;
-            for (char c : id_str) {
-                if (!isdigit(c)) {
-                    is_id = false;
-                    break;
+        // 处理JSON命令
+        int camera_id = json.value("id", -1);
+        Camera* camera = NULL;
+        if (camera_id > 0) {
+            camera = cameras[camera_id];
+        }
+
+        std::string action = json.value("action", "");
+        if (action == "get") {
+            if (camera_id > 0 && camera != NULL) {
+                response["id"] = camera_id;
+                response["rotationx"] = camera->rotation_x;
+                response["rotationy"] = camera->rotation_y;
+                response["zoom"] = camera->zoom;
+                response["focus"] = camera->focus;
+                response["brightness"] = camera->brightness;
+            } else if (camera_id > 0) {
+                response["error"] = "Camera not found";
+                response["status"] = "error";
+            } else { // camera_id <= 0 所有摄像机信息组成json
+                int index = 0;
+                for (auto& pair : cameras) {
+                    auto& camera = pair.second;
+                    //获取每个相机的内部状态信息
+                    response[index]["id"] = camera->id;
+                    response[index]["rotationx"] = camera->rotation_x;
+                    response[index]["rotationy"] = camera->rotation_y;
+                    response[index]["zoom"] = camera->zoom;
+                    response[index]["focus"] = camera->focus;
+                    response[index]["brightness"] = camera->brightness;
                 }
             }
+        } else if (action == "set" || action == "add") {
+            if (camera_id > 0 && camera != NULL) {
+                int x, y, zoom, brightness;
+                if (action == "set") {
+                    x = json.value("rotatex", 0);
+                    y = json.value("rotatey", 0);
+                    zoom = json.value("zoom", 0);
+                    brightness = json.value("brightness", 0);
+                } else { //add
+                    x = camera->rotation_x + json.value("rotatex", 0);
+                    y = camera->rotation_y + json.value("rotatey", 0);
+                    zoom = camera->zoom + json.value("zoom", 0);
+                    brightness = camera->brightness + json.value("brightness", 0);
+                }
+                camera->set_ptz(x, y);
+                camera->set_zoom(zoom);
+                camera->set_brighten(brightness);
 
-            if (is_id) {
-                camera_id = std::stoi(id_str);
-                command = input.substr(space_pos + 1);
-            } else {
-                command = input;
+                response["status"] = "success";
+            } else  {
+                response["status"] = "fail";
             }
-        } else {
-            command = input;
+        } else { //unknown action
+            response["status"] = "fail";
+            response["message"] = "unknown action";
         }
-
-        // 根据命令执行操作
-        if (command == "pause") {
-            cameras[camera_id]->pause();
-        } else if (command == "resume") {
-            cameras[camera_id]->resume(); //恢复运行
-        } else if (command.find("rotate") == 0) {
-            // 解析旋转命令
-            // 例如: "rotate 90 45" 表示水平旋转90度，垂直旋转45度
-            int horizontal, vertical;
-            if (sscanf(command.c_str(), "rotate %d %d", &horizontal, &vertical) == 2) {
-                cameras[camera_id]->set_rotation(horizontal, vertical);
-            } else {
-                //std::cout << "Invalid rotate command. Usage: [id] rotate <horizontal> <vertical>" << std::endl;
-            }
-        } else if (command.find("zoom") == 0) {
-            // 解析缩放命令
-            // 例如: "zoom 2" 表示缩放级别为2
-            int zoom;
-            if (sscanf(command.c_str(), "zoom %d", &zoom) == 1) {
-                cameras[camera_id]->set_zoom(zoom);
-            } else {
-                //std::cout << "Invalid zoom command. Usage: [id] zoom <level>" << std::endl;
-            }
-        } else if (command.find("status") == 0) {
-            // 获取并显示摄像头状态
-            int rotation, zoom, horizontal, vertical;
-            cameras[camera_id]->get_status(&rotation, &zoom, &horizontal, &vertical);
-            //通过标准输出向上层应用传输信息
-        }
+        std::cout << response.dump() << std::endl;
     }
 
     return 0;
 }
 
-int CameraController::add_camera()
+int CameraController::load_config_from_file(const std::string& config_file_path)
 {
-    running = true; // 标记控制器为运行状态
-    Camera* camera = new Camera(); // 创建一个新的相机对象
-    cameras.push_back(camera); // 将相机对象添加到相机控制器列表中
-    return 0;
+    try {
+        // 读取配置文件
+        std::ifstream config_file(config_file_path);
+        if (!config_file.is_open()) {
+            std::cerr << "Failed to open config file: " << config_file_path << std::endl;
+            return -1;
+        }
+
+        // 解析 JSON
+        nlohmann::json config;
+        config_file >> config;
+
+        // 遍历相机列表
+        if (config.contains("chl_list") && config["chl_list"].is_array()) {
+            for (const auto& camera_config : config["chl_list"]) {
+                // 创建相机实例
+                Camera* camera = new Camera();
+
+                // 设置相机基本信息
+                camera->id = camera_config["id"];
+
+                if (camera_config.contains("ip")) {
+                    camera->ip = camera_config["ip"];
+                }
+
+                // 设置 PTZ IP
+                if (camera_config.contains("ptz_ip")) {
+                    camera->ptz_ip = camera_config["ptz_ip"];
+                }
+
+                // 加载点位列表
+                if (camera_config.contains("points") && camera_config["points"].is_array()) {
+                    std::vector<Camera::PresetPosition> preset_positions;
+                    for (const auto& point : camera_config["points"]) {
+                        Camera::PresetPosition pos;
+                        pos.id = point["id"];
+                        pos.name = point["name"];
+                        pos.distance = point["dist"];
+                        pos.duration = point["duration"];
+                        pos.rotation_x = point["rotatex"];
+                        pos.rotation_y = point["rotatey"];
+                        pos.zoom = point["zoom"];
+                        pos.focus = point["focus"];
+                        pos.brightness = point["brightness"];
+                        camera->add_preset_position(pos); // 设置点位信息
+                    }
+                }
+                camera->start();
+
+                // 将相机添加到控制器
+                cameras[camera->id] = camera;
+            }
+        }
+
+        return 0;
+    } catch (const std::exception& e) {
+        std::cerr << "Error loading config: " << e.what() << std::endl;
+        return -1;
+    }
 }
 
 int CameraController::start()
@@ -110,14 +187,15 @@ int CameraController::start()
 
 int CameraController::stop()
 {
+    running = false; // 标记控制器为停止状态
 
-    return 0;
-}
-
-
-int CameraController::get_status(int *rotation, int *zoom, int *horizontal, int *vertical) // TODO
-{
-    // TODO
+    if (input_thread.joinable()) {
+        input_thread.join(); // 等待输入线程结束
+    }
+    // 停止所有摄像机
+    for (auto camera : cameras) {
+        camera.second->pause(); // 停止相机
+    }
     return 0;
 }
 
@@ -131,16 +209,15 @@ Camera::Camera()
     curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 1L);  // 跟随重定向
 
 
-    { // 初始化 Modbus 连接
-        modbus_ctx = modbus_new_tcp(ip.c_str(), 502); // 默认 Modbus TCP 端口为 502
+    {   // 初始化Modbus 连接
+        modbus_ctx = modbus_new_tcp(ip.c_str(), 502); // 默认Modbus TCP 端口为 502
         if (!modbus_ctx) {
             std::cerr << "Failed to create Modbus context: " << modbus_strerror(errno) << std::endl;
             // 可以选择抛出异常或设置错误标志
         } else {
             // 设置 Modbus 超时时间
-            uint32_t to_sec = 1;    // 超时秒数
-            uint32_t to_usec = 0;   // 超时微秒数
-            modbus_set_response_timeout(modbus_ctx, to_sec, to_usec);
+            uint32_t to_sec = 5; // 超时秒数
+            modbus_set_response_timeout(modbus_ctx, to_sec, 0);
 
             // 连接到 Modbus 服务器
             if (modbus_connect(modbus_ctx) == -1) {
@@ -154,12 +231,6 @@ Camera::Camera()
         }
     }
 
-    position_thread = std::thread(&Camera::camera_position_switch_loop, this);
-}
-
-Camera::Camera(std::string ip)
-{
-    this->ip = ip;
 }
 
 Camera::~Camera()
@@ -167,56 +238,98 @@ Camera::~Camera()
     curl_easy_cleanup(curl_handle);
 }
 
+int Camera::start()
+{
+    position_thread = std::thread(&Camera::position_patrol_loop, this);
+    return 0;
+}
+
 int Camera::pause()
 {
+    running = false;
+
     if (position_thread.joinable()) {
         position_thread.join();
     }
     return 0;
 }
 
-int Camera::resume()
-{
-    position_thread = std::thread(&Camera::camera_position_switch_loop, this);
-    return 0;
-}
 int Camera::get_id()
 {
     return 0;
 }
 
-int Camera::camera_position_switch_loop()  // TODO
+bool Camera::is_patroling() const
 {
-    //获取点位表
-    std::vector<std::pair<int, int>> preset_positions = {
-        {0, 0},    // 点位1: 水平0度，垂直0度
-        {45, 30},   // 点位2: 水平45度，垂直30度
-        {90, 45},   // 点位3: 水平90度，垂直45度
-        {135, 60},  // 点位4: 水平135度，垂直60度
-        {180, 30}   // 点位5: 水平180度，垂直30度
-    }; // 临时写死
+    return patroling;
+}
 
+void Camera::set_patroling(bool patroling)
+{
+    this->patroling = patroling;
+}
+
+std::string Camera::get_mode() const
+{
+    return std::string();
+}
+
+int Camera::add_preset_position(Camera::PresetPosition pos)
+{
+    this->preset_positions.push_back(pos);
+    return 0;
+}
+
+int Camera::position_patrol_loop()  // TODO
+{
+    int minutes = 10;
     size_t current_position_index = 0;
     while (running) {
+        patroling = true; // 标识进入巡逻模式
 
         /* 这里实现点位切换逻辑
          * 例如：遍历预设点位列表，定期切换到下一个点位
          */
 
-        //调用set_rotation和zoom函数
-        auto& position = preset_positions[current_position_index];
-        set_rotation(position.first, position.second);
-        set_zoom(1); // 设置缩放级别为1
+        for(auto position = preset_positions.begin(); position != preset_positions.end(); ++position) {
+            set_ptz(position->rotation_x, position->rotation_y); // 设置转向
+            set_zoom(position->zoom); // 设置缩放级别
+            set_brighten(position->brightness); // 设置亮度
 
-        current_position_index++; //切换到下一个点位
+            //查询是否已移动到指定位置
+            is_on_the_place();
+            //TODO 持续拍摄图像
 
-        // 每隔3600秒切换一次点位
-        std::this_thread::sleep_for(std::chrono::minutes(10));
+            // 判断是否是最后一个点位
+            if (std::next(position) == preset_positions.end()) {
+                //最后一个点位，可以开始进入非巡航模式
+                patroling = false;
+            }
+
+            // 每隔duration切换下一次点位
+            std::this_thread::sleep_for(std::chrono::minutes(position->duration));
+        }
     }
     return 0;
 }
 
-int Camera::set_rotation(int horizontal, int vertical)
+bool Camera::is_on_the_place()
+{
+    //调用modbus请求
+    if (modbus_ctx == nullptr)
+        return false;
+
+    // TODO读取保持寄存器
+    uint16_t regs[2];
+    int rc = modbus_read_registers(modbus_ctx, 100, 2, regs);
+    if (rc == -1) {
+        std::cerr << "Failed to read rotation registers: " << modbus_strerror(errno) << std::endl;
+    }
+
+    return false;
+}
+
+int Camera::set_ptz(int horizontal, int vertical)
 {
     if (modbus_ctx == nullptr)
         return -1;
@@ -230,13 +343,12 @@ int Camera::set_rotation(int horizontal, int vertical)
     int rc = modbus_write_registers(modbus_ctx, 100, 2, regs);
 
     if (rc == -1) {
-        std::cerr << "Failed to write rotation registers: " << modbus_strerror(errno) << std::endl;
         return -1;
     }
 
     // 更新内部状态
-    panpos = horizontal;
-    tiltpos = vertical;
+    rotation_x = horizontal;
+    rotation_y = vertical;
 
     return 0;
 }
@@ -257,10 +369,30 @@ int Camera::set_zoom(int zoom) // TODO
         return -1;
     }
 
-    zoompos = zoom;
+    this->zoom = zoom;
+    return 0;
+}
+
+int Camera::set_brighten(int brightness)
+{
+    // 调用libcurl库
+    // 构造包含亮度参数的URL
+    std::string url = "http://" + ip + "/cgi-bin/param.cgi?action=update&group=CAMPOS&channel=0&CAMPOS.brightness="
+        + std::to_string(brightness);
+
+    // 向curl设置请求URL
+    curl_easy_setopt(curl_handle, CURLOPT_URL, url.c_str());
+
+    // 执行请求
+    CURLcode res = curl_easy_perform(curl_handle);
+    if(res != CURLE_OK) {
+        std::cerr << "Failed to set brightness: " << curl_easy_strerror(res) << std::endl;
+        return -1;
+    }
 
     return 0;
 }
+
 
 // 回调函数，用于处理HTTP响应
 static size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp)
@@ -270,7 +402,7 @@ static size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* use
     return totalSize;
 }
 
-int Camera::get_status(int *rotation, int *zoom, int *horizontal, int *vertical)
+int Camera::fetch_remote_status()
 {
     std::string url = "http://" + ip + "/cgi-bin/param.cgi?action=list&group=CAMPOS&channel=0";
     curl_easy_setopt(curl_handle, CURLOPT_URL, url.c_str());
@@ -305,8 +437,6 @@ int Camera::get_status(int *rotation, int *zoom, int *horizontal, int *vertical)
         if (zoompos_pos != std::string::npos) {
             size_t zoompos_end = response.find("\n", zoompos_pos);
             std::string zoompos_str = response.substr(zoompos_pos + 19, zoompos_end - zoompos_pos - 19);
-            *zoom = std::stoi(zoompos_str);
-            zoompos = *zoom;  // 更新内部状态
         }
 
         // 解析焦距位置
@@ -319,7 +449,12 @@ int Camera::get_status(int *rotation, int *zoom, int *horizontal, int *vertical)
         }
     }
     //调用modbus获取云台姿态
-    //*rotation = rotation;
-    //*horizontal = horizontal;
+    uint16_t regs[3];
+    int rc = modbus_read_registers(modbus_ctx, 100, 2, regs);
+    if (rc == -1) {
+        return -1;
+    }
+    rotation_x = regs[0];
+    rotation_y = regs[1];
     return 0;
 }

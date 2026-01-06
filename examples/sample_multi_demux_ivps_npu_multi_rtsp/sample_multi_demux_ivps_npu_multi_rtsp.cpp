@@ -182,6 +182,7 @@ static AX_VOID PrintHelp(char *testApp)
 int main(int argc, char *argv[])
 {
     CameraController cc;
+    cc.start();
     if (SAMPLE_Check_Bsp_Version() != 0)
     {
         return -1;
@@ -258,12 +259,6 @@ int main(int argc, char *argv[])
         PrintHelp(argv[0]);
         exit(0);
     }
-
-    /* 启动所有摄像机的控制器 */
-    for ( auto &rtsp_url : rtsp_urls ) {
-        cc.add_camera();
-    }
-    cc.start();
 
 #ifdef AXERA_TARGET_CHIP_AX620
     COMMON_SYS_POOL_CFG_T poolcfg[] = {
