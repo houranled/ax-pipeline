@@ -5,17 +5,17 @@
 #include <stdlib.h>
 #include <string.h>
 int _vscprintf (const char * format, va_list pargs)
-{ 
-    int retval; 
+{
+    int retval;
     va_list argcopy;
-    va_copy(argcopy, pargs); 
-    retval = vsnprintf(NULL, 0, format, argcopy); 
-    va_end(argcopy); 
+    va_copy(argcopy, pargs);
+    retval = vsnprintf(NULL, 0, format, argcopy);
+    va_end(argcopy);
     return retval;
 }
 #endif
 
-int RTSPCommonEnv::nDebugPrint = 0;
+int RTSPCommonEnv::nDebugPrint = 2;
 int RTSPCommonEnv::nDebugFlag = DEBUG_FLAG_RTSP;
 
 unsigned short RTSPCommonEnv::nClientPortRangeMin = 10000;

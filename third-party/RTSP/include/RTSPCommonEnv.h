@@ -17,7 +17,7 @@ extern int _vscprintf (const char * format, va_list pargs);
 #define DPRINTF0	RTSPCommonEnv::DebugPrint
 #endif
 
-#define DEBUG_FLAG_RTSP			(0x01)
+#define DEBUG_FLAG_RTSP			(0x00)
 #define DEBUG_FLAG_RTP			(0x02)
 #define DEBUG_FLAG_RTP_PAYLOAD	(0x04)
 #define DEBUG_FLAG_ALL			(0xFF)
