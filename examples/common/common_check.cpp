@@ -13,7 +13,7 @@ void SAMPLE_Print_Logo()
                        " /_/    \\_\\/_/ \\_\\      |_|    |_____||_|     |______||______||_____||_| \\_||______|\n"
                        "                                                                                    \n"
                        "                                                                                    \n\033[0m";
-    printf("%s\n", logo);
+    //printf("%s\n", logo);
 }
 
 int SAMPLE_Check_Bsp_Version()
