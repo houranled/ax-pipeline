@@ -88,15 +88,14 @@ public:
 private:
     std::map<int, Camera*> cameras; // 相机id与相机对象的映射
     std::thread input_thread;
-    int camera_id_;
     bool running;
     static CURL *curl_handle;  // 持久化的curl句柄用于通过http与摄像机通信并控制
 
     // a function for executing in new thread to receive the input read from std-io
     int receive_input_loop();
 
-    int patrol();
-    int calibrate();
+    int patrol(); // 巡逻
+    int calibrate(int camera_id); // 标定
 
     int load_config_from_file(const std::string& config_file_path); //根据配置文件信息自构建所有相机对象
 
