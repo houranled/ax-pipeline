@@ -381,10 +381,10 @@ int main(int argc, char *argv[])
             pipe2.enable = 1;
             pipe2.pipeid = pipe_count * i + 2; // 重复的会创建失败
             pipe2.m_input_type = pi_vdec_h264;
-            pipe2.m_output_type = po_rtsp_h264;
+            pipe2.m_output_type = po_rtsp_h265;
             pipe2.n_loog_exit = 0;
 
-            sprintf(pipe2.m_venc_attr.end_point, "%s%d", "axstream", (int)i); // 重复的会创建失败
+            sprintf(pipe2.m_venc_attr.end_point, "%s%d", "axstream", (int)i+1); // 重复的会创建失败
             pipe2.m_venc_attr.n_venc_chn = i;                                 // 重复的会创建失败
             pipe2.m_vdec_attr.n_vdec_grp = i;
         }

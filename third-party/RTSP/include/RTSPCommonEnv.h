@@ -13,8 +13,8 @@ extern int _vscprintf (const char * format, va_list pargs);
 #define DPRINTF(...)	__android_log_print(ANDROID_LOG_DEBUG, "RTSPClient", __VA_ARGS__)
 #define DPRINTF0(X)	__android_log_print(ANDROID_LOG_DEBUG, "RTSPClient", "%s\n", X)
 #else
-#define DPRINTF		RTSPCommonEnv::DebugPrint
-#define DPRINTF0	RTSPCommonEnv::DebugPrint
+#define DPRINTF(...)
+#define DPRINTF0(...)
 #endif
 
 #define DEBUG_FLAG_RTSP			(0x00)

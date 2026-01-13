@@ -11,7 +11,7 @@
 #include <fstream>
 #include <sys/stat.h>
 
-#define CONFIG_FILE_PATH ""
+#define CONFIG_FILE_PATH "/wt_tech/conf/rt.json"
 
 #define MODBUSPTZ  0x4450  //云台modbus参数起始地址
 
@@ -56,7 +56,6 @@ private:
     int zoom; // 当前焦距
     int focus;   // 当前聚焦
     int brightness; // 当前补光灯亮度
-    int camera_id;
     bool running;
     bool patrolling;  // 是否在巡逻中
     int now_point_id; // 当前所在点位id

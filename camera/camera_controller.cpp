@@ -266,7 +266,7 @@ int CameraController::load_config_from_file(const std::string& config_file_path)
                 Camera* camera = new Camera();
 
                 // 设置相机基本信息
-                camera->id = camera_config["id"];
+                camera->id = std::stoi(camera_config["id"].get<std::string>());
 
                 if (camera_config.contains("ip")) {
                     camera->ip = camera_config["ip"];
@@ -282,7 +282,7 @@ int CameraController::load_config_from_file(const std::string& config_file_path)
                     std::vector<Camera::PresetPosition> preset_positions;
                     for (const auto& point : camera_config["points"]) {
                         Camera::PresetPosition pos;
-                        pos.id = point["id"];
+                        pos.id = std::stoi(point["id"].get<std::string>());
                         pos.name = point["name"];
                         pos.distance = point["dist"];
                         pos.duration = point["duration"];
@@ -341,8 +341,19 @@ Camera::Camera()
     curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 5L);  // 5秒超时
     curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 1L);  // 跟随重定向
 
+}
 
-    {   // 初始化Modbus 连接
+Camera::~Camera()
+{
+    curl_easy_cleanup(curl_handle);
+}
+
+int Camera::start()
+{
+    running = true;
+
+    {
+        // 初始化Modbus 连接
         modbus_ctx = modbus_new_tcp(ptz_ip.c_str(), 502); // 默认Modbus TCP 端口为 502
         if (!modbus_ctx) {
             std::cerr << "Failed to create Modbus context: " << modbus_strerror(errno) << std::endl;
@@ -362,16 +373,7 @@ Camera::Camera()
             }
         }
     }
-}
 
-Camera::~Camera()
-{
-    curl_easy_cleanup(curl_handle);
-}
-
-int Camera::start()
-{
-    running = true;
     //position_thread = std::thread(&Camera::patrol_with_calibration_loop, this);
     return 0;
 }
