@@ -51,7 +51,7 @@ static SAMPLE_LOG_LEVEL_E log_level = SAMPLE_LOG_MIN;
 static FILE* log_file = nullptr;
 static void init_log_file() {
     if (!log_file) {
-        log_file = fopen("apperr.log", "a");
+        log_file = fopen("/wt_tech/logs/node/wt_ai.log", "a");
     }
 }
 
