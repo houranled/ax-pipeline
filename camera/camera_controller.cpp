@@ -295,6 +295,7 @@ int CameraController::calibrate(int camera_id)
     return 0;
 }
 
+int CameraController::cooldown = 0;
 int CameraController::load_config_from_file(const std::string& config_file_path)
 {
     try {
@@ -308,6 +309,10 @@ int CameraController::load_config_from_file(const std::string& config_file_path)
         // 解析 JSON...
         nlohmann::json config;
         config_file >> config;
+
+        if (config.contains("cooldown")){
+            cooldown = config["cooldown"].get<int>();
+        }
 
         // 遍历相机列表
         if (config.contains("chl_list") && config["chl_list"].is_array()) {

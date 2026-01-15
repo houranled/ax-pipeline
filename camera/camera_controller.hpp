@@ -84,12 +84,13 @@ public:
     int stop();
 
 
-
 private:
     std::map<int, Camera*> cameras; // 相机id与相机对象的映射
     std::thread input_thread;
     bool running;
     static CURL *curl_handle;  // 持久化的curl句柄用于通过http与摄像机通信并控制
+
+    static int cooldown; //告警冷却时间 单位小时.
 
     // a function for executing in new thread to receive the input read from std-io
     int receive_input_loop();
