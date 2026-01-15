@@ -46,6 +46,10 @@ namespace detection
         std::vector<float> mask_feat;
         std::vector<float> kps_feat;
         std::string text;
+
+        /* for OBB */
+        float angle;  // 旋转角度
+        cv::Point2f obb_vertices[4];  // 旋转框的四个顶点
     } Object;
 
     /* for palm hand detection */
@@ -1927,6 +1931,98 @@ namespace detection
         }
     }
 
+    static void generate_proposals_yolov11_obb(int stride, const float *feat, float prob_threshold,
+                                          std::vector<Object> &objects,
+                                          int letterbox_cols, int letterbox_rows,
+                                          int cls_num = 80)
+{
+    int feat_w = letterbox_cols / stride;
+    int feat_h = letterbox_rows / stride;
+    int reg_max = 16;
+
+    auto feat_ptr = feat;
+    std::vector<float> dis_after_sm(reg_max, 0.f);
+
+    for (int h = 0; h <= feat_h - 1; h++)
+    {
+        for (int w = 0; w <= feat_w - 1; w++)
+        {
+            // process cls score
+            int class_index = 0;
+            float class_score = -FLT_MAX;
+            for (int s = 0; s <= cls_num - 1; s++)
+            {
+                float score = feat_ptr[s + 4 * reg_max];
+                if (score > class_score)
+                {
+                    class_index = s;
+                    class_score = score;
+                }
+            }
+
+            float box_prob = sigmoid(class_score);
+            if (box_prob > prob_threshold)
+            {
+                float pred_ltrb[4];
+                for (int k = 0; k < 4; k++)
+                {
+                    float dis = softmax(feat_ptr + k * reg_max, dis_after_sm.data(), reg_max);
+                    pred_ltrb[k] = dis * stride;
+                }
+
+                float pb_cx = (w + 0.5f) * stride;
+                float pb_cy = (h + 0.5f) * stride;
+
+                float x0 = pb_cx - pred_ltrb[0];
+                float y0 = pb_cy - pred_ltrb[1];
+                float x1 = pb_cx + pred_ltrb[2];
+                float y1 = pb_cy + pred_ltrb[3];
+
+                x0 = std::max(std::min(x0, (float)(letterbox_cols - 1)), 0.f);
+                y0 = std::max(std::min(y0, (float)(letterbox_rows - 1)), 0.f);
+                x1 = std::max(std::min(x1, (float)(letterbox_cols - 1)), 0.f);
+                y1 = std::max(std::min(y1, (float)(letterbox_rows - 1)), 0.f);
+
+                // 解析OBB参数
+                float obb_angle = feat_ptr[cls_num + 4 * reg_max];  // 获取角度参数
+                obb_angle = sigmoid(obb_angle) * M_PI;  // 转换为弧度
+
+                // 计算旋转框的四个顶点
+                float cx = (x0 + x1) / 2;
+                float cy = (y0 + y1) / 2;
+                float w = x1 - x0;
+                float h = y1 - y0;
+
+                Object obj;
+                obj.rect.x = x0;
+                obj.rect.y = y0;
+                obj.rect.width = w;
+                obj.rect.height = h;
+                obj.label = class_index;
+                obj.prob = box_prob;
+                obj.angle = obb_angle;
+
+                // 计算旋转框的四个顶点
+                float cos_a = cos(obb_angle);
+                float sin_a = sin(obb_angle);
+
+                obj.obb_vertices[0].x = cx - w/2 * cos_a + h/2 * sin_a;
+                obj.obb_vertices[0].y = cy - w/2 * sin_a - h/2 * cos_a;
+                obj.obb_vertices[1].x = cx + w/2 * cos_a + h/2 * sin_a;
+                obj.obb_vertices[1].y = cy + w/2 * sin_a - h/2 * cos_a;
+                obj.obb_vertices[2].x = cx + w/2 * cos_a - h/2 * sin_a;
+                obj.obb_vertices[2].y = cy + w/2 * sin_a + h/2 * cos_a;
+                obj.obb_vertices[3].x = cx - w/2 * cos_a - h/2 * sin_a;
+                obj.obb_vertices[3].y = cy - w/2 * sin_a + h/2 * cos_a;
+
+                objects.push_back(obj);
+            }
+            feat_ptr += (cls_num + 4 * reg_max + 1);  // +1 for angle
+        }
+    }
+}
+
+
     static void transform_rects_palm(PalmObject &object)
     {
         float x0 = object.landmarks[0].x;
@@ -2044,3 +2140,56 @@ namespace detection
     }
 
 } // namespace detection
+
+template <typename T>
+static float obb_intersection_area(const T &a, const T &b)
+{
+    // 创建旋转矩形，使用中心点、尺寸和角度
+    cv::Point2f center_a(a.rect.x + a.rect.width/2, a.rect.y + a.rect.height/2);
+    cv::Size2f size_a(a.rect.width, a.rect.height);
+    cv::RotatedRect ra(center_a, size_a, a.angle * 180 / M_PI);
+
+    cv::Point2f center_b(b.rect.x + b.rect.width/2, b.rect.y + b.rect.height/2);
+    cv::Size2f size_b(b.rect.width, b.rect.height);
+    cv::RotatedRect rb(center_b, size_b, b.angle * 180 / M_PI);
+
+    std::vector<cv::Point2f> intersection;
+    cv::rotatedRectangleIntersection(ra, rb, intersection);
+
+    if (intersection.empty())
+        return 0.f;
+
+    return cv::contourArea(intersection);
+}
+
+template <typename T>
+static void nms_sorted_obb(const std::vector<T> &faceobjects, std::vector<int> &picked, float nms_threshold)
+{
+    picked.clear();
+    const int n = faceobjects.size();
+    std::vector<float> areas(n);
+
+    for (int i = 0; i < n; i++)
+    {
+        areas[i] = faceobjects[i].rect.width * faceobjects[i].rect.height;
+    }
+
+    for (int i = 0; i < n; i++)
+    {
+        const T &a = faceobjects[i];
+        int keep = 1;
+
+        for (int j = 0; j < (int)picked.size(); j++)
+        {
+            const T &b = faceobjects[picked[j]];
+            float inter_area = obb_intersection_area(a, b);
+            float union_area = areas[i] + areas[picked[j]] - inter_area;
+
+            if (inter_area / union_area > nms_threshold)
+                keep = 0;
+        }
+
+        if (keep)
+            picked.push_back(i);
+    }
+}
