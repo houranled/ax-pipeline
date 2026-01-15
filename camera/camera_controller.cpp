@@ -178,6 +178,14 @@ int CameraController::receive_input_loop() {
             std::string currentReqId = reqId; // 捕获当前的reqId值
             int currentCameraId = camera_id; // 捕获当前的camera_id值
 
+            // 根据是否指定了有效的摄像机ID返回不同的消息
+            if (camera_id > 0 && cameras.find(camera_id) != cameras.end()) {
+                response["msg"] = "Camera " + std::to_string(camera_id) + " patrol started in background...";
+            } else {
+                response["msg"] = "All cameras patrol started in background...";
+            }
+            response["status"] = "start";
+
             // 创建后台线程执行巡检任务
             std::thread([this, currentReqId, currentCameraId]() {
                 // 如果指定了有效的摄像机ID，则只巡检该摄像机；否则巡检所有摄像机
@@ -186,8 +194,8 @@ int CameraController::receive_input_loop() {
                     camera->patrol_with_calibration_loop(false);
                     // 巡检完成后构造JSON响应
                     nlohmann::json result;
-                    result["status"] = 200;
-                    result["msg"] = "Camera " + std::to_string(currentCameraId) + " patrol completed successfully";
+                    result["status"] = "end";
+                    result["msg"] = "Camera " + std::to_string(currentCameraId) + " patrol has completed successfully";
                     result["cmd"] = "action";
                     result["reqId"] = currentReqId; // 添加reqId到响应中
                     std::cout << result.dump() << std::endl;
@@ -196,25 +204,26 @@ int CameraController::receive_input_loop() {
                     patrol();
                     // 巡检完成后构造JSON响应
                     nlohmann::json result;
-                    result["status"] = 200;
-                    result["msg"] = "All cameras patrol completed successfully";
+                    result["status"] = "end";
+                    result["msg"] = "All cameras patrol has completed successfully";
                     result["cmd"] = "action";
                     result["reqId"] = currentReqId; // 添加reqId到响应中
                     std::cout << result.dump() << std::endl;
                 }
             }).detach();
-
-            // 根据是否指定了有效的摄像机ID返回不同的消息
-            if (camera_id > 0 && cameras.find(camera_id) != cameras.end()) {
-                response["msg"] = "Camera " + std::to_string(camera_id) + " patrol started in background...";
-            } else {
-                response["msg"] = "All cameras patrol started in background...";
-            }
-            response["status"] = 200;
         } else if (cmd == "calibrate") { //执行一次标定
             /* 标定时，会执行一次巡检; 快速返回，在后台线程中执行标定  */
             std::string currentReqId = reqId; // 捕获当前的reqId值
             int currentCameraId = camera_id; // 捕获当前的camera_id值
+
+            // 根据是否指定了有效的摄像机ID返回不同的消息
+            if (camera_id > 0 && cameras.find(camera_id) != cameras.end()) {
+                response["msg"] = "Camera " + std::to_string(camera_id) + " calibration started in background...";
+            } else {
+                response["msg"] = "All cameras calibration are starting in background...";
+            }
+            response["status"] = 200;
+
             // 创建后台线程执行标定任务
             std::thread([this, currentReqId, currentCameraId]() {
                 // 如果指定了有效的摄像机ID，则只标定该摄像机；否则标定所有摄像机
@@ -239,14 +248,6 @@ int CameraController::receive_input_loop() {
                     std::cout << result.dump() << std::endl;
                 }
             }).detach();
-
-            // 根据是否指定了有效的摄像机ID返回不同的消息
-            if (camera_id > 0 && cameras.find(camera_id) != cameras.end()) {
-                response["msg"] = "Camera " + std::to_string(camera_id) + " calibration started in background...";
-            } else {
-                response["msg"] = "All cameras calibration are starting in background...";
-            }
-            response["status"] = 200;
         }
         /* else if (cmd == "photograph") { //拍照指令
             if (camera_id > 0 && camera != NULL) {
@@ -567,8 +568,13 @@ int Camera::patrol_with_calibration_loop(bool is_calibrate)
         set_zoom_and_focus(position->zoom, position->focus); // 设置缩放级别
 
         // 拍摄图像
-        if (is_posture_completed() && is_calibrate) {
-            capture_image_for_reference();
+        if (is_posture_completed()) {
+            if (is_calibrate) {
+                capture_image_for_reference(); // 标定模式下的拍照
+            } else  {
+                // TODO 巡航拍照
+
+            }
         }
 
         // 判断是否是最后一个点位
@@ -582,7 +588,6 @@ int Camera::patrol_with_calibration_loop(bool is_calibrate)
             std::this_thread::sleep_for(std::chrono::seconds(1)); //进行标定的话可以快速切换点位
         else
             std::this_thread::sleep_for(std::chrono::minutes(position->duration));  // 每隔duration切换下一次点位
-
 
         now_point_id++;// 更新当前点位ID
     }
