@@ -47,6 +47,41 @@ static void obb_decode(const float* output, int num_classes, int num_anchors,
     }
 }
 
+static void obb_decode_channel_first(const float* output, int num_classes, int num_anchors,
+                      std::vector<OBBResult>& results, float conf_threshold) {
+    results.clear();
+
+    for (int i = 0; i < num_anchors; ++i) {
+        float x = output[0 * num_anchors + i];
+        float y = output[1 * num_anchors + i];
+        float w = output[2 * num_anchors + i];
+        float h = output[3 * num_anchors + i];
+        float angle = output[4 * num_anchors + i];
+
+        float max_score = 0;
+        int max_class = 0;
+        for (int j = 0; j < num_classes; ++j) {
+            float score = output[(5 + j) * num_anchors + i];
+            if (score > max_score) {
+                max_score = score;
+                max_class = j;
+            }
+        }
+
+        if (max_score >= conf_threshold) {
+            OBBResult result;
+            result.x = x;
+            result.y = y;
+            result.w = w;
+            result.h = h;
+            result.angle = angle;
+            result.score = max_score;
+            result.label = max_class;
+            results.push_back(result);
+        }
+    }
+}
+
 static void obb_to_vertices(const OBBResult& obb, axdl_point_t vertices[4]) {
     float cos_a = cos(obb.angle);
     float sin_a = sin(obb.angle);
@@ -138,11 +173,44 @@ int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resi
 
     // 从output vShape计算锚点的数量
     // YOLO11 OBB output format: [batch, anchors, 5+classes]
-    int num_anchors = pOutputsInfo[0].vShape[1];  // 锚点个数TODO
+    int num_anchors = 0;
+    int num_classes = CLASS_NUM;
+    bool channel_first = false;
+
+    if (pOutputsInfo[0].vShape.size() >= 3) {
+        unsigned int dim1 = pOutputsInfo[0].vShape[1];
+        unsigned int dim2 = pOutputsInfo[0].vShape[2];
+
+        if (dim1 < dim2) {
+            channel_first = true;
+        } else if (dim2 < dim1) {
+            channel_first = false;
+        } else {
+            channel_first = (dim1 == (unsigned int)(5 + CLASS_NUM));
+        }
+
+        unsigned int channels = channel_first ? dim1 : dim2;
+        unsigned int anchors = channel_first ? dim2 : dim1;
+        num_anchors = (int)anchors;
+        num_classes = (int)channels - 5;
+    } else if (pOutputsInfo[0].vShape.size() >= 2) {
+        num_anchors = (int)pOutputsInfo[0].vShape[1];
+        num_classes = CLASS_NUM;
+        channel_first = false;
+    }
+
+    if (num_anchors <= 0 || num_classes <= 0) {
+        ALOGE("Invalid YOLO11 OBB output shape");
+        return -1;
+    }
 
     // 解码OBB结果
     std::vector<OBBResult> obb_results;
-    obb_decode(output_ptr, CLASS_NUM, num_anchors, obb_results, PROB_THRESHOLD);
+    if (channel_first) {
+        obb_decode_channel_first(output_ptr, num_classes, num_anchors, obb_results, PROB_THRESHOLD);
+    } else {
+        obb_decode(output_ptr, num_classes, num_anchors, obb_results, PROB_THRESHOLD);
+    }
 
     // 应用NMS
     obb_nms(obb_results, NMS_THRESHOLD);
