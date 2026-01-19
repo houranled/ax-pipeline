@@ -38,7 +38,7 @@ public:
     ~Camera();
     int start(); // 启动相机执行点位循环遍历任务
     int pause(); // 暂停相机任务
-    int set_ptz(int horizontal, int vertical, int brightness);
+    int set_ptz(int horizontal, int vertical, int brightness, bool get_enabled);
     int set_brighten(int brightness); //单独控制补光灯
     int set_zoom_and_focus(int zoom, int focus);
     int fetch_remote_status();
