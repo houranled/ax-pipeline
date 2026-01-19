@@ -572,15 +572,30 @@ int Camera::patrol_with_calibration_loop(bool is_calibrate)
         set_ptz(position->rotation_x, position->rotation_y, position->brightness); // 设置转向和亮度
         set_zoom_and_focus(position->zoom, position->focus); // 设置缩放级别
 
-        // 拍摄图像
-        if (is_posture_completed()) {
+        // 拍摄图像 - 轮询等待姿态完成或超时10秒
+        auto start_time = std::chrono::steady_clock::now();
+        bool posture_completed = false;
+
+        // 轮询直到姿态完成或超时10秒
+        while (!posture_completed &&
+               std::chrono::duration_cast<std::chrono::seconds>(
+                   std::chrono::steady_clock::now() - start_time).count() < 10) {
+            if (is_posture_completed()) {
+                posture_completed = true;
+            } else {
+                // 短暂休眠避免CPU过度占用
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+        }
+
+        if (posture_completed) {
             if (is_calibrate) {
                 capture_image_for_reference(); // 标定模式下的拍照
             } else  {
                 // TODO 巡航拍照
 
             }
-        }
+        } //else noop
 
         // 判断是否是最后一个点位
         if (std::next(position) == preset_positions.end()) {
@@ -612,7 +627,7 @@ bool Camera::is_posture_completed()
         std::cerr << "Failed to read rotation registers: " << modbus_strerror(errno) << std::endl;
     }
 
-    if (regs[0])
+    if (regs[0]&0x1 && regs[0]&(1<<1) && regs[0]&(1<<2)) // 位操作读取三个参数分别的状态值
         return true;
     else
         return false;

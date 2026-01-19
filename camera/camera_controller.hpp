@@ -2,6 +2,7 @@
 #define _CAMERA_CONTROLLER_H_
 
 #include <thread>
+#include <chrono>
 #include <curl/curl.h>
 #include <map>
 #include <vector>
