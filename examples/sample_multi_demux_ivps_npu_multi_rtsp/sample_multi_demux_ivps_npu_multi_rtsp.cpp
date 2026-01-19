@@ -47,7 +47,7 @@
 #ifdef AXERA_TARGET_CHIP_AX620
 #define rtsp_max_count 2
 #elif defined(AXERA_TARGET_CHIP_AX650)
-#define rtsp_max_count 4
+#define rtsp_max_count 6
 #elif defined(AXERA_TARGET_CHIP_AX620E)
 #define rtsp_max_count 2
 #endif
