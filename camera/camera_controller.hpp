@@ -57,7 +57,7 @@ private:
     int focus;   // 当前聚焦
     int brightness; // 当前补光灯亮度
     bool running;
-    bool patrolling;  // 是否在巡逻中
+    bool patrolling = false;  // 是否在巡逻中
     int now_point_id; // 当前所在点位id
     std::vector<PresetPosition> preset_positions; // 点位信息集
 

@@ -590,9 +590,9 @@ int Camera::patrol_with_calibration_loop(bool is_calibrate)
         }
 
         if (is_calibrate)
-            std::this_thread::sleep_for(std::chrono::seconds(1)); //进行标定的话可以快速切换点位
+            std::this_thread::sleep_for(std::chrono::milliseconds(500)); //进行标定的话可以快速切换点位
         else
-            std::this_thread::sleep_for(std::chrono::minutes(position->duration));  // 每隔duration切换下一次点位
+            std::this_thread::sleep_for(std::chrono::milliseconds(position->duration));  // 每隔duration切换下一次点位
 
         now_point_id++;// 更新当前点位ID
     }
