@@ -2,49 +2,33 @@
 #include <cmath>
 #include <opencv2/opencv.hpp>
 
-// YOLO11 OBB implementation
+// YOLO11 OBB implementation - 支持[cx, cy, w, h, angle]格式转换为4个顶点坐标
 struct OBBResult {
-    float x, y, w, h, angle;
+    float cx, cy, w, h, angle;  // 中心点、宽高、角度
     float score;
     int label;
 };
 
-static void obb_decode(const float* output, int num_classes, int num_anchors,
-                      std::vector<OBBResult>& results, float conf_threshold) {
-    results.clear();
+// 将[cx, cy, w, h, angle]转换为4个顶点坐标
+static void obb_to_vertices(const OBBResult& obb, axdl_point_t vertices[4]) {
+    float cos_a = cos(obb.angle);
+    float sin_a = sin(obb.angle);
 
-    // YOLO11 OBB output format: [x, y, w, h, angle, class_scores...]
-    for (int i = 0; i < num_anchors; ++i) {
-        const float* ptr = output + i * (5 + num_classes);
+    // 计算4个顶点（相对于中心点）
+    float dx1 = obb.w * 0.5f * cos_a - obb.h * 0.5f * sin_a;
+    float dy1 = obb.w * 0.5f * sin_a + obb.h * 0.5f * cos_a;
+    float dx2 = obb.w * 0.5f * cos_a + obb.h * 0.5f * sin_a;
+    float dy2 = obb.w * 0.5f * sin_a - obb.h * 0.5f * cos_a;
 
-        float x = ptr[0];
-        float y = ptr[1];
-        float w = ptr[2];
-        float h = ptr[3];
-        float angle = ptr[4];
-
-        // Find max class score
-        float max_score = 0;
-        int max_class = 0;
-        for (int j = 0; j < num_classes; ++j) {
-            if (ptr[5 + j] > max_score) {
-                max_score = ptr[5 + j];
-                max_class = j;
-            }
-        }
-
-        if (max_score >= conf_threshold) {
-            OBBResult result;
-            result.x = x;
-            result.y = y;
-            result.w = w;
-            result.h = h;
-            result.angle = angle;
-            result.score = max_score;
-            result.label = max_class;
-            results.push_back(result);
-        }
-    }
+    // 4个顶点坐标（顺时针）
+    vertices[0].x = obb.cx - dx1;  // 左上
+    vertices[0].y = obb.cy - dy1;
+    vertices[1].x = obb.cx + dx2;  // 右上
+    vertices[1].y = obb.cy + dy2;
+    vertices[2].x = obb.cx + dx1;  // 右下
+    vertices[2].y = obb.cy + dy1;
+    vertices[3].x = obb.cx - dx2;  // 左下
+    vertices[3].y = obb.cy - dy2;
 }
 
 static void obb_decode_channel_first(const float* output, int num_classes, int num_anchors,
@@ -52,8 +36,9 @@ static void obb_decode_channel_first(const float* output, int num_classes, int n
     results.clear();
 
     for (int i = 0; i < num_anchors; ++i) {
-        float x = output[0 * num_anchors + i];
-        float y = output[1 * num_anchors + i];
+        // 读取OBB参数: [cx, cy, w, h, angle]
+        float cx = output[0 * num_anchors + i];
+        float cy = output[1 * num_anchors + i];
         float w = output[2 * num_anchors + i];
         float h = output[3 * num_anchors + i];
         float angle = output[4 * num_anchors + i];
@@ -70,8 +55,8 @@ static void obb_decode_channel_first(const float* output, int num_classes, int n
 
         if (max_score >= conf_threshold) {
             OBBResult result;
-            result.x = x;
-            result.y = y;
+            result.cx = cx;
+            result.cy = cy;
             result.w = w;
             result.h = h;
             result.angle = angle;
@@ -82,39 +67,17 @@ static void obb_decode_channel_first(const float* output, int num_classes, int n
     }
 }
 
-static void obb_to_vertices(const OBBResult& obb, axdl_point_t vertices[4]) {
-    float cos_a = cos(obb.angle);
-    float sin_a = sin(obb.angle);
-
-    // Half dimensions
-    float hw = obb.w * 0.5f;
-    float hh = obb.h * 0.5f;
-
-    // Calculate rotated corners
-    float corners[4][2] = {
-        {-hw, -hh},  // top-left
-        { hw, -hh},  // top-right
-        { hw,  hh},  // bottom-right
-        {-hw,  hh}   // bottom-left
-    };
-
-    for (int i = 0; i < 4; ++i) {
-        vertices[i].x = obb.x + corners[i][0] * cos_a - corners[i][1] * sin_a;
-        vertices[i].y = obb.y + corners[i][0] * sin_a + corners[i][1] * cos_a;
-    }
-}
-
 static float obb_iou(const OBBResult& a, const OBBResult& b) {
-    // Simplified IoU calculation for OBB - using axis-aligned bbox approximation
-    float a_x1 = a.x - a.w * 0.5f;
-    float a_y1 = a.y - a.h * 0.5f;
-    float a_x2 = a.x + a.w * 0.5f;
-    float a_y2 = a.y + a.h * 0.5f;
+    // 计算两个OBB的轴对齐边界框用于快速IoU计算
+    float a_x1 = a.cx - a.w * 0.5f;
+    float a_y1 = a.cy - a.h * 0.5f;
+    float a_x2 = a.cx + a.w * 0.5f;
+    float a_y2 = a.cy + a.h * 0.5f;
 
-    float b_x1 = b.x - b.w * 0.5f;
-    float b_y1 = b.y - b.h * 0.5f;
-    float b_x2 = b.x + b.w * 0.5f;
-    float b_y2 = b.y + b.h * 0.5f;
+    float b_x1 = b.cx - b.w * 0.5f;
+    float b_y1 = b.cy - b.h * 0.5f;
+    float b_x2 = b.cx + b.w * 0.5f;
+    float b_y2 = b.cy + b.h * 0.5f;
 
     float inter_x1 = std::max(a_x1, b_x1);
     float inter_y1 = std::max(a_y1, b_y1);
@@ -172,31 +135,27 @@ int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resi
     const float *output_ptr = (float *)pOutputsInfo[0].pVirAddr;
 
     // 从output vShape计算锚点的数量
-    // YOLO11 OBB output format: [batch, anchors, 5+classes]
+    // YOLO11 OBB output format: [batch, channels, anchors] - [1, 20, 8400]
     int num_anchors = 0;
-    int num_classes = CLASS_NUM;
-    bool channel_first = false;
+    int num_classes;  // 类别数
+    bool channel_first = true;  // YOLO11 OBB使用channel_first格式
 
-    if (pOutputsInfo[0].vShape.size() >= 3) {
-        unsigned int dim1 = pOutputsInfo[0].vShape[1];
-        unsigned int dim2 = pOutputsInfo[0].vShape[2];
+/*    printf("YOLO11 OBB output shape: [%d, %d, %d]\n",
+           (int)pOutputsInfo[0].vShape[0],
+           (int)pOutputsInfo[0].vShape[1],
+           (int)pOutputsInfo[0].vShape[2]);
+*/
 
-        if (dim1 < dim2) {
-            channel_first = true;
-        } else if (dim2 < dim1) {
-            channel_first = false;
-        } else {
-            channel_first = (dim1 == (unsigned int)(5 + CLASS_NUM));
-        }
+    if (pOutputsInfo[0].vShape.size() == 3) {
+        // YOLO11 OBB格式: [batch=1, channels=20, anchors=8400]
+        num_anchors = (int)pOutputsInfo[0].vShape[2];  // 8400
+        int channels = (int)pOutputsInfo[0].vShape[1];  // 20
+        num_classes = channels - YOLO11_OBB_PARAMS;  // 20 - 5 = 15个类别
 
-        unsigned int channels = channel_first ? dim1 : dim2;
-        unsigned int anchors = channel_first ? dim2 : dim1;
-        num_anchors = (int)anchors;
-        num_classes = (int)channels - 5;
-    } else if (pOutputsInfo[0].vShape.size() >= 2) {
-        num_anchors = (int)pOutputsInfo[0].vShape[1];
-        num_classes = CLASS_NUM;
-        channel_first = false;
+        // printf("YOLO11 OBB: detected %d anchors, %d classes (from %d channels)\n", num_anchors, num_classes, channels);
+    } else {
+        ALOGE("YOLO11 OBB requires 3D output [batch, channels, anchors]");
+        return -1;
     }
 
     if (num_anchors <= 0 || num_classes <= 0) {
@@ -207,13 +166,20 @@ int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resi
     // 解码OBB结果
     std::vector<OBBResult> obb_results;
     if (channel_first) {
-        obb_decode_channel_first(output_ptr, num_classes, num_anchors, obb_results, PROB_THRESHOLD);
+        // YOLO11 OBB: [batch, channels, anchors] 格式，跳过batch维度
+        const float* batch_data = output_ptr + pOutputsInfo[0].vShape[1] * pOutputsInfo[0].vShape[2] * 0; // batch=0
+        obb_decode_channel_first(batch_data, num_classes, num_anchors, obb_results, PROB_THRESHOLD);
     } else {
-        obb_decode(output_ptr, num_classes, num_anchors, obb_results, PROB_THRESHOLD);
+        ALOGE("YOLO11 OBB expects channel_first format");
+        return -1;
     }
+
+    // printf("YOLO11 OBB: decoded %d candidates before NMS\n", (int)obb_results.size());
 
     // 应用NMS
     obb_nms(obb_results, NMS_THRESHOLD);
+
+	// printf("YOLO11 OBB: %d objects after NMS\n", (int)obb_results.size());
 
     // 转换为 axdl_results_t 格式
     results->nObjSize = MIN(obb_results.size(), SAMPLE_MAX_BBOX_COUNT);
@@ -224,15 +190,19 @@ int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resi
         axdl_point_t vertices[4];
         obb_to_vertices(obb, vertices);
 
+        // 添加调试信息
+		/*
+        printf("OBB %d: cx=%.3f, cy=%.3f, w=%.3f, h=%.3f, angle=%.3f, score=%.3f\n",
+               i, obb.cx, obb.cy, obb.w, obb.h, obb.angle, obb.score);
+        printf("Vertices: [(%.3f,%.3f), (%.3f,%.3f), (%.3f,%.3f), (%.3f,%.3f)]\n",
+               vertices[0].x, vertices[0].y, vertices[1].x, vertices[1].y,
+               vertices[2].x, vertices[2].y, vertices[3].x, vertices[3].y);
+		*/
         // 计算轴对齐的边界框以确保兼容性
-        float min_x = vertices[0].x, max_x = vertices[0].x;
-        float min_y = vertices[0].y, max_y = vertices[0].y;
-        for (int j = 1; j < 4; ++j) {
-            min_x = std::min(min_x, vertices[j].x);
-            max_x = std::max(max_x, vertices[j].x);
-            min_y = std::min(min_y, vertices[j].y);
-            max_y = std::max(max_y, vertices[j].y);
-        }
+        float min_x = obb.cx - obb.w * 0.5f;
+        float max_x = obb.cx + obb.w * 0.5f;
+        float min_y = obb.cy - obb.h * 0.5f;
+        float max_y = obb.cy + obb.h * 0.5f;
 
         results->mObjects[i].bbox.x = min_x;
         results->mObjects[i].bbox.y = min_y;

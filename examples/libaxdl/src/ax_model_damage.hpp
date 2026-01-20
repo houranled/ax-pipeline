@@ -8,6 +8,7 @@
 #include <opencv2/opencv.hpp>
 #include "base/detection.hpp"
 
+static constexpr int YOLO11_OBB_PARAMS = 5;  // [cx, cy, w, h, angle]
 class ax_model_damage : public ax_model_yolov8_native
 {
 public:
