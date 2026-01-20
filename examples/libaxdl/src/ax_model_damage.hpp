@@ -8,7 +8,6 @@
 #include <opencv2/opencv.hpp>
 #include "base/detection.hpp"
 
-static constexpr int YOLO11_OBB_PARAMS = 5;  // [cx, cy, w, h, angle]
 class ax_model_damage : public ax_model_yolov8_native
 {
 public:
@@ -24,10 +23,6 @@ protected:
 
 private:
     //AlarmGenerator m_alarm_generator; //告警检测器
-
-    // OBB非极大值抑制函数
-    static void nms_sorted_obb(const std::vector<detection::Object> &faceobjects, std::vector<int> &picked, float nms_threshold);
-    static float obb_intersection_area(const detection::Object &a, const detection::Object &b);
 
 };
 REGISTER(MT_DAMAGE_MODEL, ax_model_damage)

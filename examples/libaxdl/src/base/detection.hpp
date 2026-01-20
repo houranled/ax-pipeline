@@ -1931,98 +1931,6 @@ namespace detection
         }
     }
 
-    static void generate_proposals_yolov11_obb(int stride, const float *feat, float prob_threshold,
-                                          std::vector<Object> &objects,
-                                          int letterbox_cols, int letterbox_rows,
-                                          int cls_num = 80)
-{
-    int feat_w = letterbox_cols / stride;
-    int feat_h = letterbox_rows / stride;
-    int reg_max = 16;
-
-    auto feat_ptr = feat;
-    std::vector<float> dis_after_sm(reg_max, 0.f);
-
-    for (int h = 0; h <= feat_h - 1; h++)
-    {
-        for (int w = 0; w <= feat_w - 1; w++)
-        {
-            // process cls score
-            int class_index = 0;
-            float class_score = -FLT_MAX;
-            for (int s = 0; s <= cls_num - 1; s++)
-            {
-                float score = feat_ptr[s + 4 * reg_max];
-                if (score > class_score)
-                {
-                    class_index = s;
-                    class_score = score;
-                }
-            }
-
-            float box_prob = sigmoid(class_score);
-            if (box_prob > prob_threshold)
-            {
-                float pred_ltrb[4];
-                for (int k = 0; k < 4; k++)
-                {
-                    float dis = softmax(feat_ptr + k * reg_max, dis_after_sm.data(), reg_max);
-                    pred_ltrb[k] = dis * stride;
-                }
-
-                float pb_cx = (w + 0.5f) * stride;
-                float pb_cy = (h + 0.5f) * stride;
-
-                float x0 = pb_cx - pred_ltrb[0];
-                float y0 = pb_cy - pred_ltrb[1];
-                float x1 = pb_cx + pred_ltrb[2];
-                float y1 = pb_cy + pred_ltrb[3];
-
-                x0 = std::max(std::min(x0, (float)(letterbox_cols - 1)), 0.f);
-                y0 = std::max(std::min(y0, (float)(letterbox_rows - 1)), 0.f);
-                x1 = std::max(std::min(x1, (float)(letterbox_cols - 1)), 0.f);
-                y1 = std::max(std::min(y1, (float)(letterbox_rows - 1)), 0.f);
-
-                // 解析OBB参数
-                float obb_angle = feat_ptr[cls_num + 4 * reg_max];  // 获取角度参数
-                obb_angle = sigmoid(obb_angle) * M_PI;  // 转换为弧度
-
-                // 计算旋转框的四个顶点
-                float cx = (x0 + x1) / 2;
-                float cy = (y0 + y1) / 2;
-                float w = x1 - x0;
-                float h = y1 - y0;
-
-                Object obj;
-                obj.rect.x = x0;
-                obj.rect.y = y0;
-                obj.rect.width = w;
-                obj.rect.height = h;
-                obj.label = class_index;
-                obj.prob = box_prob;
-                obj.angle = obb_angle;
-
-                // 计算旋转框的四个顶点
-                float cos_a = cos(obb_angle);
-                float sin_a = sin(obb_angle);
-
-                obj.obb_vertices[0].x = cx - w/2 * cos_a + h/2 * sin_a;
-                obj.obb_vertices[0].y = cy - w/2 * sin_a - h/2 * cos_a;
-                obj.obb_vertices[1].x = cx + w/2 * cos_a + h/2 * sin_a;
-                obj.obb_vertices[1].y = cy + w/2 * sin_a - h/2 * cos_a;
-                obj.obb_vertices[2].x = cx + w/2 * cos_a - h/2 * sin_a;
-                obj.obb_vertices[2].y = cy + w/2 * sin_a + h/2 * cos_a;
-                obj.obb_vertices[3].x = cx - w/2 * cos_a - h/2 * sin_a;
-                obj.obb_vertices[3].y = cy - w/2 * sin_a + h/2 * cos_a;
-
-                objects.push_back(obj);
-            }
-            feat_ptr += (cls_num + 4 * reg_max + 1);  // +1 for angle
-        }
-    }
-}
-
-
     static void transform_rects_palm(PalmObject &object)
     {
         float x0 = object.landmarks[0].x;
@@ -2139,57 +2047,224 @@ namespace detection
         }
     }
 
-} // namespace detection
-
-template <typename T>
-static float obb_intersection_area(const T &a, const T &b)
-{
-    // 创建旋转矩形，使用中心点、尺寸和角度
-    cv::Point2f center_a(a.rect.x + a.rect.width/2, a.rect.y + a.rect.height/2);
-    cv::Size2f size_a(a.rect.width, a.rect.height);
-    cv::RotatedRect ra(center_a, size_a, a.angle * 180 / M_PI);
-
-    cv::Point2f center_b(b.rect.x + b.rect.width/2, b.rect.y + b.rect.height/2);
-    cv::Size2f size_b(b.rect.width, b.rect.height);
-    cv::RotatedRect rb(center_b, size_b, b.angle * 180 / M_PI);
-
-    std::vector<cv::Point2f> intersection;
-    cv::rotatedRectangleIntersection(ra, rb, intersection);
-
-    if (intersection.empty())
-        return 0.f;
-
-    return cv::contourArea(intersection);
-}
-
-template <typename T>
-static void nms_sorted_obb(const std::vector<T> &faceobjects, std::vector<int> &picked, float nms_threshold)
-{
-    picked.clear();
-    const int n = faceobjects.size();
-    std::vector<float> areas(n);
-
-    for (int i = 0; i < n; i++)
+    // Generate YOLOv8-OBB proposals using native approach (similar to AXERA implementation)
+    static void generate_proposals_yolov8_obb_native(const std::vector<GridAndStride> &grid_strides, const float *feat_ptr,
+                                                     float prob_threshold, std::vector<Object> &proposals, int input_w, int input_h,
+                                                     int num_classes)
     {
-        areas[i] = faceobjects[i].rect.width * faceobjects[i].rect.height;
+        proposals.clear();
+
+        const int num_anchors = grid_strides.size();
+        const int num_params = 5; // [cx, cy, w, h, angle]
+
+        for (int anchor_idx = 0; anchor_idx < num_anchors; ++anchor_idx) {
+            const auto &grid_stride = grid_strides[anchor_idx];
+            int grid0 = grid_stride.grid0;
+            int grid1 = grid_stride.grid1;
+            int stride = grid_stride.stride;
+
+            // Get the feature pointer for this anchor
+            const float *anchor_ptr = feat_ptr + anchor_idx * (num_params + num_classes);
+
+            // Extract OBB parameters
+            float cx = anchor_ptr[0];
+            float cy = anchor_ptr[1];
+            float w = anchor_ptr[2];
+            float h = anchor_ptr[3];
+            float angle = anchor_ptr[4];
+
+            // Find max class score
+            float max_score = 0;
+            int max_class = 0;
+            for (int j = 0; j < num_classes; ++j) {
+                float score = anchor_ptr[num_params + j];
+                if (score > max_score) {
+                    max_score = score;
+                    max_class = j;
+                }
+            }
+
+            // Apply confidence threshold
+            if (max_score >= prob_threshold) {
+                Object obj;
+                // Convert from grid coordinates to input image coordinates
+                obj.rect.x = (cx + grid0) * stride;
+                obj.rect.y = (cy + grid1) * stride;
+                obj.rect.width = w * stride;
+                obj.rect.height = h * stride;
+                obj.label = max_class;
+                obj.prob = max_score;
+                obj.angle = angle; // Store angle in radians
+
+                // Calculate OBB vertices
+                float center_x = obj.rect.x + obj.rect.width / 2;
+                float center_y = obj.rect.y + obj.rect.height / 2;
+                float cos_a = cos(angle);
+                float sin_a = sin(angle);
+
+                // Calculate 4 vertices of rotated rectangle
+                float dx = obj.rect.width / 2;
+                float dy = obj.rect.height / 2;
+
+                obj.obb_vertices[0].x = center_x - dx * cos_a + dy * sin_a;
+                obj.obb_vertices[0].y = center_y - dx * sin_a - dy * cos_a;
+                obj.obb_vertices[1].x = center_x + dx * cos_a + dy * sin_a;
+                obj.obb_vertices[1].y = center_y + dx * sin_a - dy * cos_a;
+                obj.obb_vertices[2].x = center_x + dx * cos_a - dy * sin_a;
+                obj.obb_vertices[2].y = center_y + dx * sin_a + dy * cos_a;
+                obj.obb_vertices[3].x = center_x - dx * cos_a - dy * sin_a;
+                obj.obb_vertices[3].y = center_y - dx * sin_a + dy * cos_a;
+
+                proposals.push_back(obj);
+            }
+        }
     }
 
-    for (int i = 0; i < n; i++)
+    template <typename T>
+    static float obb_intersection_area(const T &a, const T &b)
     {
-        const T &a = faceobjects[i];
-        int keep = 1;
+        // 创建旋转矩形，使用中心点、尺寸和角度
+        cv::Point2f center_a(a.rect.x + a.rect.width/2, a.rect.y + a.rect.height/2);
+        cv::Size2f size_a(a.rect.width, a.rect.height);
+        cv::RotatedRect ra(center_a, size_a, a.angle * 180 / M_PI);
 
-        for (int j = 0; j < (int)picked.size(); j++)
+        cv::Point2f center_b(b.rect.x + b.rect.width/2, b.rect.y + b.rect.height/2);
+        cv::Size2f size_b(b.rect.width, b.rect.height);
+        cv::RotatedRect rb(center_b, size_b, b.angle * 180 / M_PI);
+
+        std::vector<cv::Point2f> intersection;
+        cv::rotatedRectangleIntersection(ra, rb, intersection);
+
+        if (intersection.empty())
+            return 0.f;
+
+        return cv::contourArea(intersection);
+    }
+
+    template <typename T>
+    static void nms_sorted_obb(const std::vector<T> &faceobjects, std::vector<int> &picked, float nms_threshold)
+    {
+        picked.clear();
+        const int n = faceobjects.size();
+        std::vector<float> areas(n);
+
+        for (int i = 0; i < n; i++)
         {
-            const T &b = faceobjects[picked[j]];
-            float inter_area = obb_intersection_area(a, b);
-            float union_area = areas[i] + areas[picked[j]] - inter_area;
-
-            if (inter_area / union_area > nms_threshold)
-                keep = 0;
+            areas[i] = faceobjects[i].rect.width * faceobjects[i].rect.height;
         }
 
-        if (keep)
-            picked.push_back(i);
+        for (int i = 0; i < n; i++)
+        {
+            const T &a = faceobjects[i];
+            int keep = 1;
+
+            for (int j = 0; j < (int)picked.size(); j++)
+            {
+                const T &b = faceobjects[picked[j]];
+                float inter_area = obb_intersection_area(a, b);
+                float union_area = areas[i] + areas[picked[j]] - inter_area;
+
+                if (inter_area / union_area > nms_threshold)
+                    keep = 0;
+            }
+
+            if (keep)
+                picked.push_back(i);
+        }
     }
-}
+
+    // Apply NMS and coordinate transformation for OBB results
+    static void get_out_obb_bbox(std::vector<Object>& proposals, std::vector<Object>& objects, float nms_threshold,
+                                        int letterbox_rows, int letterbox_cols, int src_rows, int src_cols) {
+        // Sort by confidence
+        qsort_descent_inplace(proposals);
+
+        // Apply OBB NMS
+        std::vector<int> picked;
+        nms_sorted_obb(proposals, picked, nms_threshold);
+
+        // Calculate scaling parameters
+        float scale_letterbox;
+        int resize_rows, resize_cols;
+        if ((letterbox_rows * 1.0 / src_rows) < (letterbox_cols * 1.0 / src_cols)) {
+            scale_letterbox = letterbox_rows * 1.0 / src_rows;
+        } else {
+            scale_letterbox = letterbox_cols * 1.0 / src_cols;
+        }
+        resize_cols = int(scale_letterbox * src_cols);
+        resize_rows = int(scale_letterbox * src_rows);
+
+        int tmp_h = (letterbox_rows - resize_rows) / 2;
+        int tmp_w = (letterbox_cols - resize_cols) / 2;
+
+        float ratio_x = (float)src_cols / resize_cols;
+        float ratio_y = (float)src_rows / resize_rows;
+
+        // Process picked objects
+        objects.resize(picked.size());
+        for (size_t i = 0; i < picked.size(); ++i) {
+            objects[i] = proposals[picked[i]];
+
+            // Transform coordinates back to original image space
+            for (int j = 0; j < 4; ++j) {
+                float x = objects[i].obb_vertices[j].x;
+                float y = objects[i].obb_vertices[j].y;
+
+                x = (x - tmp_w) * ratio_x;
+                y = (y - tmp_h) * ratio_y;
+
+                x = std::max(std::min(x, (float)(src_cols - 1)), 0.f);
+                y = std::max(std::min(y, (float)(src_rows - 1)), 0.f);
+
+                objects[i].obb_vertices[j].x = x;
+                objects[i].obb_vertices[j].y = y;
+            }
+
+            // Update axis-aligned bbox for compatibility
+            float min_x = std::min({objects[i].obb_vertices[0].x, objects[i].obb_vertices[1].x,
+                                   objects[i].obb_vertices[2].x, objects[i].obb_vertices[3].x});
+            float max_x = std::max({objects[i].obb_vertices[0].x, objects[i].obb_vertices[1].x,
+                                   objects[i].obb_vertices[2].x, objects[i].obb_vertices[3].x});
+            float min_y = std::min({objects[i].obb_vertices[0].y, objects[i].obb_vertices[1].y,
+                                   objects[i].obb_vertices[2].y, objects[i].obb_vertices[3].y});
+            float max_y = std::max({objects[i].obb_vertices[0].y, objects[i].obb_vertices[1].y,
+                                   objects[i].obb_vertices[2].y, objects[i].obb_vertices[3].y});
+
+            objects[i].rect.x = min_x;
+            objects[i].rect.y = min_y;
+            objects[i].rect.width = max_x - min_x;
+            objects[i].rect.height = max_y - min_y;
+        }
+    }
+
+    // Draw OBB objects on image
+    static void draw_objects_obb(cv::Mat& mat, const std::vector<Object>& objects, const char* const class_names[],
+                                 const char* save_path = nullptr, int save_flag = 0) {
+        for (size_t i = 0; i < objects.size(); ++i) {
+            const auto& obj = objects[i];
+
+            // Draw rotated rectangle
+            cv::Point pts[4];
+            for (int j = 0; j < 4; ++j) {
+                pts[j] = cv::Point(static_cast<int>(obj.obb_vertices[j].x),
+                                  static_cast<int>(obj.obb_vertices[j].y));
+            }
+
+            // Draw polygon
+            for (int j = 0; j < 4; ++j) {
+                cv::line(mat, pts[j], pts[(j + 1) % 4], cv::Scalar(0, 255, 0), 2);
+            }
+
+            // Draw label
+            char label[256];
+            snprintf(label, sizeof(label), "%s %.2f",
+                    class_names[obj.label], obj.prob);
+            cv::putText(mat, label, pts[0], cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 1);
+        }
+
+        if (save_path && save_flag) {
+            cv::imwrite(save_path, mat);
+        }
+    }
+
+} // namespace detection
