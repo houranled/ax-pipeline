@@ -4,6 +4,7 @@
 #include <curl/easy.h>
 #include "../examples/utilities/json.hpp"
 #include <fstream>
+#include "../examples/utilities/sample_log.h"
 
 std::string Camera::capture_path ="/wt_tech/conf/img/"; // 图像保存路径初始化
 
@@ -118,7 +119,7 @@ int CameraController::receive_input_loop() {
                 bool has_focus = json_request.contains("focus");
                 bool has_brightness = json_request.contains("brightness");
 
-                int x, y, zoom,focus,brightness = -1; //-1表示此次不需要更改该值
+                int x=-1, y=-1, zoom=-1, focus=-1,brightness=-1; //-1表示此次不需要更改该值
 
                 int new_rotatex,new_rotatey,new_zoom,new_focus,new_brightness=0;
                 if (has_rotatex) new_rotatex = json_request["rotatex"];
@@ -409,7 +410,7 @@ int Camera::start()
 
     {
         // 初始化Modbus 连接
-        modbus_ctx = modbus_new_tcp(ptz_ip.c_str(), 502); // 默认Modbus TCP 端口为 502
+        modbus_ctx = modbus_new_tcp(ptz_ip.c_str(), 8802); // 默认Modbus TCP 端口为 502改为8802
         if (!modbus_ctx) {
             std::cerr << "Failed to create Modbus context: " << modbus_strerror(errno) << std::endl;
         } else {
@@ -424,10 +425,11 @@ int Camera::start()
                 modbus_ctx = nullptr;
             } else {
                 // 设置 Modbus 从站 ID（根据实际情况调整）
-                modbus_set_slave(modbus_ctx, 1);
+                //modbus_set_slave(modbus_ctx, 1);
             }
         }
     }
+    fetch_remote_status();
 
     //position_thread = std::thread(&Camera::patrol_with_calibration_loop, this);
     return 0;
@@ -645,8 +647,10 @@ int Camera::set_ptz(int horizontal, int vertical, int brightness)
     regs[2] = static_cast<uint16_t>(brightness);  // 亮度
 
     int rc = modbus_write_registers(modbus_ctx, MODBUSPTZ, 3, regs); // 全部写入寄存器
-    if (rc == -1)
+    if (rc == -1) {
+        ALOGE("Failed to write PTZ registers: %s", modbus_strerror(errno));
         return -1;
+    }
 
     // 更新内部状态
     if (horizontal != -1)
@@ -725,6 +729,7 @@ static size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* use
 
 int Camera::fetch_remote_status()
 {
+    bool error = false;
     std::string url = "http://" + ip + "/cgi-bin/param.cgi?action=list&group=CAMPOS&channel=0";
     curl_easy_setopt(curl_handle, CURLOPT_URL, url.c_str());
 
@@ -749,33 +754,37 @@ int Camera::fetch_remote_status()
                     size_t err_des_end = response.find("\n", err_des_pos);
                     std::string err_des = response.substr(err_des_pos + 13, err_des_end - err_des_pos - 13);
                 }
-                return -1;
+                error = true;
             }
         }
 
-        // 解析缩放位置
-        size_t zoompos_pos = response.find("root.CAMPOS.zoompos=");
-        if (zoompos_pos != std::string::npos) {
-            size_t zoompos_end = response.find("\n", zoompos_pos);
-            std::string zoompos_str = response.substr(zoompos_pos + 19, zoompos_end - zoompos_pos - 19);
-        }
+        if (!error) {
+            // 解析缩放位置
+            size_t zoompos_pos = response.find("root.CAMPOS.zoompos=");
+            if (zoompos_pos != std::string::npos) {
+                size_t zoompos_end = response.find("\n", zoompos_pos);
+                std::string zoompos_str = response.substr(zoompos_pos + 19, zoompos_end - zoompos_pos - 19);
+            }
 
-        // 解析焦距位置
-        size_t focuspos_pos = response.find("root.CAMPOS.focuspos=");
-        if (focuspos_pos != std::string::npos) {
-            size_t focuspos_end = response.find("\n", focuspos_pos);
-            std::string focuspos_str = response.substr(focuspos_pos + 20, focuspos_end - focuspos_pos - 20);
-            // 焦距位置可以存储在类成员变量中，如果需要的话
-            // focuspos = std::stoi(focuspos_str);
+            // 解析焦距位置
+            size_t focuspos_pos = response.find("root.CAMPOS.focuspos=");
+            if (focuspos_pos != std::string::npos) {
+                size_t focuspos_end = response.find("\n", focuspos_pos);
+                std::string focuspos_str = response.substr(focuspos_pos + 20, focuspos_end - focuspos_pos - 20);
+                // 焦距位置可以存储在类成员变量中，如果需要的话
+                // focuspos = std::stoi(focuspos_str);
+            }
         }
     }
+
     //调用modbus获取云台姿态
     uint16_t regs[3];
-    int rc = modbus_read_registers(modbus_ctx, 100, 2, regs);
+    int rc = modbus_read_registers(modbus_ctx, MODBUSPTZ, 3, regs);
     if (rc == -1) {
         return -1;
     }
     rotation_x = regs[0];
     rotation_y = regs[1];
+    brightness = regs[2];
     return 0;
 }
