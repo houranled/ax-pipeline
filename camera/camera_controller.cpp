@@ -155,7 +155,7 @@ int CameraController::receive_input_loop() {
 
                 std::string err_msg;
                 bool has_error = false;
-                if (camera->set_ptz(x, y, brightness, false) < 0) {
+                if (camera->set_ptz(x, y, brightness) < 0) {
                     err_msg = "对云台的操作失败!";
                     has_error = true;
                 }
@@ -569,7 +569,7 @@ int Camera::patrol_with_calibration_loop(bool is_calibrate)
      */
     now_point_id = 1; // 当前所在的预置点位ID记录
     for(auto position = preset_positions.begin(); position != preset_positions.end(); ++position) {
-        set_ptz(position->rotation_x, position->rotation_y, position->brightness, true); // 设置转向和亮度
+        set_ptz(position->rotation_x, position->rotation_y, position->brightness); // 设置转向和亮度
         set_zoom_and_focus(position->zoom, position->focus); // 设置缩放级别
 
         // 拍摄图像 - 轮询等待姿态完成或超时10秒
@@ -633,26 +633,18 @@ bool Camera::is_posture_completed()
         return false;
 }
 
-int Camera::set_ptz(int horizontal, int vertical, int brightness, bool get_enabled)
+int Camera::set_ptz(int horizontal, int vertical, int brightness)
 {
     if (modbus_ctx == nullptr)
         return -1;
 
     // 准备要写入的寄存器值
-    uint16_t regs[5];
+    uint16_t regs[3];
     regs[0] = static_cast<uint16_t>(vertical);   // 垂直角度
     regs[1] = static_cast<uint16_t>(horizontal); // 水平角度
     regs[2] = static_cast<uint16_t>(brightness);  // 亮度
 
-    if (get_enabled) {
-        regs[3] = 0x01; // 启用获取
-        regs[4] = 0x01; // 启用获取
-    } else {
-        regs[3] = 0x00; // 禁用获取
-        regs[4] = 0x00; // 禁用获取
-    }
-
-    int rc = modbus_write_registers(modbus_ctx, MODBUSPTZ, 5, regs); // 全部写入寄存器
+    int rc = modbus_write_registers(modbus_ctx, MODBUSPTZ, 3, regs); // 全部写入寄存器
     if (rc == -1)
         return -1;
 
