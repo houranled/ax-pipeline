@@ -311,7 +311,7 @@ int CameraController::load_config_from_file(const std::string& config_file_path)
         config_file >> config;
 
         if (config.contains("cooldown")){
-            cooldown = config["cooldown"].get<int>();
+            cooldown = std::stoi(config["cooldown"].get<std::string>());
         }
 
         // 遍历相机列表
