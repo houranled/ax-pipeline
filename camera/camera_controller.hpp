@@ -52,11 +52,12 @@ private:
     int id;
     std::string ip;  // 相机ip地址
     std::string ptz_ip; //云台ip地址
-    int rotation_x;  // 当前水平角度
-    int rotation_y; // 当前垂直角度
-    int zoom; // 当前焦距
-    int focus;   // 当前聚焦
-    int brightness; // 当前补光灯亮度
+    int rotation_x=0;  // 当前水平角度
+    int rotation_y=0; // 当前垂直角度
+    int zoom=0; // 当前焦距
+    int focus=0;   // 当前聚焦
+    int brightness=0; // 当前补光灯亮度
+
     bool running;
     bool patrolling = false;  // 是否在巡逻中
     int now_point_id; // 当前所在点位id
@@ -64,8 +65,6 @@ private:
 
     // 图像拍摄相关成员
     static std::string capture_path; // 图像保存路径
-
-    std::thread position_thread; // 命令控制相机姿态线程
 
     CURL *curl_handle;  // 持久化的curl句柄
     modbus_t *modbus_ctx = nullptr;

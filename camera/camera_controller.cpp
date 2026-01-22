@@ -113,20 +113,12 @@ int CameraController::receive_input_loop() {
                     response["msg"] = "The JSON key 'data' is missing or empty";
                     goto Finish;
                 }
-                bool has_rotatex = json_request.contains("rotatex");
-                bool has_rotatey = json_request.contains("rotatey");
-                bool has_zoom = json_request.contains("zoom");
-                bool has_focus = json_request.contains("focus");
-                bool has_brightness = json_request.contains("brightness");
-
-                int x=-1, y=-1, zoom=-1, focus=-1,brightness=-1; //-1表示此次不需要更改该值
-
-                int new_rotatex,new_rotatey,new_zoom,new_focus,new_brightness=0;
-                if (has_rotatex) new_rotatex = json_request["rotatex"];
-                if (has_rotatey) new_rotatey = json_request["rotatey"];
-                if (has_zoom) new_zoom = json_request["zoom"];
-                if (has_focus) new_focus = json_request["focus"];
-                if (has_brightness) new_brightness = json_request["brightness"];
+                nlohmann::json data = json_request["data"];
+                bool has_rotatex = data.contains("rotatex");
+                bool has_rotatey =  data.contains("rotatey");
+                bool has_zoom =  data.contains("zoom");
+                bool has_focus = data.contains("focus");
+                bool has_brightness = data.contains("brightness");
 
                 int origin_rotatex, origin_rotatey, origin_zoom, origin_focus, origin_brightness;
                 if (cmd == "set") {
@@ -143,24 +135,39 @@ int CameraController::receive_input_loop() {
                     origin_brightness = camera->brightness;
                 }
 
-                if (has_rotatex)
-                    x = origin_rotatex + new_rotatex;
-                if (has_rotatey)
-                    y = origin_rotatey + new_rotatey;
-                if (has_zoom)
-                    zoom = origin_zoom + new_zoom;
-                if (has_focus)
-                    focus = origin_focus + new_focus;
-                if (has_brightness)
-                    brightness = origin_brightness + new_brightness;
+                int x=-1, y=-1, zoom=-1, focus=-1,brightness=-1; //最终值 -1表示此次不需要更改该值
 
-                std::string err_msg;
+                int new_rotatex,new_rotatey,new_zoom,new_focus,new_brightness=0;
+                if (has_rotatex) {
+                    new_rotatex = data["rotatex"];
+                    x = (origin_rotatex + new_rotatex%360)%360;
+                    x<0? x+=360 : x;
+                }
+                if (has_rotatey) {
+                    new_rotatey = data["rotatey"];
+                    y = (origin_rotatey + new_rotatey%360)%360;
+                    y<0? y+=360 : y;
+                }
+                if (has_zoom) {
+                    new_zoom = data["zoom"];
+                    zoom = origin_zoom + new_zoom;
+                }
+                if (has_focus) {
+                    new_focus = data["focus"];
+                    focus = origin_focus + new_focus;
+                }
+                if (has_brightness) {
+                    new_brightness = data["brightness"];
+                    brightness = origin_brightness + new_brightness;
+                }
+
+                std::string err_msg = "";
                 bool has_error = false;
                 if (camera->set_ptz(x, y, brightness) < 0) {
                     err_msg = "对云台的操作失败!";
                     has_error = true;
                 }
-                if (camera->set_zoom_and_focus(zoom, focus)) {
+                if (camera->set_zoom_and_focus(zoom, focus) < 0) {
                     err_msg += "对摄像机操作失败!";
                     has_error = true;
                 }
@@ -170,6 +177,7 @@ int CameraController::receive_input_loop() {
                     response["status"] = 500;
                 else
                     response["status"] = 200;
+
             } else  { // 未指定摄像头 直接报错
                 response["status"] = 500;
                 response["msg"] = "该摄像头不存在";
@@ -263,7 +271,7 @@ int CameraController::receive_input_loop() {
         } */
        else { //unknown action
             response["status"] = "fail";
-            response["message"] = "unknown action";
+            response["message"] = "unknown cmd.";
         }
 Finish:
         std::cout << response.dump() << std::endl;
@@ -439,9 +447,6 @@ int Camera::pause()
 {
     running = false;
 
-    if (position_thread.joinable()) {
-        position_thread.join();
-    }
     return 0;
 }
 
@@ -640,6 +645,12 @@ int Camera::set_ptz(int horizontal, int vertical, int brightness)
     if (modbus_ctx == nullptr)
         return -1;
 
+   if (horizontal!=-1) {
+        horizontal *= 100;
+   }
+   if (vertical!=-1) {
+        vertical *= 100;
+   }
     // 准备要写入的寄存器值
     uint16_t regs[3];
     regs[0] = static_cast<uint16_t>(vertical);   // 垂直角度
@@ -693,15 +704,21 @@ int Camera::set_zoom_and_focus(int zoom, int focus)
     // 构造包含缩放参数的URL
     std::string url = "http://" + ip + "/cgi-bin/param.cgi?action=update&group=CAMPOS&channel=0";
 
+    bool todo = false;
     // 仅当zoom > -1时添加zoom参数
     if (zoom > -1) {
         url += "&CAMPOS.zoompos=" + std::to_string(zoom);
+        todo = true;
     }
 
     // 仅当focus > -1时添加focus参数
     if (focus > -1) {
         url += "&CAMPOS.focuspos=" + std::to_string(focus);
+        todo = true;
     }
+
+    if (!todo)
+        return 0;
 
     // 向curl设置请求URL
     curl_easy_setopt(curl_handle, CURLOPT_URL, url.c_str());
