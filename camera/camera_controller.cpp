@@ -415,32 +415,16 @@ Camera::~Camera()
 int Camera::start()
 {
     running = true;
+    auto res_code = 1;
 
-    {
-        // 初始化Modbus 连接
-        modbus_ctx = modbus_new_tcp(ptz_ip.c_str(), 8802); // 默认Modbus TCP 端口为 502改为8802
-        if (!modbus_ctx) {
-            std::cerr << "Failed to create Modbus context: " << modbus_strerror(errno) << std::endl;
-        } else {
-            // 设置 Modbus 超时时间
-            uint32_t to_sec = 5; // 超时秒数
-            modbus_set_response_timeout(modbus_ctx, to_sec, 0);
+    auto rc = connect_modbus();  //云台连接
 
-            // 连接到 Modbus 服务器
-            if (modbus_connect(modbus_ctx) == -1) {
-                std::cerr << "Modbus connection failed: " << modbus_strerror(errno) << std::endl;
-                modbus_free(modbus_ctx);
-                modbus_ctx = nullptr;
-            } else {
-                // 设置 Modbus 从站 ID（根据实际情况调整）
-                //modbus_set_slave(modbus_ctx, 1);
-            }
-        }
-    }
     fetch_remote_status();
 
-    //position_thread = std::thread(&Camera::patrol_with_calibration_loop, this);
-    return 0;
+    if (rc == false)     {
+        res_code = 0;
+    }
+    return res_code;
 }
 
 int Camera::pause()
@@ -448,6 +432,37 @@ int Camera::pause()
     running = false;
 
     return 0;
+}
+
+bool Camera::connect_modbus()
+{
+    // 清理旧连接
+    if (modbus_ctx != nullptr) {
+        modbus_close(modbus_ctx);
+        modbus_free(modbus_ctx);
+    }
+
+    // 初始化Modbus 连接
+    modbus_ctx = modbus_new_tcp(ptz_ip.c_str(), 8802); // 默认Modbus TCP 端口为 502改为8802
+    if (!modbus_ctx) {
+        std::cerr << "Failed to create Modbus context: " << modbus_strerror(errno) << std::endl;
+    } else {
+        // 设置 Modbus 超时时间
+        uint32_t to_sec = 5; // 超时秒数
+        modbus_set_response_timeout(modbus_ctx, to_sec, 0);
+
+        // 连接到 Modbus 服务器
+        if (modbus_connect(modbus_ctx) == -1) {
+            std::cerr << "Modbus connection failed: " << modbus_strerror(errno) << std::endl;
+            modbus_free(modbus_ctx);
+            modbus_ctx = nullptr;
+        } else {
+            // 设置 Modbus 从站 ID（根据实际情况调整）
+            //modbus_set_slave(modbus_ctx, 1);
+        }
+    }
+
+    return false;
 }
 
 int Camera::get_id()
@@ -660,7 +675,17 @@ int Camera::set_ptz(int horizontal, int vertical, int brightness)
     int rc = modbus_write_registers(modbus_ctx, MODBUSPTZ, 3, regs); // 全部写入寄存器
     if (rc == -1) {
         ALOGE("Failed to write PTZ registers: %s", modbus_strerror(errno));
-        return -1;
+
+        // 尝试重新连接并重试一次
+        if (connect_modbus()) {
+            rc = modbus_write_registers(modbus_ctx, MODBUSPTZ, 3, regs);
+            if (rc == -1) {
+                ALOGE("Retry failed to write PTZ registers: %s", modbus_strerror(errno));
+                return -1;
+            }
+        } else {
+            return -1;
+        }
     }
 
     // 更新内部状态
