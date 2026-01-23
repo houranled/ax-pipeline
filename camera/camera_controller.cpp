@@ -173,7 +173,7 @@ int CameraController::receive_input_loop() {
                 }
                 response["msg"] = err_msg;
 
-                if (has_error = true)
+                if (has_error == true)
                     response["status"] = 500;
                 else
                     response["status"] = 200;
@@ -409,7 +409,10 @@ Camera::Camera()
 
 Camera::~Camera()
 {
-    curl_easy_cleanup(curl_handle);
+    if (curl_handle) {
+        curl_easy_cleanup(curl_handle);
+        curl_handle = nullptr;
+    }
 }
 
 int Camera::start()
@@ -614,7 +617,7 @@ int Camera::patrol_with_calibration_loop(bool is_calibrate)
             if (is_calibrate) {
                 capture_image_for_reference(); // 标定模式下的拍照
             } else  {
-                // TODO 巡航拍照
+                // TODO 巡航拍照识别
 
             }
         } //else noop
@@ -747,6 +750,10 @@ int Camera::set_zoom_and_focus(int zoom, int focus)
 
     // 向curl设置请求URL
     curl_easy_setopt(curl_handle, CURLOPT_URL, url.c_str());
+
+    // 确保不使用 WriteCallback
+    curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, nullptr);
+    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, nullptr);
 
     // 执行请求
     CURLcode res = curl_easy_perform(curl_handle);
