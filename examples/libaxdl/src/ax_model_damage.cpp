@@ -2,6 +2,7 @@
 #include <cmath>
 #include <opencv2/opencv.hpp>
 #include <numeric>  // 添加此行以使用 std::accumulate
+#include "../../camera/camera_controller.hpp"
 
 int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results)
 {
@@ -128,6 +129,7 @@ void ax_model_damage::draw_custom(int chn, axdl_results_t *results, float fontsc
         }
     }
 
-    //生成告警
+    //生成告警 调用camera_Controller
+    CameraController::getInstance()->early_warning(chn/2);
 
 }

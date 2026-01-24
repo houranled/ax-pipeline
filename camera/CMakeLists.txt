@@ -4,6 +4,9 @@ project(camera)
 file(GLOB SOURCES "*.cpp" "*.c")
 if(SOURCES)
 	add_library(camera STATIC ${SOURCES})
-	target_include_directories(camera PUBLIC ${CURL_SOURCE_DIR}/include)
-	target_link_libraries(camera PRIVATE libcurl modbus)
+	target_include_directories(camera PUBLIC
+        ${CURL_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/3rdparty/curl-8.17.0/include
+    )
+	target_link_libraries(camera PRIVATE alarm CURL::libcurl modbus)
 endif()

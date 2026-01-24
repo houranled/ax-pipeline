@@ -3,5 +3,5 @@ project(alarm)
 
 file(GLOB SOURCES "*.cpp" "*.c")
 if(SOURCES)
-	add_library(alarm ${SOURCES})
+	add_library(alarm STATIC ${SOURCES})
 endif()

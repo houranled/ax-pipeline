@@ -3,20 +3,59 @@
 
 #include <thread>
 #include <chrono>
-#include <curl/curl.h>
 #include <map>
 #include <vector>
 #include <string>
 #include <modbus/modbus.h>
+#include <curl/curl.h>
 #include <ctime>
 #include <fstream>
 #include <sys/stat.h>
+#include "../alarm/alarm.hpp"
 
 #define CONFIG_FILE_PATH "/wt_tech/conf/rt.json"
 
 #define MODBUSPTZ  0x4450  //云台modbus参数起始地址
 
-class CameraController;
+class Camera; // 声明Camera类，以便在CameraController类中使用
+
+class CameraController {
+public:
+
+    // 单例模式获取实例
+    static CameraController* getInstance() {
+        static CameraController instance;
+        return &instance;
+    }
+
+    // 禁止拷贝和赋值
+    CameraController(const CameraController&) = delete;
+    CameraController& operator=(const CameraController&) = delete;
+
+    int start();
+    int stop(); // 关闭处理线程
+    void early_warning(int camera_id); // 对摄像机id为camera_id触发预警
+
+
+private:
+    // 将构造函数设为私有
+    CameraController();
+    ~CameraController();
+
+    std::map<int, Camera*> cameras; // 相机id与相机对象的映射
+    std::thread input_thread;
+    bool running;
+    static CURL *curl_handle;  // 持久化的curl句柄用于通过http与摄像机通信并控制
+    static int cooldown; //告警冷却时间 单位小时.
+    AlarmGenerator alarm_generator; // 告警生成器
+
+    // a function for executing in new thread to receive the input read from std-io
+    int receive_input_loop();
+    int all_cameras_patrol(); // 巡逻
+    int calibrate(int camera_id); // 标定
+    int load_config_from_file(const std::string& config_file_path); //根据配置文件信息自构建所有相机对象
+
+};
 
 class Camera {
     friend CameraController;    // 允许CameraController类访问Camera类的私有成员
@@ -72,34 +111,6 @@ private:
     int patrol_with_calibration_loop(bool is_calibrate);  // 摄像机巡检(可伴随标定)
     bool is_posture_completed(); // 判断是否到达指定位置
     bool connect_modbus(); // 重连modbus
-
-};
-
-class CameraController {
-public:
-    CameraController();
-    ~CameraController();
-
-    int start();
-    // 关闭处理线程
-    int stop();
-
-
-private:
-    std::map<int, Camera*> cameras; // 相机id与相机对象的映射
-    std::thread input_thread;
-    bool running;
-    static CURL *curl_handle;  // 持久化的curl句柄用于通过http与摄像机通信并控制
-
-    static int cooldown; //告警冷却时间 单位小时.
-
-    // a function for executing in new thread to receive the input read from std-io
-    int receive_input_loop();
-
-    int all_cameras_patrol(); // 巡逻
-    int calibrate(int camera_id); // 标定
-
-    int load_config_from_file(const std::string& config_file_path); //根据配置文件信息自构建所有相机对象
 
 };
 

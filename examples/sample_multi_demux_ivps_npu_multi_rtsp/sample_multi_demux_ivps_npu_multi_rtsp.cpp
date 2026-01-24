@@ -181,8 +181,8 @@ static AX_VOID PrintHelp(char *testApp)
 
 int main(int argc, char *argv[])
 {
-    CameraController cc;
-    cc.start();
+    CameraController::getInstance()->start();
+
     if (SAMPLE_Check_Bsp_Version() != 0)
     {
         return -1;

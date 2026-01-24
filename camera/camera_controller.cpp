@@ -47,7 +47,7 @@ int CameraController::receive_input_loop() {
             // 解析JSON字符串(处理JSON命令)
             json_request = nlohmann::json::parse(json_str);
         } catch (const nlohmann::json::parse_error& e) {
-            ALOGE(" json parse error%s", e.what());
+            ALOGE("json parse error%s", e.what());
             continue;
         }
 
@@ -417,6 +417,11 @@ int CameraController::stop()
         camera.second->pause(); // 停止相机
     }
     return 0;
+}
+
+void CameraController::early_warning(int camera_id)
+{
+    alarm_generator.generateAlarm(AlarmType::LINE_CROSSING, "", camera_id, 1);
 }
 
 /* ================================== */

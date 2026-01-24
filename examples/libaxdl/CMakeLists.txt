@@ -11,7 +11,8 @@ function(targetlink name)
     target_include_directories(${name} PRIVATE ${BSP_MSP_DIR}/arm64_glibc/include)
     target_include_directories(${name} PRIVATE ${BSP_MSP_DIR}/include/npu_cv_kit)
     target_include_directories(${name} PRIVATE ${CMAKE_SOURCE_DIR}/third-party/ByteTrack/include)
-    
+    target_include_directories(${name} PRIVATE ${CMAKE_SOURCE_DIR}/3rdparty/curl-8.17.0/include)
+
     # onnxruntime
     if(ONNXRUNTIME_DIR)
         target_include_directories(${name} PRIVATE ${ONNXRUNTIME_DIR}/include)

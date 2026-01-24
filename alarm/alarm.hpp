@@ -20,6 +20,7 @@ struct Alarm {
     int cameraId;           // 摄像头ID
     time_t timestamp;       // 时间戳
     float confidence;       // 置信度
+    int camera_id;          // 摄像头id
 };
 
 // 告警生成器类
@@ -36,6 +37,9 @@ public:
 
     // 添加告警监听器
     void addAlarmListener(void (*listener)(const Alarm&));
+
+    // 消费者获取每个告警
+    void look_a_alarm();
 
 private:
     std::vector<void (*)(const Alarm&)> m_listeners;  // 告警监听器列表

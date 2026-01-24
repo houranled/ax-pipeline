@@ -108,7 +108,7 @@ set(BUILD_CURL_EXE OFF)
 set(ENABLE_MANUAL OFF)
 
 add_subdirectory(third-party/RTSP)
-add_subdirectory(third-party/RtspServer)    
+add_subdirectory(third-party/RtspServer)
 add_subdirectory(third-party/ByteTrack)
 add_subdirectory(third-party/mp4demux)
 
@@ -130,7 +130,8 @@ if(AXERA_TARGET_CHIP MATCHES "AX650")
     endif()
     message(STATUS "OpenCV_DIR = ${OpenCV_DIR}")
     find_package(OpenCV REQUIRED)
-    
+    find_package(CURL REQUIRED)
+
     add_subdirectory(examples/common/common_pipeline)
     add_subdirectory(examples/libaxdl)
     # add_subdirectory(examples/sample_demux_ivps_npu_rtsp)
@@ -154,7 +155,7 @@ elseif(AXERA_TARGET_CHIP MATCHES "AX620E")
     endif()
     message(STATUS "OpenCV_DIR = ${OpenCV_DIR}")
     find_package(OpenCV REQUIRED)
-    
+
     add_subdirectory(examples/common/common_pipeline)
     add_subdirectory(examples/libaxdl)
     add_subdirectory(examples/sample_demux_ivps_npu_rtsp)

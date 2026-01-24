@@ -34,3 +34,8 @@ Alarm AlarmGenerator::generateAlarm(AlarmType type, const std::string& message, 
 void AlarmGenerator::addAlarmListener(void (*listener)(const Alarm&)) {
     m_listeners.push_back(listener);
 }
+
+void AlarmGenerator::look_a_alarm()
+{
+
+}

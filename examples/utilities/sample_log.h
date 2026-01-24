@@ -26,7 +26,7 @@ typedef enum
     SAMPLE_LOG_MAX
 } SAMPLE_LOG_LEVEL_E;
 
-static SAMPLE_LOG_LEVEL_E log_level = SAMPLE_LOG_MIN;
+static SAMPLE_LOG_LEVEL_E log_level = SAMPLE_LOG_EMERGENCY; //for weiti
 
 #if 1
 #define MACRO_BLACK "\033[1;30;30m"
@@ -59,6 +59,14 @@ static void init_log_file() {
     init_log_file(); \
     if (log_file) { \
         fprintf(log_file, "[E][%32s][%4d]: " fmt "\n", __FUNCTION__, __LINE__, ##__VA_ARGS__); \
+        fflush(log_file); \
+    } \
+} while(0)
+
+#define MYALOGI(fmt, ...) do { \
+    init_log_file(); \
+    if (log_file && log_level >= SAMPLE_LOG_EMERGENCY) { \
+        fprintf(log_file, "[wt][%32s][%4d]: " fmt "\n", __FUNCTION__, __LINE__, ##__VA_ARGS__); \
         fflush(log_file); \
     } \
 } while(0)
