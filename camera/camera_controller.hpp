@@ -96,7 +96,7 @@ private:
     // a function for executing in new thread to receive the input read from std-io
     int receive_input_loop();
 
-    int patrol(); // 巡逻
+    int all_cameras_patrol(); // 巡逻
     int calibrate(int camera_id); // 标定
 
     int load_config_from_file(const std::string& config_file_path); //根据配置文件信息自构建所有相机对象

@@ -42,8 +42,15 @@ int CameraController::receive_input_loop() {
             if (brace_count == 0) break; // JSON 闭合
         }
 
-        // 解析JSON字符串(处理JSON命令)
-        nlohmann::json json_request = nlohmann::json::parse(json_str); //请求
+        nlohmann::json json_request; //请求
+        try {
+            // 解析JSON字符串(处理JSON命令)
+            json_request = nlohmann::json::parse(json_str);
+        } catch (const nlohmann::json::parse_error& e) {
+            ALOGE(" json parse error%s", e.what());
+            continue;
+        }
+
         nlohmann::json response;  //响应
 
         // 处理JSON命令
@@ -163,10 +170,12 @@ int CameraController::receive_input_loop() {
 
                 std::string err_msg = "";
                 bool has_error = false;
+
                 if (camera->set_ptz(x, y, brightness) < 0) {
                     err_msg = "对云台的操作失败!";
                     has_error = true;
                 }
+
                 if (camera->set_zoom_and_focus(zoom, focus) < 0) {
                     err_msg += "对摄像机操作失败!";
                     has_error = true;
@@ -180,7 +189,7 @@ int CameraController::receive_input_loop() {
 
             } else  { // 未指定摄像头 直接报错
                 response["status"] = 500;
-                response["msg"] = "该摄像头不存在";
+                response["msg"] = "未指定摄像头";
             }
         } else if (cmd == "action") {//执行一次巡检
             // 快速返回，在后台线程中执行巡检
@@ -196,30 +205,37 @@ int CameraController::receive_input_loop() {
             response["status"] = "start";
 
             // 创建后台线程执行巡检任务
-            std::thread([this, currentReqId, currentCameraId]() {
-                // 如果指定了有效的摄像机ID，则只巡检该摄像机；否则巡检所有摄像机
-                if (currentCameraId > 0 && cameras.find(currentCameraId) != cameras.end()) {
-                    Camera* camera = cameras[currentCameraId];
-                    camera->patrol_with_calibration_loop(false);
-                    // 巡检完成后构造JSON响应
-                    nlohmann::json result;
-                    result["status"] = "end";
-                    result["msg"] = "Camera " + std::to_string(currentCameraId) + " patrol has completed successfully";
-                    result["cmd"] = "action";
-                    result["reqId"] = currentReqId; // 添加reqId到响应中
-                    std::cout << result.dump() << std::endl;
-                } else {
-                    // 如果没有指定有效的摄像机ID，则巡检所有摄像机
-                    patrol();
-                    // 巡检完成后构造JSON响应
-                    nlohmann::json result;
-                    result["status"] = "end";
-                    result["msg"] = "All cameras patrol has completed successfully";
-                    result["cmd"] = "action";
-                    result["reqId"] = currentReqId; // 添加reqId到响应中
-                    std::cout << result.dump() << std::endl;
-                }
-            }).detach();
+            try {
+                std::thread patrol_thread([this, currentReqId, currentCameraId]() {
+                    // 如果指定了有效的摄像机ID，则只巡检该摄像机；否则巡检所有摄像机
+                    if (currentCameraId > 0 && cameras.find(currentCameraId) != cameras.end()) {
+                        Camera* camera = cameras[currentCameraId];
+                        camera->patrol_with_calibration_loop(false);
+                        // 巡检完成后构造JSON响应
+                        nlohmann::json result;
+                        result["status"] = "end";
+                        result["msg"] = "Camera " + std::to_string(currentCameraId) + " patrol has completed successfully";
+                        result["cmd"] = "action";
+                        result["reqId"] = currentReqId; // 添加reqId到响应中
+                        std::cout << result.dump() << std::endl;
+                    } else {
+                        // 如果没有指定有效的摄像机ID，则巡检所有摄像机
+                        all_cameras_patrol();
+                        // 巡检完成后构造JSON响应
+                        nlohmann::json result;
+                        result["status"] = "end";
+                        result["msg"] = "All cameras patrol has completed successfully";
+                        result["cmd"] = "action";
+                        result["reqId"] = currentReqId; // 添加reqId到响应中
+                        std::cout << result.dump() << std::endl;
+                    }
+                });
+                patrol_thread.detach();
+            } catch (const std::system_error& e) {
+                response["status"] = 500;
+                response["msg"] = "Failed to create patrol thread: " + std::string(e.what());
+                ALOGE("RThread creation failed: %s", e.what());
+            }
         } else if (cmd == "calibrate") { //执行一次标定
             /* 标定时，会执行一次巡检; 快速返回，在后台线程中执行标定  */
             std::string currentReqId = reqId; // 捕获当前的reqId值
@@ -234,29 +250,36 @@ int CameraController::receive_input_loop() {
             response["status"] = 200;
 
             // 创建后台线程执行标定任务
-            std::thread([this, currentReqId, currentCameraId]() {
-                // 如果指定了有效的摄像机ID，则只标定该摄像机；否则标定所有摄像机
-                if (currentCameraId > 0 && cameras.find(currentCameraId) != cameras.end()) {
-                    calibrate(currentCameraId); // 标定指定摄像机
-                    // 标定完成后构造JSON响应
-                    nlohmann::json result;
-                    result["status"] = 200;
-                    result["message"] = "Camera " + std::to_string(currentCameraId) + " calibration completed successfully";
-                    result["cmd"] = "calibrate";
-                    result["reqId"] = currentReqId; // 添加reqId到响应中
-                    std::cout << result.dump() << std::endl;
-                } else {
-                    // 如果没有指定有效的摄像机ID，则标定所有摄像机
-                    calibrate(-1); // -1表示标定所有摄像机
-                    // 标定完成后构造JSON响应
-                    nlohmann::json result;
-                    result["status"] = 200;
-                    result["message"] = "All cameras calibration completed successfully";
-                    result["cmd"] = "calibrate";
-                    result["reqId"] = currentReqId; // 添加reqId到响应中
-                    std::cout << result.dump() << std::endl;
-                }
-            }).detach();
+            try {
+                std::thread calibrate_thread([this, currentReqId, currentCameraId]() {
+                    // 如果指定了有效的摄像机ID，则只标定该摄像机；否则标定所有摄像机
+                    if (currentCameraId > 0 && cameras.find(currentCameraId) != cameras.end()) {
+                        calibrate(currentCameraId); // 标定指定摄像机
+                        // 标定完成后构造JSON响应
+                        nlohmann::json result;
+                        result["status"] = 200;
+                        result["message"] = "Camera " + std::to_string(currentCameraId) + " calibration completed successfully";
+                        result["cmd"] = "calibrate";
+                        result["reqId"] = currentReqId; // 添加reqId到响应中
+                        std::cout << result.dump() << std::endl;
+                    } else {
+                        // 如果没有指定有效的摄像机ID，则标定所有摄像机
+                        calibrate(-1); // -1表示标定所有摄像机
+                        // 标定完成后构造JSON响应
+                        nlohmann::json result;
+                        result["status"] = 200;
+                        result["message"] = "All cameras calibration completed successfully";
+                        result["cmd"] = "calibrate";
+                        result["reqId"] = currentReqId; // 添加reqId到响应中
+                        std::cout << result.dump() << std::endl;
+                    }
+                });
+                calibrate_thread.detach();
+            } catch (const std::system_error& e) {
+                response["status"] = 500;
+                response["msg"] = "Failed to create calibration thread: " + std::string(e.what());
+                ALOGE("RThread creation failed: %s", e.what());
+            }
         }
         /* else if (cmd == "photograph") { //拍照指令
             if (camera_id > 0 && camera != NULL) {
@@ -280,7 +303,7 @@ Finish:
     return 0;
 }
 
-int CameraController::patrol()
+int CameraController::all_cameras_patrol()
 {
     // 遍历所有摄像机，设置不标定模式并启动巡逻
     for (auto& pair : cameras) {
@@ -663,6 +686,9 @@ int Camera::set_ptz(int horizontal, int vertical, int brightness)
     if (modbus_ctx == nullptr)
         return -1;
 
+    if (horizontal==-1 && vertical==-1 && brightness==-1)
+        return 0; // 忽略控制请求，不进行任何操作
+
    if (horizontal!=-1) {
         horizontal *= 100;
    }
@@ -726,6 +752,14 @@ int Camera::set_brighten(int brightness)
     return 0;
 }
 
+// 回调函数，用于处理HTTP响应
+static size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp)
+{
+    size_t totalSize = size * nmemb;
+    ((std::string*)userp)->append((char*)contents, totalSize);
+    return totalSize;
+}
+
 int Camera::set_zoom_and_focus(int zoom, int focus)
 {
     //调用libcurl库
@@ -751,9 +785,10 @@ int Camera::set_zoom_and_focus(int zoom, int focus)
     // 向curl设置请求URL
     curl_easy_setopt(curl_handle, CURLOPT_URL, url.c_str());
 
-    // 确保不使用 WriteCallback
-    curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, nullptr);
-    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, nullptr);
+    curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteCallback);
+
+    std::string response_data;
+    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, &response_data);
 
     // 执行请求
     CURLcode res = curl_easy_perform(curl_handle);
@@ -768,13 +803,6 @@ int Camera::set_zoom_and_focus(int zoom, int focus)
     return 0;
 }
 
-// 回调函数，用于处理HTTP响应
-static size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp)
-{
-    size_t totalSize = size * nmemb;
-    ((std::string*)userp)->append((char*)contents, totalSize);
-    return totalSize;
-}
 
 int Camera::fetch_remote_status()
 {
@@ -832,8 +860,8 @@ int Camera::fetch_remote_status()
     if (rc == -1) {
         return -1;
     }
-    rotation_x = regs[0];
-    rotation_y = regs[1];
+    rotation_x = regs[0]/100;
+    rotation_y = regs[1]/100;
     brightness = regs[2];
     return 0;
 }

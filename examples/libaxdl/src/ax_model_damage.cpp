@@ -127,4 +127,7 @@ void ax_model_damage::draw_custom(int chn, axdl_results_t *results, float fontsc
             }
         }
     }
+
+    //生成告警
+
 }
