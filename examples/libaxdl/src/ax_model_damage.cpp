@@ -126,10 +126,12 @@ void ax_model_damage::draw_custom(int chn, axdl_results_t *results, float fontsc
                     results->mObjects[i].bbox_vertices[0],
                     {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
             }
+
+            //生成告警 调用camera_Controller
+            CameraController::getInstance()->early_warning(chn/2);
         }
     }
 
-    //生成告警 调用camera_Controller
-    CameraController::getInstance()->early_warning(chn/2);
+
 
 }

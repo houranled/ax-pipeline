@@ -197,6 +197,11 @@ private:
                     if (true)
                     {
                         axdl_native_osd_draw_results(gModels, osd_pipe->pipeid, &mResults, 0.6, 2);
+
+                        /* 这里保存图片和视频 当draw_custom执行时若检测到告警， 这里进行图片和视频保存。
+                         * 或者camera处于巡逻patrol模式时，也进行保存
+                         */
+
                         AX_IVPS_RGN_DISP_GROUP_T *rgn_disp_grp = (AX_IVPS_RGN_DISP_GROUP_T *)axdl_native_osd_get_handle(gModels, osd_pipe->pipeid);
                         if (rgn_disp_grp)
                         {
@@ -204,7 +209,7 @@ private:
                             {
                                 if (rgn_disp_grp[d].nNum > 0 && rgn_disp_grp[d].nNum <= AX_IVPS_REGION_MAX_DISP_NUM)
                                 {
-                                    int ret = AX_IVPS_RGN_Update(osd_pipe->m_ivps_attr.n_osd_rgn_chn[d], &rgn_disp_grp[d]);
+                                    int ret = AX_IVPS_RGN_Update(osd_pipe->m_ivps_attr.n_osd_rgn_chn[d], &rgn_disp_grp[d]);//通知IVPS硬件，更新显示区域完成，就会自动转发到VENC中
                                     if (0 != ret)
                                     {
                                         static int cnt = 0;

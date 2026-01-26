@@ -421,6 +421,7 @@ int CameraController::stop()
 
 void CameraController::early_warning(int camera_id)
 {
+    MYALOGI("生成告警，并拍摄图片， 摄像头id%d", camera_id);
     alarm_generator.generateAlarm(AlarmType::LINE_CROSSING, "", camera_id, 1);
 }
 

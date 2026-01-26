@@ -3,6 +3,9 @@
 
 #include <string>
 #include <vector>
+#include <queue>
+#include <mutex>
+#include <condition_variable>
 
 // 告警类型枚举
 enum class AlarmType {
@@ -20,7 +23,6 @@ struct Alarm {
     int cameraId;           // 摄像头ID
     time_t timestamp;       // 时间戳
     float confidence;       // 置信度
-    int camera_id;          // 摄像头id
 };
 
 // 告警生成器类
@@ -35,14 +37,16 @@ public:
     // 生成告警
     Alarm generateAlarm(AlarmType type, const std::string& message, int cameraId, float confidence);
 
-    // 添加告警监听器
-    void addAlarmListener(void (*listener)(const Alarm&));
-
     // 消费者获取每个告警
     void look_a_alarm();
+    
+    // 获取队列中的告警数量
+    size_t getAlarmCount();
 
 private:
-    std::vector<void (*)(const Alarm&)> m_listeners;  // 告警监听器列表
+    std::queue<Alarm> alarmQueue;  // 告警队列
+    std::mutex queueMutex;         // 队列互斥锁
+    std::condition_variable queueCondition;  // 队列条件变量
 };
 
 #endif // ALARM_GENERATOR_H

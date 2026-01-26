@@ -42,7 +42,7 @@
 #include "../../../camera/camera_controller.hpp"
 #include <list>
 
-#define pipe_count 2
+#define pipe_count 3
 
 #ifdef AXERA_TARGET_CHIP_AX620
 #define rtsp_max_count 2
@@ -142,6 +142,188 @@ void ai_inference_func(pipeline_buffer_t *buff)
         g_sample.osd_target_map[pipe->pipeid]->osd_helper.Update(&mResults[pipe->pipeid]);
     }
 }
+
+/*       save frame           */
+typedef struct {
+	int frameNum;
+	int DataSize;
+	unsigned char * p_h26data;
+	int IsWrite;
+} h26xData_t;
+h26xData_t h26data[2]={0};
+
+static FILE *ffmpeg_pipe = NULL;
+static FILE *ffmpeg_pipe_abnormal = NULL;
+
+// 初始化FFmpeg管道
+bool init_ffmpeg_pipe() {
+	char cmd[512]={0};
+	// 获取系统时间戳
+	time_t timeReal;
+	time(&timeReal);
+	timeReal = timeReal + 8 * 3600;
+	tm *t = gmtime(&timeReal);
+	char dirname[128] ={0};
+	sprintf(dirname , "/wt_tech/data/video2/%d%02d%02d" , t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
+	//detection::CreateDir(dirname);
+	if(access(dirname,0)!=0)
+	{
+		mkdir(dirname,0777);
+
+	}
+	char filePath[128]={0};
+	sprintf(filePath, "%s/%d_%02d_%02d_%02d_%02d_%02d.mp4",dirname ,  t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
+	sprintf(cmd , "ffmpeg -y -f hevc -i pipe:0 -c copy %s 2>/dev/null" , filePath);
+	//sprintf(cmd, "ffmpeg -y -f hevc -i pipe:0 -c:v libx265 -crf 28 -preset fast %s 2>/dev/null", filePath);
+    ffmpeg_pipe = popen(cmd, "w");
+    return ffmpeg_pipe != NULL;
+}
+
+// 初始化FFmpeg管道
+bool init_ffmpeg_pipe_abnormal(char *filePath) {
+	char cmd[512]={0};
+	sprintf(cmd , "ffmpeg -y -f hevc -i pipe:0 -c copy %s 2>/dev/null" , filePath);
+	//sprintf(cmd, "ffmpeg -y -f hevc -i pipe:0 -c:v libx265 -crf 28 -preset fast %s 2>/dev/null", filePath);
+    ffmpeg_pipe_abnormal = popen(cmd, "w");
+    return ffmpeg_pipe_abnormal != NULL;
+}
+
+// 初始化FFmpeg管道保存图像
+bool init_ffmpeg_pipe_jpg(void *p_hevc , int pLen) {
+	char cmd[512]={0};
+	time_t timeReal;
+	time(&timeReal);
+	timeReal = timeReal + 8 * 3600;
+	tm *t = gmtime(&timeReal);
+	char dirname[128] ={0};
+	sprintf(dirname , "/wt_tech/data/pic/%d%02d%02d" , t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
+	//detection::CreateDir(dirname);
+	if(access(dirname,0)!=0) {
+		mkdir(dirname,0777);
+	}
+	char filePath[128]={0};
+	sprintf(filePath, "%s/%d_%02d_%02d_%02d_%02d_%02d.jpg",dirname ,  t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
+	sprintf(cmd , "ffmpeg -y -f hevc -i pipe:0 -vframes 1 -q:v 2 %s" , filePath);
+    // 使用 popen 创建管道
+    FILE* pipe = popen(cmd, "w");
+    if (!pipe) {
+        perror("popen");
+        return false;
+    }
+    // 写入 HEVC 数据
+    size_t written = fwrite(p_hevc, 1, pLen, pipe);
+    if (written != pLen) {
+        perror("fwrite");
+        pclose(pipe);
+        return false;
+    }
+    // 关闭管道
+    int status = pclose(pipe);
+    if (status == -1) {
+        perror("pclose");
+        return false;
+    }
+	return true;
+}
+
+void h265_save_func(pipeline_buffer_t *buff)
+{
+    //if(g_IsBiaoDing !=1)
+    //{
+    //   return;
+    //}
+    if(h26data[0].p_h26data ==NULL)
+    {
+        h26data[0].p_h26data  = (unsigned char *)calloc(1 , 60*1024*1024);
+        h26data[1].p_h26data  = (unsigned char *)calloc(1 , 60*1024*1024);
+        h26data[0].IsWrite = 1;
+    }
+
+    if (!ffmpeg_pipe)
+    {
+        init_ffmpeg_pipe();
+        MYALOGI("ffmpeg_pipe init success\n");
+    }
+
+    int num = 0;
+    if(h26data[0].IsWrite==0)
+    {
+        num =1;
+    }
+
+    if(h26data[num].IsWrite==1)
+    {
+        memcpy(h26data[num].p_h26data + h26data[num].DataSize , buff->p_vir , buff->n_size);
+        h26data[num].frameNum++;
+        h26data[num].DataSize+=buff->n_size;
+
+    }
+    int RecordAbnormalFrame = 90 * 25 ; //异常前后记录时间*帧率，这里前后总至少记录90*2 = 180s
+    static int frameMax = RecordAbnormalFrame;
+    if( /*detection::IsRecordVideo && */ frameMax==RecordAbnormalFrame)
+    {
+        frameMax =  h26data[num].frameNum + RecordAbnormalFrame;
+        //init_ffmpeg_pipe_jpg( buff->p_vir , buff->n_size);
+    }
+    init_ffmpeg_pipe_jpg( buff->p_vir , buff->n_size);
+    if(h26data[num].frameNum >= frameMax)
+    {
+
+        if(/*detection::IsRecordVideo*/ true)
+        {
+            if(ffmpeg_pipe_abnormal==NULL)
+            {
+                time_t timeReal;
+                time(&timeReal);
+                timeReal = timeReal + 8 * 3600;
+                tm *t = gmtime(&timeReal);
+                char dirname[128] ={0};
+                sprintf(dirname , "/wt_tech/data/error/%d%02d%02d" , t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
+                //detection::CreateDir(dirname);
+                if(access(dirname,0)!=0) {
+                    mkdir(dirname,0777);
+                }
+                char filename[128]={0};
+                sprintf(filename, "%s/%d-%02d-%02d_%02d-%02d-%02d.mp4",dirname ,t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
+                //Record_file_output = fopen(filename, "wb");
+                init_ffmpeg_pipe_abnormal(filename);
+            }
+            if(ffmpeg_pipe_abnormal)
+            {
+                fwrite(h26data[1-num].p_h26data, 1, h26data[1-num].DataSize, ffmpeg_pipe_abnormal);
+                fwrite(h26data[num].p_h26data, 1, h26data[num].DataSize, ffmpeg_pipe_abnormal);
+            }
+            pclose(ffmpeg_pipe_abnormal);
+            ffmpeg_pipe_abnormal = NULL;
+            //Record_file_output = NULL;
+            //detection::IsRecordVideo = 0;
+            //cleanerDir("/wt_tech/data/error" ,  detection::ParameterData->RecordAbnormalDays);
+        }
+
+        h26data[num].IsWrite = 0;
+        h26data[1-num].IsWrite =1;
+        h26data[1-num].DataSize = 0;
+        h26data[1-num].frameNum = 0;
+        frameMax = RecordAbnormalFrame;
+    }
+
+    if (ffmpeg_pipe)
+    {
+        fwrite(buff->p_vir, 1, buff->n_size, ffmpeg_pipe);
+        static int cnt = 0;
+        if (/*cnt++ > detection::ParameterData->RecordDuration*60*25*/ true)
+        {
+            MYALOGI("recoding");
+            cnt = 0;
+            pclose(ffmpeg_pipe);
+            ffmpeg_pipe = NULL;
+            //cleaner();
+            //cleanerDir("/wt_tech/data/video2" ,  detection::ParameterData->RecordDays);
+            //cleanerDir_csv("/wt_tech/data/csv");
+        }
+    }
+}
+/* save frame*/
 
 void _demux_frame_callback(const void *buff, int len, void *reserve)
 {
@@ -368,9 +550,9 @@ int main(int argc, char *argv[])
             pipe1.m_vdec_attr.n_vdec_grp = i;
             pipe1.output_func = ai_inference_func; // 图像输出的回调函数
 
-            pipeline_t &pipe2 = pipelines[0];
+            pipeline_t &pipe0 = pipelines[0];
             {
-                pipeline_ivps_config_t &config2 = pipe2.m_ivps_attr;
+                pipeline_ivps_config_t &config2 = pipe0.m_ivps_attr;
                 config2.n_ivps_grp = pipe_count * i + 2; // 重复的会创建失败
                 config2.n_ivps_rotate = 0;               // 旋转90度，现在rtsp流是竖着的画面了
                 config2.n_ivps_fps = s_sample_framerate;
@@ -378,15 +560,35 @@ int main(int argc, char *argv[])
                 config2.n_ivps_height = 1080;
                 config2.n_osd_rgn = 2;
             }
-            pipe2.enable = 1;
-            pipe2.pipeid = pipe_count * i + 2; // 重复的会创建失败
-            pipe2.m_input_type = pi_vdec_h264;
-            pipe2.m_output_type = po_rtsp_h265;
-            pipe2.n_loog_exit = 0;
+            pipe0.enable = 1;
+            pipe0.pipeid = pipe_count * i + 2; // 重复的会创建失败
+            pipe0.m_input_type = pi_vdec_h264;
+            pipe0.m_output_type = po_rtsp_h265;
+            pipe0.n_loog_exit = 0;
 
-            sprintf(pipe2.m_venc_attr.end_point, "%s%d", "axstream", (int)i+1); // 重复的会创建失败
-            pipe2.m_venc_attr.n_venc_chn = i;                                 // 重复的会创建失败
-            pipe2.m_vdec_attr.n_vdec_grp = i;
+            sprintf(pipe0.m_venc_attr.end_point, "%s%d", "axstream", (int)i+1); // 重复的会创建失败
+            pipe0.m_venc_attr.n_venc_chn = i;                                 // 重复的会创建失败
+            pipe0.m_vdec_attr.n_vdec_grp = i;
+
+            pipeline_t &pipe2 = pipelines[2];//输出到本地文件存储
+            {
+                pipeline_ivps_config_t &config = pipe2.m_ivps_attr;
+                config.n_ivps_grp = pipe_count * i + 3; // 重复的会创建失败
+                config.n_ivps_fps = 25;
+                config.n_ivps_width = 1280;
+                config.n_ivps_height = 720;
+                config.n_osd_rgn = 2;
+                config.n_fifo_count = 1; // 如果想要拿到数据并输出到回调 就设为1~4
+            }
+            pipe2.enable = 1;
+            pipe2.pipeid = pipe_count * i + 3;
+            pipe2.m_input_type = pi_vdec_h264;
+            pipe2.m_output_type = po_venc_h265;
+            pipe2.n_loog_exit = 0;
+            pipe2.n_vin_pipe = 0;
+            pipe2.n_vin_chn = 0;
+            pipe2.m_venc_attr.n_venc_chn = i + rtsp_urls.size();
+            pipe2.output_func = h265_save_func; // 图像输出的回调函数
         }
     }
 
