@@ -7,11 +7,13 @@
 #include <vector>
 #include <string>
 #include <modbus/modbus.h>
-#include <curl/curl.h>
 #include <ctime>
 #include <fstream>
 #include <sys/stat.h>
 #include "../alarm/alarm.hpp"
+#include <curl/curl.h>
+
+#include "../examples/common/common_pipeline/common_pipeline.h"
 
 #define CONFIG_FILE_PATH "/wt_tech/conf/rt.json"
 
@@ -35,7 +37,7 @@ public:
     int start();
     int stop(); // 关闭处理线程
     void early_warning(int camera_id); // 对摄像机id为camera_id触发预警
-
+    void setCameraPipe(int camera_id, pipeline_t *pipe);
 
 private:
     // 将构造函数设为私有
@@ -70,7 +72,6 @@ public:
         int zoom;
         int focus;
         int brightness;
-
     };
 
     Camera();
@@ -81,11 +82,12 @@ public:
     int set_brighten(int brightness); //单独控制补光灯
     int set_zoom_and_focus(int zoom, int focus);
     int fetch_remote_status();
-    int get_id();
+    int get_id() const;
     bool is_patroling() const; // 获取是否在巡逻中
     void set_patroling(bool patroling); // 设置是否在巡逻中
     int add_preset_position(PresetPosition pos); // 添加单个点位到点位集合中
     int capture_image_for_reference(); // 拍摄标定图像
+    void setPipe(pipeline_t * pipe);
 
 private:
     int id;
@@ -103,6 +105,7 @@ private:
     std::vector<PresetPosition> preset_positions; // 点位信息集
 
     // 图像拍摄相关成员
+    pipeline_t *pipeline;
     static std::string capture_path; // 图像保存路径
 
     CURL *curl_handle;  // 持久化的curl句柄

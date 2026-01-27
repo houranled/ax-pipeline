@@ -34,6 +34,8 @@
 #include "string.h"
 #include "map"
 #include "unistd.h"
+#include <sys/stat.h>
+#include <sys/types.h>
 
 #define RTSP_PORT 8554
 
@@ -802,4 +804,24 @@ int user_input(pipeline_t *pipe, int pipe_cnt, pipeline_buffer_t *buf)
     }
 
     return 0;
+}
+
+// 初始化FFmpeg管道用于正常记录
+bool init_ffmpeg_pipe(pipeline_t *pipeline)
+{
+    char cmd[512]={0};
+    sprintf(cmd , "ffmpeg -y -f hevc -i pipe:0 -c:v copy -f mp4 /wt_tech/data/video2/out%d.mp4", 1);
+    // 使用 popen 创建管道
+    pipeline->ffmpeg_pipe = popen(cmd, "w");
+    return pipeline->ffmpeg_pipe != nullptr;
+}
+
+// 初始化FFmpeg管道用于异常记录
+bool init_ffmpeg_pipe_abnormal(pipeline_t *pipeline,  char *filePath)
+{
+    char cmd[512]={0};
+    sprintf(cmd , "ffmpeg -y -f hevc -i pipe:0 -c:v copy -f mp4 %s", filePath);
+    // 使用 popen 创建管道
+    pipeline->ffmpeg_pipe_abnormal = popen(cmd, "w");
+    return pipeline->ffmpeg_pipe_abnormal != NULL;
 }

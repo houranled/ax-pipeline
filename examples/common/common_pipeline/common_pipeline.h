@@ -25,6 +25,8 @@
 #define VDEC_LINK_MODE 1
 #endif
 
+#include <stdio.h>
+
 #if __cplusplus
 extern "C"
 {
@@ -180,6 +182,14 @@ extern "C"
     // 回调函数，当 pipeline_ivps_config_t::n_fifo_count 大于0时候，用作输出给用户
     typedef void (*pipeline_frame_callback_func)(pipeline_buffer_t *buf);
 
+    /* save frame */
+    typedef struct {
+        int frameNum;
+        int DataSize;
+        unsigned char *p_h26data;
+        int IsWrite;
+    } h26xData_t;
+
     typedef struct
     {
         int enable;                      // 是否启用
@@ -206,13 +216,25 @@ extern "C"
 
         pipeline_frame_callback_func output_func;
 
+        // h265_save_func相关成员变量
+        h26xData_t h26data[2];
+        FILE *ffmpeg_pipe;
+        FILE *ffmpeg_pipe_abnormal;
+        bool IsRecordVideo = false;
     } pipeline_t;
 
     int create_pipeline(pipeline_t *pipe);
     int destory_pipeline(pipeline_t *pipe);
     // 这里认为 pipe 指针含有 pipe_cnt 个 pipeline_t 结构体，并且每一个 pipeline_t 的输入类型 pipeline_input_e 是一样的，此函数会将同一张图片发送到所有 pipe_cnt 条链路中
     int user_input(pipeline_t *pipe, int pipe_cnt, pipeline_buffer_t *buf);
+
+
+    // FFmpeg相关函数
+    bool init_ffmpeg_pipe(pipeline_t *pipe);
+    bool init_ffmpeg_pipe_abnormal(pipeline_t *pipe,  char *filePath);
+
 #if __cplusplus
 }
 #endif
+
 #endif // _PIPELINE_COMMON_H_

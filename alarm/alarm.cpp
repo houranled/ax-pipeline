@@ -1,6 +1,8 @@
 #include "alarm.hpp"
 #include <ctime>
 
+#include "../camera/camera_controller.hpp"
+
 AlarmGenerator::AlarmGenerator() {
 
 }
@@ -15,11 +17,11 @@ bool AlarmGenerator::isAlarmTriggered(AlarmType type, const std::string &message
     return false;
 }
 
-Alarm AlarmGenerator::generateAlarm(AlarmType type, const std::string& message, int cameraId, float confidence) {
+Alarm AlarmGenerator::generateAlarm(AlarmType type, const std::string& message, float confidence, const Camera *camera) {
     Alarm alarm;
     alarm.type = type;
-    alarm.message = message;
-    alarm.cameraId = cameraId;
+    alarm.message = message;// TODO：拼接摄像头点位信息
+    alarm.cameraId = camera->get_id();
     alarm.timestamp = time(nullptr);  // 获取当前时间戳
     alarm.confidence = confidence;
 

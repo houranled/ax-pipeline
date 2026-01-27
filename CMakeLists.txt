@@ -99,9 +99,6 @@ project(ax_pipeline)
 set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -Ofast -Wall -g -fPIC -Wno-unused-function -Wno-unused-label")
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Ofast -Wall -g -fPIC -Wno-unused-function -Wno-unused-label")
 
-add_subdirectory(camera)
-add_subdirectory(alarm)
-
 set(CURL_SOURCE_DIR "${CMAKE_SOURCE_DIR}/3rdparty/curl-8.17.0")
 add_subdirectory(${CURL_SOURCE_DIR} ${CMAKE_BINARY_DIR}/curl)
 set(BUILD_CURL_EXE OFF)
@@ -164,3 +161,6 @@ elseif(AXERA_TARGET_CHIP MATCHES "AX620E")
     file(GLOB SAMPLE_RUN_JOINT_CONFIG_FILES "${CMAKE_SOURCE_DIR}/examples/libaxdl/config/ax650/*")
     install(FILES ${SAMPLE_RUN_JOINT_CONFIG_FILES} DESTINATION bin/config)
 endif()
+
+add_subdirectory(camera)
+add_subdirectory(alarm)

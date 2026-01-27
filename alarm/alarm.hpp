@@ -7,6 +7,10 @@
 #include <mutex>
 #include <condition_variable>
 
+
+// 添加 Camera 类的前置声明
+class Camera;
+
 // 告警类型枚举
 enum class AlarmType {
     MOTION_DETECTED,    // 运动检测告警
@@ -35,11 +39,11 @@ public:
     bool isAlarmTriggered(AlarmType type, const std::string& message, int cameraId, float confidence);
 
     // 生成告警
-    Alarm generateAlarm(AlarmType type, const std::string& message, int cameraId, float confidence);
+    Alarm generateAlarm(AlarmType type, const std::string& message, float confidence, const Camera *camera);
 
     // 消费者获取每个告警
     void look_a_alarm();
-    
+
     // 获取队列中的告警数量
     size_t getAlarmCount();
 

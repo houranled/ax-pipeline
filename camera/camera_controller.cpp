@@ -422,7 +422,13 @@ int CameraController::stop()
 void CameraController::early_warning(int camera_id)
 {
     MYALOGI("生成告警，并拍摄图片， 摄像头id%d", camera_id);
-    alarm_generator.generateAlarm(AlarmType::LINE_CROSSING, "", camera_id, 1);
+    auto &camera = this->cameras[camera_id];
+    alarm_generator.generateAlarm(AlarmType::LINE_CROSSING, "", 1, camera);
+}
+
+void CameraController::setCameraPipe(int camera_id, pipeline_t *pipe)
+{
+    cameras[camera_id]->setPipe(pipe);
 }
 
 /* ================================== */
@@ -497,9 +503,9 @@ bool Camera::connect_modbus()
     return false;
 }
 
-int Camera::get_id()
+int Camera::get_id() const
 {
-    return 0;
+    return id;
 }
 
 bool Camera::is_patroling() const
@@ -612,6 +618,10 @@ int Camera::capture_image_for_reference()
     }
 
     return 0;
+}
+
+void Camera::setPipe(pipeline_t * pipe) {
+    this->pipeline = pipe;
 }
 
 int Camera::patrol_with_calibration_loop(bool is_calibrate)
