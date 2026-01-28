@@ -421,7 +421,7 @@ int CameraController::stop()
 
 void CameraController::early_warning(int camera_id)
 {
-    MYALOGI("生成告警，并拍摄图片， 摄像头id%d", camera_id);
+    WTALOGI("生成告警，并拍摄图片， 摄像头id%d", camera_id);
     auto &camera = this->cameras[camera_id];
     alarm_generator.generateAlarm(AlarmType::LINE_CROSSING, "", 1, camera);
 }
@@ -435,6 +435,7 @@ void CameraController::setCameraPipe(int camera_id, pipeline_t *pipe)
 
 Camera::Camera()
 {
+    WTALOGI("构建相机");
     curl_handle = curl_easy_init();
     // 设置请求基本通用选项
     curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 5L);  // 5秒超时
@@ -452,6 +453,8 @@ Camera::~Camera()
 
 int Camera::start()
 {
+    WTALOGI("摄像机[%d]启动...", id);
+    WTALOGI("ip:%s, 点位数：%d", ip.c_str(), this->preset_positions.size());
     running = true;
     auto res_code = 1;
 
@@ -476,14 +479,17 @@ bool Camera::connect_modbus()
 {
     // 清理旧连接
     if (modbus_ctx != nullptr) {
+        WTALOGI("重连接云台[%s]...", ptz_ip.c_str());
         modbus_close(modbus_ctx);
         modbus_free(modbus_ctx);
+    } else {
+        WTALOGI("连接云台[%s](modbus)...", ptz_ip.c_str());
     }
 
     // 初始化Modbus 连接
-    modbus_ctx = modbus_new_tcp(ptz_ip.c_str(), 8802); // 默认Modbus TCP 端口为 502改为8802
+    modbus_ctx = modbus_new_tcp(ptz_ip.c_str(), MODBUSPORT);
     if (!modbus_ctx) {
-        std::cerr << "Failed to create Modbus context: " << modbus_strerror(errno) << std::endl;
+        WTALOGI("连接云台[%s]失败！", ptz_ip.c_str());
     } else {
         // 设置 Modbus 超时时间
         uint32_t to_sec = 5; // 超时秒数
@@ -491,7 +497,7 @@ bool Camera::connect_modbus()
 
         // 连接到 Modbus 服务器
         if (modbus_connect(modbus_ctx) == -1) {
-            std::cerr << "Modbus connection failed: " << modbus_strerror(errno) << std::endl;
+            WTALOGI("连接云台[%s]失败！,原因:%s", ptz_ip.c_str(), modbus_strerror(errno) );
             modbus_free(modbus_ctx);
             modbus_ctx = nullptr;
         } else {
@@ -520,6 +526,7 @@ void Camera::set_patroling(bool patroling)
 
 int Camera::add_preset_position(Camera::PresetPosition pos)
 {
+    WTALOGI("添加预置点位");
     this->preset_positions.push_back(pos);
     return 0;
 }
@@ -624,6 +631,16 @@ void Camera::setPipe(pipeline_t * pipe) {
     this->pipeline = pipe;
 }
 
+bool Camera::record_video()
+{
+    this->pipeline->IsRecordVideo = true;
+
+    //TODO:拍摄n秒钟后，停止
+    this->pipeline->IsRecordVideo = false;
+
+    return false;
+}
+
 int Camera::patrol_with_calibration_loop(bool is_calibrate)
 {
     patrolling = true; // 标识进入巡逻模式
@@ -653,11 +670,11 @@ int Camera::patrol_with_calibration_loop(bool is_calibrate)
         }
 
         if (posture_completed) {
-            if (is_calibrate) {
+            if (is_calibrate) { //标定模式
                 capture_image_for_reference(); // 标定模式下的拍照
-            } else  {
-                // TODO 巡航拍照识别
-
+            } else  { //巡航模式
+                this->record_video();  // 非标定模式下的录像
+                //拍照
             }
         } //else noop
 

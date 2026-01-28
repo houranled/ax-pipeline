@@ -86,7 +86,7 @@ void *_venc_get_frame_thread(void *arg)
                 buf.p_vir = stStream.stPack.pu8Addr;
                 buf.p_phy = stStream.stPack.ulPhyAddr;
                 buf.p_pipe = pipe;
-                pipe->output_func(&buf);
+                pipe->output_func(&buf); // 已编码的每帧数据捕获处理函数
             }
 
             s32Ret = AX_VENC_ReleaseStream(pipe->m_venc_attr.n_venc_chn, &stStream);

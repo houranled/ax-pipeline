@@ -18,6 +18,7 @@
 #define CONFIG_FILE_PATH "/wt_tech/conf/rt.json"
 
 #define MODBUSPTZ  0x4450  //云台modbus参数起始地址
+#define MODBUSPORT 8802    // 默认Modbus TCP 端口为 502改为8802
 
 class Camera; // 声明Camera类，以便在CameraController类中使用
 
@@ -88,6 +89,7 @@ public:
     int add_preset_position(PresetPosition pos); // 添加单个点位到点位集合中
     int capture_image_for_reference(); // 拍摄标定图像
     void setPipe(pipeline_t * pipe);
+    bool record_video(); // 录制视频
 
 private:
     int id;

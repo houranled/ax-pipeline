@@ -181,7 +181,7 @@ static bool init_ffmpeg_pipe_jpg(void *p_hevc , int pLen)
     return true;
 }
 
-// 实际的h265保存函数，使用成员变量而不是全局变量
+// h265保存函数
 void h265_save_func(pipeline_buffer_t *buff)
 {
     pipeline_t *pipe = (pipeline_t *)buff->p_pipe;
@@ -200,7 +200,7 @@ void h265_save_func(pipeline_buffer_t *buff)
     if (!pipe->ffmpeg_pipe)
     {
         init_ffmpeg_pipe(pipe);
-        MYALOGI("ffmpeg_pipe init success\n");
+        WTALOGI("ffmpeg_pipe init success\n");
     }
 
     int num = 0;
@@ -270,7 +270,7 @@ void h265_save_func(pipeline_buffer_t *buff)
         static int cnt = 0;
         if (/*cnt++ > detection::ParameterData->RecordDuration*60*25*/ true)
         {
-            MYALOGI("recoding");
+            WTALOGI("recoding");
             cnt = 0;
             pclose(pipe->ffmpeg_pipe);
             pipe->ffmpeg_pipe = NULL;
@@ -319,8 +319,6 @@ static AX_VOID PrintHelp(char *testApp)
 
 int main(int argc, char *argv[])
 {
-    CameraController::getInstance()->start();
-
     if (SAMPLE_Check_Bsp_Version() != 0)
     {
         return -1;
@@ -527,13 +525,12 @@ int main(int argc, char *argv[])
             pipe0.m_vdec_attr.n_vdec_grp = i;
 
             pipeline_t &pipe2 = pipelines[2]; //输出到本地文件存储
-            CameraController::getInstance()->setCameraPipe(i, &pipe2);
             {
                 pipeline_ivps_config_t &config2 = pipe2.m_ivps_attr;
                 config2.n_ivps_grp = pipe_count * i + 3; // 重复的会创建失败
-                config2.n_ivps_fps = 25;
-                config2.n_ivps_width = 1280;
-                config2.n_ivps_height = 720;
+                config2.n_ivps_fps = s_sample_framerate; //帧率
+                config2.n_ivps_width = 1920;
+                config2.n_ivps_height = 1080;
                 config2.n_osd_rgn = 2;
                 config2.n_fifo_count = 1; // 如果想要拿到数据并输出到回调 就设为1~4
             }
@@ -545,16 +542,20 @@ int main(int argc, char *argv[])
             pipe2.n_vin_pipe = 0;
             pipe2.n_vin_chn = 0;
             pipe2.m_venc_attr.n_venc_chn = i + rtsp_urls.size();
+            pipe2.m_vdec_attr.n_vdec_grp = i;
             pipe2.output_func = h265_save_func;
+            CameraController::getInstance()->setCameraPipe(pipe2.pipeid, &pipe2);
         }
     }
+
+    CameraController::getInstance()->start(); // 启动所有摄像头控制线程
 
     for (size_t i = 0; i < vpipelines.size(); i++)
     {
         auto &pipelines = vpipelines[i];
         for (size_t j = 0; j < pipelines.size(); j++) //次数j共两次: j = 0和1
         {
-            s32Ret = create_pipeline(&pipelines[j]);
+            s32Ret = create_pipeline(&pipelines[j]); //包含推理输入和视频帧输出
             if (s32Ret != 0)
             {
                 ALOGE("create_pipeline failed,s32Ret:0x%x\n", s32Ret);
@@ -568,7 +569,7 @@ int main(int argc, char *argv[])
 
         if (g_sample.gModels[i].pipes_need_osd.size() && g_sample.gModels[i].bRunJoint)
         {
-            g_sample.gModels[i].osd_helper.Start(g_sample.gModels[i].gModel, g_sample.gModels[i].pipes_need_osd);  // 绘制线程启动
+            g_sample.gModels[i].osd_helper.Start(g_sample.gModels[i].gModel, g_sample.gModels[i].pipes_need_osd);  // 绘制过程线程
             // pthread_create(&g_sample.osd_tid[i], NULL, osd_funcs[i], NULL);
             // g_sample.osd_target_map[pipelines[1].pipeid] = g_sample.gModels[i].pipes_need_osd[0]->pipeid;
             g_sample.osd_target_map[pipelines[1].pipeid] = &g_sample.gModels[i];
@@ -581,7 +582,7 @@ int main(int argc, char *argv[])
         {
             auto &pipelines = vpipelines[i];
             VideoDemux *demux = new VideoDemux();
-            if (demux->Open(rtsp_urls[i].c_str(), true, _demux_frame_callback, pipelines.data(), s_sample_framerate))
+            if (demux->Open(rtsp_urls[i].c_str(), true, _demux_frame_callback, pipelines.data(), s_sample_framerate)) // pipelines.data接收帧输入
             {
                 video_demuxes.push_back(demux);
             }

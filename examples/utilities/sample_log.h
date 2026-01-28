@@ -63,7 +63,7 @@ static void init_log_file() {
     } \
 } while(0)
 
-#define MYALOGI(fmt, ...) do { \
+#define WTALOGI(fmt, ...) do { \
     init_log_file(); \
     if (log_file && log_level >= SAMPLE_LOG_EMERGENCY) { \
         fprintf(log_file, "[wt][%32s][%4d]: " fmt "\n", __FUNCTION__, __LINE__, ##__VA_ARGS__); \
