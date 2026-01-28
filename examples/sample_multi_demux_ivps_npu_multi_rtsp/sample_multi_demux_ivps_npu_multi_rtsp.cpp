@@ -114,7 +114,7 @@ void ai_inference_func(pipeline_buffer_t *buff)
     pipeline_t *pipe = (pipeline_t *)buff->p_pipe;
     if (g_sample.osd_target_map[pipe->pipeid]->bRunJoint)
     {
-        static std::map<int, axdl_results_t> mResults;
+        static std::map<int, axdl_results_t> mResults; //TODO: 打算改为全局变量
         axdl_image_t tSrcFrame = {0};
         switch (buff->d_type)
         {
@@ -161,20 +161,20 @@ static bool init_ffmpeg_pipe_jpg(void *p_hevc , int pLen)
     sprintf(filePath, "%s/%d_%02d_%02d_%02d_%02d_%02d.jpg",dirname ,  t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
     sprintf(cmd , "ffmpeg -y -f hevc -i pipe:0 -vframes 1 -q:v 2 %s" , filePath);
     // 使用 popen 创建管道
-    FILE* pipe = popen(cmd, "w");
-    if (!pipe) {
+    FILE* pipe_fd = popen(cmd, "w");
+    if (!pipe_fd) {
         perror("popen");
         return false;
     }
     // 写入 HEVC 数据
-    size_t written = fwrite(p_hevc, 1, pLen, pipe);
+    size_t written = fwrite(p_hevc, 1, pLen, pipe_fd);
     if (written != pLen) {
         perror("fwrite");
-        pclose(pipe);
+        pclose(pipe_fd);
         return false;
     }
     // 关闭管道
-    if (pclose(pipe) == -1) {
+    if (pclose(pipe_fd) == -1) {
         perror("pclose");
         return false;
     }
@@ -184,23 +184,18 @@ static bool init_ffmpeg_pipe_jpg(void *p_hevc , int pLen)
 // h265保存函数
 void h265_save_func(pipeline_buffer_t *buff)
 {
+    WTALOGI("执行视频帧保存函数");
     pipeline_t *pipe = (pipeline_t *)buff->p_pipe;
     //if(g_IsBiaoDing !=1)
     //{
     //   return;
     //}
 
-    if(pipe->h26data[0].p_h26data ==NULL)
+    if(pipe->h26data[0].p_h26data == NULL)
     {
         pipe->h26data[0].p_h26data  = (unsigned char *)calloc(1 , 60*1024*1024);
         pipe->h26data[1].p_h26data  = (unsigned char *)calloc(1 , 60*1024*1024);
         pipe->h26data[0].IsWrite = 1;
-    }
-
-    if (!pipe->ffmpeg_pipe)
-    {
-        init_ffmpeg_pipe(pipe);
-        WTALOGI("ffmpeg_pipe init success\n");
     }
 
     int num = 0;
@@ -216,68 +211,48 @@ void h265_save_func(pipeline_buffer_t *buff)
         pipe->h26data[num].DataSize+=buff->n_size;
 
     }
-    int RecordAbnormalFrame = 90 * 25 ; //异常前后记录时间*帧率，这里前后总至少记录90*2 = 180s
-    static int frameMax = RecordAbnormalFrame;
-    if( /*detection::IsRecordVideo && */ frameMax==RecordAbnormalFrame)
+    int recordFrameCount = 15 * 25 ; //一次视频总帧数 相当于记录时长(15秒)*帧率
+    int frameMax = recordFrameCount;
+    if( /*detection::IsRecordVideo && */ frameMax==recordFrameCount)
     {
-        frameMax =  pipe->h26data[num].frameNum + RecordAbnormalFrame;
+        frameMax =  pipe->h26data[num].frameNum + recordFrameCount;
         //init_ffmpeg_pipe_jpg( buff->p_vir , buff->n_size);
     }
-    init_ffmpeg_pipe_jpg(buff->p_vir , buff->n_size);
-    if(pipe->h26data[num].frameNum >= frameMax)
-    {
+    //if (标定  || 告警) {
+        init_ffmpeg_pipe_jpg(buff->p_vir , buff->n_size);  // 用于初始化拍摄标定图片和告警图片
+    //}
 
-        if(pipe->IsRecordVideo)
+    if(pipe->h26data[num].frameNum >= frameMax) {
+        if(pipe->ffmpeg_pipe_file==NULL) {
+            time_t timeReal;
+            time(&timeReal);
+            timeReal = timeReal + 8 * 3600;
+            tm *t = gmtime(&timeReal);
+            char dirname[128] ={0};
+            sprintf(dirname , "/wt_tech/data/error/%d%02d%02d" , t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
+            //detection::CreateDir(dirname);
+            if(access(dirname,0)!=0) {
+                mkdir(dirname,0777);
+            }
+            char filename[128]={0};
+            sprintf(filename, "%s/%d-%02d-%02d_%02d-%02d-%02d.mp4",dirname ,t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
+            //Record_file_output = fopen(filename, "wb");
+            init_ffmpeg_pipe_video(pipe, filename);
+        }
+        if(pipe->ffmpeg_pipe_file)
         {
-            if(pipe->ffmpeg_pipe_abnormal==NULL)
-            {
-                time_t timeReal;
-                time(&timeReal);
-                timeReal = timeReal + 8 * 3600;
-                tm *t = gmtime(&timeReal);
-                char dirname[128] ={0};
-                sprintf(dirname , "/wt_tech/data/error/%d%02d%02d" , t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
-                //detection::CreateDir(dirname);
-                if(access(dirname,0)!=0) {
-                    mkdir(dirname,0777);
-                }
-                char filename[128]={0};
-                sprintf(filename, "%s/%d-%02d-%02d_%02d-%02d-%02d.mp4",dirname ,t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
-                //Record_file_output = fopen(filename, "wb");
-                init_ffmpeg_pipe_abnormal(pipe, filename);
-            }
-            if(pipe->ffmpeg_pipe_abnormal)
-            {
-                fwrite(pipe->h26data[1-num].p_h26data, 1, pipe->h26data[1-num].DataSize, pipe->ffmpeg_pipe_abnormal);
-                fwrite(pipe->h26data[num].p_h26data, 1, pipe->h26data[num].DataSize, pipe->ffmpeg_pipe_abnormal);
-            }
-            pclose(pipe->ffmpeg_pipe_abnormal);
-            pipe->ffmpeg_pipe_abnormal = NULL;
-            //Record_file_output = NULL;
-            //detection::IsRecordVideo = 0;
+            fwrite(pipe->h26data[1-num].p_h26data, 1, pipe->h26data[1-num].DataSize, pipe->ffmpeg_pipe_file);
+            fwrite(pipe->h26data[num].p_h26data, 1, pipe->h26data[num].DataSize, pipe->ffmpeg_pipe_file);
         }
 
         pipe->h26data[num].IsWrite = 0;
         pipe-> h26data[1-num].IsWrite =1;
         pipe-> h26data[1-num].DataSize = 0;
         pipe->h26data[1-num].frameNum = 0;
-        frameMax = RecordAbnormalFrame;
-    }
-
-    if (pipe->ffmpeg_pipe)
-    {
-        fwrite(buff->p_vir, 1, buff->n_size, pipe->ffmpeg_pipe);
-        static int cnt = 0;
-        if (/*cnt++ > detection::ParameterData->RecordDuration*60*25*/ true)
-        {
-            WTALOGI("recoding");
-            cnt = 0;
-            pclose(pipe->ffmpeg_pipe);
-            pipe->ffmpeg_pipe = NULL;
-            //cleaner();
-            //cleanerDir("/wt_tech/data/video2" ,  detection::ParameterData->RecordDays);
-            //cleanerDir_csv("/wt_tech/data/csv");
-        }
+        frameMax = recordFrameCount;
+    } else { //完成录制
+        pclose(pipe->ffmpeg_pipe_file);
+        pipe->ffmpeg_pipe_file = NULL;
     }
 }
 

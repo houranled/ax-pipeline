@@ -633,11 +633,7 @@ void Camera::setPipe(pipeline_t * pipe) {
 
 bool Camera::record_video()
 {
-    this->pipeline->IsRecordVideo = true;
-
-    //TODO:拍摄n秒钟后，停止
-    this->pipeline->IsRecordVideo = false;
-
+    this->pipeline->IsRecordVideo = true; // 标识开始录像
     return false;
 }
 

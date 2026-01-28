@@ -186,7 +186,7 @@ extern "C"
     typedef struct {
         int frameNum;
         int DataSize;
-        unsigned char *p_h26data;
+        unsigned char *p_h26data = NULL;
         int IsWrite;
     } h26xData_t;
 
@@ -218,8 +218,8 @@ extern "C"
 
         // h265_save_func相关成员变量
         h26xData_t h26data[2];
-        FILE *ffmpeg_pipe;
-        FILE *ffmpeg_pipe_abnormal;
+        //FILE *ffmpeg_pipe;
+        FILE *ffmpeg_pipe_file; // 用于录制视频  -异常
         bool IsRecordVideo = false;
     } pipeline_t;
 
@@ -230,8 +230,8 @@ extern "C"
 
 
     // FFmpeg相关函数
-    bool init_ffmpeg_pipe(pipeline_t *pipe);
-    bool init_ffmpeg_pipe_abnormal(pipeline_t *pipe,  char *filePath);
+    //bool init_ffmpeg_pipe(pipeline_t *pipe);
+    bool init_ffmpeg_pipe_video(pipeline_t *pipe,  char *filePath); // 录制视频
 
 #if __cplusplus
 }
