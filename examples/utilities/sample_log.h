@@ -49,9 +49,17 @@ static SAMPLE_LOG_LEVEL_E log_level = SAMPLE_LOG_EMERGENCY; //for weiti
 #endif
 
 static FILE* log_file = nullptr;
+static FILE* wt_log_file = nullptr; //for weiti
+
 static void init_log_file() {
     if (!log_file) {
-        log_file = fopen("/wt_tech/logs/node/wt_ai.log", "a");
+        log_file = fopen("/wt_tech/logs/node/wt_ai2.log", "a");
+    }
+}
+
+static void init_wt_log_file() {
+    if (!wt_log_file) {
+        wt_log_file = fopen("/wt_tech/logs/node/wt_ai.log", "a");
     }
 }
 
@@ -64,9 +72,9 @@ static void init_log_file() {
 } while(0)
 
 #define WTALOGI(fmt, ...) do { \
-    init_log_file(); \
-    if (log_file && log_level >= SAMPLE_LOG_EMERGENCY) { \
-        fprintf(log_file, "[wt][%32s][%4d]: " fmt "\n", __FUNCTION__, __LINE__, ##__VA_ARGS__); \
+    init_wt_log_file(); \
+    if (wt_log_file && log_level >= SAMPLE_LOG_EMERGENCY) { \
+        fprintf(wt_log_file, "[wt][%32s][%4d]: " fmt "\n", __FUNCTION__, __LINE__, ##__VA_ARGS__); \
         fflush(log_file); \
     } \
 } while(0)

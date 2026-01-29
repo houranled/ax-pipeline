@@ -488,6 +488,7 @@ int main(int argc, char *argv[])
                 config0.n_ivps_width = 1920;
                 config0.n_ivps_height = 1080;
                 config0.n_osd_rgn = 2;
+                config0.n_fifo_count = 1; // 如果想要拿到数据并输出到回调 就设为1~4
             }
             pipe0.enable = 1;
             pipe0.pipeid = pipe_count * i + 2; // 重复的会创建失败
@@ -498,7 +499,9 @@ int main(int argc, char *argv[])
             sprintf(pipe0.m_venc_attr.end_point, "%s%d", "axstream", (int)i+1); // 重复的会创建失败
             pipe0.m_venc_attr.n_venc_chn = i;                                 // 重复的会创建失败
             pipe0.m_vdec_attr.n_vdec_grp = i;
+            pipe0.output_func = h265_save_func;
 
+            /*
             pipeline_t &pipe2 = pipelines[2]; //输出到本地文件存储
             {
                 pipeline_ivps_config_t &config2 = pipe2.m_ivps_attr;
@@ -519,11 +522,13 @@ int main(int argc, char *argv[])
             pipe2.m_venc_attr.n_venc_chn = i + rtsp_urls.size();
             pipe2.m_vdec_attr.n_vdec_grp = i;
             pipe2.output_func = h265_save_func;
-            CameraController::getInstance()->setCameraPipe(pipe2.pipeid, &pipe2);
+            */
+
+            CameraController::getInstance()->setCameraPipe(pipe0.pipeid, &pipe0);
         }
     }
 
-    CameraController::getInstance()->start(); // 启动所有摄像头控制线程
+    CameraController::getInstance()->start(); // 启动摄像头控制器
 
     for (size_t i = 0; i < vpipelines.size(); i++)
     {
