@@ -37,7 +37,7 @@ public:
 
     int start();
     int stop(); // 关闭处理线程
-    void early_warning(int camera_id); // 对摄像机id为camera_id触发预警
+    void early_warning_process(int camera_id); // 对摄像机id为camera_id触发预警
     void setCameraPipe(int camera_id, pipeline_t *pipe);
 
 private:
@@ -85,11 +85,11 @@ public:
     int fetch_remote_status();
     int get_id() const;
     bool is_patroling() const; // 获取是否在巡逻中
-    void set_patroling(bool patroling); // 设置是否在巡逻中
+    void finish_patrolling(); // 告知巡逻结束
     int add_preset_position(PresetPosition pos); // 添加单个点位到点位集合中
-    int capture_image_for_reference(); // 拍摄标定图像
-    void setPipe(pipeline_t * pipe);
-    bool record_video(); // 录制视频
+    void setPipe(pipeline_t * pipe); // 绑定pipeline
+    bool start_record_video(); // 录制视频
+    bool start_take_a_picture(int kind); // 拍照
 
 private:
     int id;
@@ -107,11 +107,12 @@ private:
     std::vector<PresetPosition> preset_positions; // 点位信息集
 
     // 图像拍摄相关成员
-    pipeline_t *pipeline;
+    pipeline_t *m_pipeline;
     static std::string capture_path; // 图像保存路径
 
     CURL *curl_handle;  // 持久化的curl句柄
     modbus_t *modbus_ctx = nullptr;
+    bool posture_completed = false; // 是否到达指定位置
 
     int patrol_with_calibration_loop(bool is_calibrate);  // 摄像机巡检(可伴随标定)
     bool is_posture_completed(); // 判断是否到达指定位置

@@ -36,6 +36,7 @@
 #include "unistd.h"
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <ctime>
 
 #define RTSP_PORT 8554
 
@@ -817,11 +818,42 @@ bool init_ffmpeg_pipe(pipeline_t *pipeline)
 }
 
 // 初始化FFmpeg管道用于异常记录
-bool init_ffmpeg_pipe_video(pipeline_t *pipeline,  char *filePath)
+bool finish_ffmpeg_pipe_video(pipeline_t *pipe)
 {
-    char cmd[512]={0};
-    sprintf(cmd , "ffmpeg -y -f hevc -i pipe:0 -c:v copy -f mp4 %s", filePath);
-    // 使用 popen 创建管道
-    pipeline->ffmpeg_pipe_file = popen(cmd, "w");
-    return pipeline->ffmpeg_pipe_file != NULL;
+    char filename[128]={0};
+    if(NULL == pipe->ffmpeg_pipe_file) {
+        time_t timeReal;
+        time(&timeReal);
+        timeReal = timeReal + 8 * 3600;
+        tm *t = gmtime(&timeReal);
+        char dirname[128] ={0};
+        // /wt_tech/data/F02/20260101/20260101_01/video/
+        char dateStr[16] = {0};
+        sprintf(dateStr, "%04d%02d%02d", t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
+        sprintf(dirname, "/wt_tech/data/%s%s/%s_%d/video", "F02", dateStr,dateStr,1);
+            //%d%02d%02d" , t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
+        //detection::CreateDir(dirname);
+        if(access(dirname,0)!=0) {
+            mkdir(dirname,0777);
+        }
+        sprintf(filename, "%s/%d-%02d-%02d_%02d-%02d-%02d.mp4",dirname ,t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
+
+        char cmd[512]={0};
+        sprintf(cmd , "ffmpeg -y -f hevc -i pipe:0 -c:v copy -f mp4 %s", filename);
+        // 使用 popen 创建管道
+        pipe->ffmpeg_pipe_file = popen(cmd, "w");
+
+    }
+
+    if(pipe->ffmpeg_pipe_file) { //帧从缓存转存到文件中
+        fwrite(pipe->h26data[0].p_h26data, 1, pipe->h26data[0].DataSize, pipe->ffmpeg_pipe_file);
+        fwrite(pipe->h26data[1].p_h26data, 1, pipe->h26data[1].DataSize, pipe->ffmpeg_pipe_file);
+
+        //完成录制，关闭文件
+        pclose(pipe->ffmpeg_pipe_file);
+        pipe->ffmpeg_pipe_file = NULL;
+        WTALOGI("录制视频完成，关闭文件[%s]", filename);
+    }
+
+    return pipe->ffmpeg_pipe_file != NULL;
 }

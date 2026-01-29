@@ -128,7 +128,7 @@ void ax_model_damage::draw_custom(int chn, axdl_results_t *results, float fontsc
             }
 
             //生成告警 调用camera_Controller
-            CameraController::getInstance()->early_warning(chn/2);
+            CameraController::getInstance()->early_warning_process(chn/2);
         }
     }
 

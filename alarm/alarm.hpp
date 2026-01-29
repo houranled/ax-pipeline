@@ -27,6 +27,7 @@ struct Alarm {
     int cameraId;           // 摄像头ID
     time_t timestamp;       // 时间戳
     float confidence;       // 置信度
+    std::string picPath;         // 告警图片存储路径
 };
 
 // 告警生成器类
@@ -39,7 +40,7 @@ public:
     bool isAlarmTriggered(AlarmType type, const std::string& message, int cameraId, float confidence);
 
     // 生成告警
-    Alarm generateAlarm(AlarmType type, const std::string& message, float confidence, const Camera *camera);
+    Alarm generateAlarm(AlarmType type, const std::string& message, float confidence, Camera *camera);
 
     // 消费者获取每个告警
     void look_a_alarm();

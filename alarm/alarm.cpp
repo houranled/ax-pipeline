@@ -17,7 +17,7 @@ bool AlarmGenerator::isAlarmTriggered(AlarmType type, const std::string &message
     return false;
 }
 
-Alarm AlarmGenerator::generateAlarm(AlarmType type, const std::string& message, float confidence, const Camera *camera) {
+Alarm AlarmGenerator::generateAlarm(AlarmType type, const std::string& message, float confidence, Camera *camera) {
     Alarm alarm;
     alarm.type = type;
     alarm.message = message;// TODO：拼接摄像头点位信息

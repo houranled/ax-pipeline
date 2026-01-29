@@ -184,10 +184,10 @@ extern "C"
 
     /* save frame */
     typedef struct {
-        int frameNum;
-        int DataSize;
+        int frameNum; // 已写入的帧数量
+        int DataSize; // 已写入帧总计大小
         unsigned char *p_h26data = NULL;
-        int IsWrite;
+        int IsWrite; //当前写
     } h26xData_t;
 
     typedef struct
@@ -221,6 +221,7 @@ extern "C"
         //FILE *ffmpeg_pipe;
         FILE *ffmpeg_pipe_file; // 用于录制视频  -异常
         bool IsRecordVideo = false;
+        int whatPicture = 0;  // 0:不拍 1：标定 2：巡检
     } pipeline_t;
 
     int create_pipeline(pipeline_t *pipe);
@@ -231,7 +232,7 @@ extern "C"
 
     // FFmpeg相关函数
     //bool init_ffmpeg_pipe(pipeline_t *pipe);
-    bool init_ffmpeg_pipe_video(pipeline_t *pipe,  char *filePath); // 录制视频
+    bool finish_ffmpeg_pipe_video(pipeline_t *pipe); // 录制视频
 
 #if __cplusplus
 }

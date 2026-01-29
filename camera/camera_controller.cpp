@@ -10,6 +10,8 @@ std::string Camera::capture_path ="/wt_tech/conf/img/"; // 图像保存路径初
 
 CameraController::CameraController()
 {
+    WTALOGI("\n=======%s==============", "摄像头控制器启动...");
+
     // 初始化libcurl全局环境
     CURLcode res = curl_global_init(CURL_GLOBAL_ALL);
     //根据json配置文件创建对应的相机实例
@@ -73,6 +75,7 @@ int CameraController::receive_input_loop() {
             camera = cameras[camera_id];
         }
 
+        WTALOGI("执行命令:[%s],相机id:[%d]\n", cmd.c_str(), camera_id);
         if (cmd == "get") {
             if (camera_id > 0 && camera != NULL) {
                 response["data"] = nlohmann::json::array();
@@ -218,8 +221,7 @@ int CameraController::receive_input_loop() {
                         result["cmd"] = "action";
                         result["reqId"] = currentReqId; // 添加reqId到响应中
                         std::cout << result.dump() << std::endl;
-                    } else {
-                        // 如果没有指定有效的摄像机ID，则巡检所有摄像机
+                    } else {  // 如果没有指定有效的摄像机ID，则巡检所有摄像机
                         all_cameras_patrol();
                         // 巡检完成后构造JSON响应
                         nlohmann::json result;
@@ -306,9 +308,25 @@ Finish:
 int CameraController::all_cameras_patrol()
 {
     // 遍历所有摄像机，设置不标定模式并启动巡逻
+    std::vector<std::thread> threads;
+
     for (auto& pair : cameras) {
-        pair.second->patrol_with_calibration_loop(false);
+        // 为每个摄像机创建一个线程执行patrol_with_calibration_loop
+        if (!pair.second->m_pipeline)
+            continue;
+
+        threads.emplace_back([camera = pair.second]() {
+            camera->patrol_with_calibration_loop(false);
+        });
     }
+
+    // 等待所有线程完成
+    for (auto& thread : threads) {
+        if (thread.joinable()) {
+            thread.join();
+        }
+    }
+
     return 0;
 }
 
@@ -419,11 +437,13 @@ int CameraController::stop()
     return 0;
 }
 
-void CameraController::early_warning(int camera_id)
+void CameraController::early_warning_process(int camera_id)
 {
-    WTALOGI("生成告警，并拍摄图片， 摄像头id%d", camera_id);
     auto &camera = this->cameras[camera_id];
-    alarm_generator.generateAlarm(AlarmType::LINE_CROSSING, "", 1, camera);
+    if (camera != nullptr && camera->is_patroling() && camera->posture_completed) {
+        WTALOGI("为摄像头id[%d]生成告警!", camera_id);
+        alarm_generator.generateAlarm(AlarmType::LINE_CROSSING, "", 1, camera);
+    }
 }
 
 void CameraController::setCameraPipe(int camera_id, pipeline_t *pipe)
@@ -453,8 +473,7 @@ Camera::~Camera()
 
 int Camera::start()
 {
-    WTALOGI("摄像机[%d]启动...", id);
-    WTALOGI("ip:%s, 点位数：%d", ip.c_str(), this->preset_positions.size());
+    WTALOGI("摄像机[%d]启动...ip:%s, 点位数：%d", id, ip.c_str(), this->preset_positions.size());
     running = true;
     auto res_code = 1;
 
@@ -519,9 +538,9 @@ bool Camera::is_patroling() const
     return patrolling;
 }
 
-void Camera::set_patroling(bool patroling)
+void Camera::finish_patrolling()
 {
-    this->patrolling = patroling;
+    patrolling = false;
 }
 
 int Camera::add_preset_position(Camera::PresetPosition pos)
@@ -531,109 +550,21 @@ int Camera::add_preset_position(Camera::PresetPosition pos)
     return 0;
 }
 
-int Camera::capture_image_for_reference()
+void Camera::setPipe(pipeline_t * pipe)
 {
-    // 生成文件名: 摄像机id/摄像机id_点位id_时间.jpg
-    // 获取当前时间
-    std::time_t now = std::time(nullptr);
-    std::tm* now_time = std::localtime(&now);
-
-    // 格式化时间字符串，格式为YYYYMMDD_HHMMSS
-    char time_str[20];
-    std::strftime(time_str, sizeof(time_str), "%Y%m%d_%H%M%S", now_time);
-
-    // 使用摄像机ID和点位ID生成文件名
-    std::string camera_id_str = std::to_string(id); // 使用id作为摄像机ID
-    std::string point_id_str = std::to_string(now_point_id); // 使用当前点位ID
-
-    // 生成文件名：摄像机id_点位id_时间.jpg
-    std::string filename = camera_id_str + "_" + point_id_str + "_" + std::string(time_str) + ".jpg";
-
-    // 生成路径：摄像机id/文件名
-    std::string dir_path = capture_path + "/" + camera_id_str;
-
-    // 检查目录是否存在，不存在则创建
-    #ifdef _WIN32
-        _mkdir(dir_path.c_str());
-    #else
-        mkdir(dir_path.c_str(), 0777);
-    #endif
-
-    // 完整文件路径
-    std::string filepath = dir_path + "/" + filename;
-
-    // 构造拍照URL，使用协议中指定的URL格式
-    std::string url = "http://" + ip + "/cgi-bin/snap.cgi?channel=0";
-
-    // 设置curl请求
-    curl_easy_setopt(curl_handle, CURLOPT_URL, url.c_str());
-
-    // 创建文件保存图像
-    std::ofstream image_file(filepath, std::ios::binary);
-    if (!image_file.is_open()) {
-        return -1;
-    }
-
-    // 设置curl回调函数将数据写入文件
-    curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, [](void* contents, size_t size, size_t nmemb, void* userp) {
-        std::ofstream* file = static_cast<std::ofstream*>(userp);
-        file->write(static_cast<char*>(contents), size * nmemb);
-        return size * nmemb;
-    });
-
-    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, &image_file);
-
-    // 执行请求
-    CURLcode res = curl_easy_perform(curl_handle);
-
-    // 清理
-    image_file.close();
-
-    // 检查结果
-    if (res != CURLE_OK) {
-        std::cerr << "Failed to capture image: " << curl_easy_strerror(res) << std::endl;
-        // 尝试删除可能不完整的文件
-        remove(filepath.c_str());
-        return -1;
-    }
-
-    // 获取HTTP响应码
-    long http_code = 0;
-    curl_easy_getinfo(curl_handle, CURLINFO_RESPONSE_CODE, &http_code);
-
-    if (http_code != 200) {
-        std::cerr << "HTTP error code: " << http_code << std::endl;
-        remove(filepath.c_str());
-        return -1;
-    }
-
-    // 检查文件大小，确保图像成功保存
-    std::ifstream check_file(filepath, std::ios::binary | std::ios::ate);
-    if (check_file.fail()) {
-        std::cerr << "Failed to check captured image file" << std::endl;
-        remove(filepath.c_str());
-        return -1;
-    }
-
-    std::streamsize file_size = check_file.tellg();
-    check_file.close();
-
-    if (file_size <= 0) {
-        std::cerr << "Captured image file is empty or invalid" << std::endl;
-        remove(filepath.c_str());
-        return -1;
-    }
-
-    return 0;
+    WTALOGI("摄像机[%d]绑定pipeline[%d]",id, pipe->pipeid);
+    this->m_pipeline = pipe;
 }
 
-void Camera::setPipe(pipeline_t * pipe) {
-    this->pipeline = pipe;
+bool Camera::start_record_video()
+{
+    m_pipeline->IsRecordVideo = true; // 标识开始录像
+    return false;
 }
 
-bool Camera::record_video()
+bool Camera::start_take_a_picture(int kind)
 {
-    this->pipeline->IsRecordVideo = true; // 标识开始录像
+    m_pipeline->whatPicture = kind; // 标识拍照
     return false;
 }
 
@@ -651,38 +582,41 @@ int Camera::patrol_with_calibration_loop(bool is_calibrate)
 
         // 拍摄图像 - 轮询等待姿态完成或超时10秒
         auto start_time = std::chrono::steady_clock::now();
-        bool posture_completed = false;
+        bool posture_completed = false; //test：临时默认为true用于测试
 
-        // 轮询直到姿态完成或超时10秒
-        while (!posture_completed &&
-               std::chrono::duration_cast<std::chrono::seconds>(
-                   std::chrono::steady_clock::now() - start_time).count() < 10) {
-            if (is_posture_completed()) {
-                posture_completed = true;
+        // 轮询直到姿态完成或超时8秒
+        while (!posture_completed && std::chrono::duration_cast<std::chrono::seconds>(
+                   std::chrono::steady_clock::now() - start_time).count() < 8) {
+            if (posture_completed = is_posture_completed()) {
+                // noop
             } else {
                 // 短暂休眠避免CPU过度占用
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
         }
 
+        const char* status = posture_completed ? "已" : "无法";
+        WTALOGI("摄像机[%d]状态%s切换到点位[%d]", id, status, now_point_id);
         if (posture_completed) {
             if (is_calibrate) { //标定模式
-                capture_image_for_reference(); // 标定模式下的拍照
+                start_take_a_picture(1);
             } else  { //巡航模式
-                this->record_video();  // 非标定模式下的录像
-                //拍照
+                start_record_video();  // 录像
+                start_take_a_picture(2);//拍照 0:不拍 1：标定 2：巡检
             }
-        } //else noop
+        } else {
+            WTALOGI("摄像机[%d]状态切换失败", id);
+        }
 
         // 判断是否是最后一个点位
         if (std::next(position) == preset_positions.end()) {
             //最后一个点位，可以开始切换到非巡逻模式
-            patrolling = false;
+            finish_patrolling();
             set_brighten(0); //不需要光照 补光灯关闭
         }
 
         if (is_calibrate)
-            std::this_thread::sleep_for(std::chrono::milliseconds(500)); //进行标定的话可以快速切换点位
+            std::this_thread::sleep_for(std::chrono::milliseconds(2000)); //进行标定的话可以快速切换点位
         else
             std::this_thread::sleep_for(std::chrono::milliseconds(position->duration));  // 每隔duration切换下一次点位
 
@@ -704,10 +638,12 @@ bool Camera::is_posture_completed()
         std::cerr << "Failed to read rotation registers: " << modbus_strerror(errno) << std::endl;
     }
 
-    if (regs[0]&0x1 && regs[0]&(1<<1) && regs[0]&(1<<2)) // 位操作读取三个参数分别的状态值
-        return true;
-    else
-        return false;
+    if (regs[0]&0x1 && regs[0]&(1<<1) && regs[0]&(1<<2))  { // 位操作读取三个参数分别的状态值
+        posture_completed = true;
+    } else {
+        posture_completed = false;
+    }
+    return posture_completed;
 }
 
 int Camera::set_ptz(int horizontal, int vertical, int brightness)
