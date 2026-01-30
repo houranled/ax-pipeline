@@ -367,6 +367,11 @@ int CameraController::load_config_from_file(const std::string& config_file_path)
         // 遍历相机列表
         if (config.contains("chl_list") && config["chl_list"].is_array()) {
             for (const auto& camera_config : config["chl_list"]) {
+                auto type = camera_config["type"];
+                if (type != "Webcam") {//该通道不是相机 跳过该设备解析
+                    continue;
+                }
+
                 // 创建相机实例
                 Camera* camera = new Camera();
 
@@ -448,7 +453,10 @@ void CameraController::early_warning_process(int camera_id)
 
 void CameraController::setCameraPipe(int camera_id, pipeline_t *pipe)
 {
-    cameras[camera_id]->setPipe(pipe);
+    auto &camera = cameras[camera_id];
+    if (camera != nullptr) {
+        camera->setPipe(pipe);
+    }
 }
 
 /* ================================== */
@@ -496,6 +504,9 @@ int Camera::pause()
 
 bool Camera::connect_modbus()
 {
+    if (ptz_ip.empty())
+        return false;
+
     // 清理旧连接
     if (modbus_ctx != nullptr) {
         WTALOGI("重连接云台[%s]...", ptz_ip.c_str());
