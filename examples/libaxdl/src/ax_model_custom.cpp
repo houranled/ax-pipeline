@@ -3,7 +3,14 @@
 
 #include <fstream>
 #include <iomanip>
+#include "../../utilities/json.hpp"
 
+
+// 初始化静态成员
+std::mutex ax_model_custom::amplitude_mutex;
+std::thread ax_model_custom::export_thread;
+std::atomic<bool> ax_model_custom::export_thread_running(false);
+std::map<int, ax_model_custom::ChannelAmplitudeData> ax_model_custom::channel_amplitude_map;
 
 void ax_model_custom::draw_custom(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y)
 {
@@ -24,7 +31,9 @@ void ax_model_custom::draw_custom(int chn, axdl_results_t *results, float fontsc
      * 1、使用 m_drawers[chn] 的接口进行绘制，如果 m_drawers[chn] 不能满足绘制需求，则无法绘制
      * 2、详情可以参考 examples/libaxdl/include/ax_osd_drawer.hpp 定义的结构体
      */
-    axdl_point_t pos = {origin_x, occlusion_pixel_height/m_drawers[chn].get_height()};
+
+    auto& cad = channel_amplitude_map[chn];
+    axdl_point_t pos = {cad.origin_x, cad.occlusion_pixel_height/m_drawers[chn].get_height()};
     m_drawers[chn].add_point(&pos, {255, 0, 0, 255}, 6);  //添加初始位置坐标
 
     draw_bbox(chn, results, fontscale, thickness);
@@ -41,68 +50,73 @@ void ax_model_custom::process_texts(axdl_results_t *results, int &chn, int d, fl
      * 需要提前知道摄像头上沿视线与摄像头主视线的垂直夹角,
      * 然后通过  tanθ= △Y /△Z    →   △Y = △Z * tan仰角得出△Y, 即振幅.
     */
-   auto image_width = m_drawers[chn].get_width();   //用来反归一化，即像平面的像素宽度， 单位为像素
-   auto &obj = results->mObjects[d];
+    auto image_width = m_drawers[chn].get_width();   //用来反归一化，即像平面的像素宽度， 单位为像素
+    auto &obj = results->mObjects[d];
 
-   //tan(画面上沿视线与摄像头主视线的垂直夹角) 即 原镜头中间水平线到画面上沿的距离长度÷焦距 是个比例值
-   auto tan_xita = (m_drawers[chn].get_height() - occlusion_pixel_height) /  m_drawers[chn].get_height();
+    auto& cad = channel_amplitude_map[chn];
 
-   if (0.5f == obj.bbox.x || 0.5f == origin_x) {
-       amplitude_now = 0;
-   } else {
-       amplitude_now/*振幅*/= f * X /(image_width * size_per_pixel) * (1/(0.5f - obj.bbox.x)  - 1/(0.5f - origin_x)) /*△Z*/
+    //tan(画面上沿视线与摄像头主视线的垂直夹角) 即 原镜头中间水平线到画面上沿的距离长度÷焦距 是个比例值
+    auto tan_xita = (m_drawers[chn].get_height() - cad.occlusion_pixel_height) /  m_drawers[chn].get_height();
+
+    if (0.5f == obj.bbox.x || 0.5f == cad.origin_x) {
+        cad.amplitude_now = 0;
+    } else {
+        cad.amplitude_now/*振幅*/= cad.f * cad.X /(image_width * cad.size_per_pixel) * (1/(0.5f - obj.bbox.x)  - 1/(0.5f - cad.origin_x)) /*△Z*/
          * tan_xita /*tan仰角*/;
-   }
+    }
 
-   if (amplitude_now > 0 && amplitude_now > amp_max_positive) {
-        amp_max_positive = amplitude_now;
-        max_positive_point_pos = {obj.bbox.x, obj.bbox.y};
-   } else if (amplitude_now < 0 && amplitude_now < amp_max_negative) {
-        amp_max_negative =  amplitude_now;
-        max_positive_point_pos = {obj.bbox.x, obj.bbox.y};
-   }
-   if (amp_max_positive)
-        m_drawers[chn].add_point(&max_positive_point_pos, {0, 127, 255, 0}, 6);
+    if (cad.amplitude_now > 0 && cad.amplitude_now > cad.amp_max_positive) {
+        cad.amp_max_positive = cad.amplitude_now;
+        cad.max_positive_point_pos = {obj.bbox.x, obj.bbox.y};
+    } else if (cad.amplitude_now < 0 && cad.amplitude_now < cad.amp_max_negative) {
+        cad.amp_max_negative =  cad.amplitude_now;
+        cad.max_positive_point_pos = {obj.bbox.x, obj.bbox.y};
+    }
+    if (cad.amp_max_positive)
+        m_drawers[chn].add_point(&cad.max_positive_point_pos, {0, 127, 255, 0}, 6);
 
-   if (amp_max_negative)
-        m_drawers[chn].add_point(&max_negative_point_pos, {0, 127, 0, 255}, 6);
+    if (cad.amp_max_negative)
+        m_drawers[chn].add_point(&cad.max_negative_point_pos, {0, 127, 0, 255}, 6);
 
-   amplitude_datas.push_back(amplitude_now);
-   // 检查是否需要保存数据（每秒保存一次）
-   auto current_time = std::chrono::steady_clock::now();
-   if (std::chrono::duration_cast<std::chrono::seconds>(current_time - last_save_time).count() >= 1) {
-        export_amplitude(); // 输出振幅数据
-        amplitude_datas.clear(); // 清空数据
+    cad.amplitude_datas.push_back(cad.amplitude_now); // 将振幅数据存储到数组中
 
-        last_save_time = current_time;
-   }
-
-    m_drawers[chn].add_text(std::string(obj.objname) + ":" + std::to_string(amplitude_now),
+    m_drawers[chn].add_text(std::string(obj.objname) + ":" + std::to_string(cad.amplitude_now),
         {obj.bbox.x, obj.bbox.y},
         {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
 
-    m_drawers[chn].add_text(std::string("positive max") + ":" + std::to_string(amp_max_positive),
+    m_drawers[chn].add_text(std::string("positive max") + ":" + std::to_string(cad.amp_max_positive),
         {0.3, 0},
         {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
-    m_drawers[chn].add_text(std::string("negative max") + ":" + std::to_string(amp_max_negative),
+    m_drawers[chn].add_text(std::string("negative max") + ":" + std::to_string(cad.amp_max_negative),
         {0.5, 0},
         {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
 }
 
-void ax_model_custom::export_amplitude() {
-    // 写入时间戳
-    auto now = std::chrono::system_clock::now();
-    auto time_t = std::chrono::system_clock::to_time_t(now);
-    std::cout << std::put_time(std::localtime(&time_t), "%Y-%m-%d %H:%M:%S") << " ";
+void ax_model_custom::export_amplitude()
+{
+    nlohmann::json output_json;
 
-    // 写入振幅数据
-    for (size_t i = 0; i < amplitude_datas.size(); ++i) {
-        std::cout << amplitude_datas[i];
-        if (i < amplitude_datas.size() - 1) {
-            std::cout << ",";  // 不是最后一个数据时添加逗号
-        } else {
-            std::cout << std::endl;  // 最后一个数据时添加换行符
+    while (export_thread_running) {
+        std::this_thread::sleep_for(std::chrono::seconds(1)); // 每秒输出一次
+
+        // 写入时间戳
+        auto now = std::chrono::system_clock::now();
+        auto time_t = std::chrono::system_clock::to_time_t(now);
+        std::cout << std::put_time(std::localtime(&time_t), "%Y-%m-%d %H:%M:%S") << " ";
+
+        std::lock_guard<std::mutex> lock(amplitude_mutex);
+        // 收集数据并输出JSON
+        // 从channel_amplitude_map获取数据
+        for (auto& [chn, data] : channel_amplitude_map) {
+            if (!data.amplitude_datas.empty()) {
+                output_json[std::to_string(chn)] = data.amplitude_datas;
+                data.amplitude_datas.clear();
+            }
+        }
+
+        if (!output_json.empty()) {
+            std::cout << output_json.dump() << std::endl;
         }
     }
-}
 
+}

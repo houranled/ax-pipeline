@@ -6,6 +6,7 @@
 #include <queue>
 #include <mutex>
 #include <condition_variable>
+#include <map>
 
 
 // 添加 Camera 类的前置声明
@@ -22,34 +23,32 @@ enum class AlarmType {
 
 // 告警结构体
 struct Alarm {
+    int cameraId;           // 摄像头ID
+    int point_id;           // 告警点id
     AlarmType type;         // 告警类型
     std::string message;    // 告警消息
-    int cameraId;           // 摄像头ID
     time_t timestamp;       // 时间戳
     float confidence;       // 置信度
     std::string picPath;         // 告警图片存储路径
 };
 
 // 告警生成器类
-class AlarmGenerator {
+class AlarmManager {
 public:
-    AlarmGenerator();
-    ~AlarmGenerator();
+    AlarmManager() {};
+    ~AlarmManager() {};
 
     //检测是否触发告警
     bool isAlarmTriggered(AlarmType type, const std::string& message, int cameraId, float confidence);
 
-    // 生成告警
-    Alarm generateAlarm(AlarmType type, const std::string& message, float confidence, Camera *camera);
 
-    // 消费者获取每个告警
-    void look_a_alarm();
+    Alarm generateAlarm(AlarmType type, const std::string& message, float confidence, Camera *camera); // 生成告警
+    std::string output_alarms(int camera_id); // 输出对应id的摄像机的告警信息
 
-    // 获取队列中的告警数量
-    size_t getAlarmCount();
+    static uint32_t cooldown;
 
 private:
-    std::queue<Alarm> alarmQueue;  // 告警队列
+    std::map<int, std::queue<Alarm>> alarmMapDatas;  // 按通道ID分别存储的告警队列
     std::mutex queueMutex;         // 队列互斥锁
     std::condition_variable queueCondition;  // 队列条件变量
 };

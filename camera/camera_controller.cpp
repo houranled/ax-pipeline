@@ -214,18 +214,26 @@ int CameraController::receive_input_loop() {
                     if (currentCameraId > 0 && cameras.find(currentCameraId) != cameras.end()) {
                         Camera* camera = cameras[currentCameraId];
                         camera->patrol_with_calibration_loop(false);
+                        auto warnstr = alarm_manager.output_alarms(currentCameraId);
                         // 巡检完成后构造JSON响应
                         nlohmann::json result;
                         result["status"] = "end";
+                        // 将warnings字符串解析为JSON对象，然后提取其中的warnings数组
+                        nlohmann::json warn_json = nlohmann::json::parse(warnstr);
+                        result["warnings"] = warn_json["warnings"];
                         result["msg"] = "Camera " + std::to_string(currentCameraId) + " patrol has completed successfully";
                         result["cmd"] = "action";
                         result["reqId"] = currentReqId; // 添加reqId到响应中
                         std::cout << result.dump() << std::endl;
                     } else {  // 如果没有指定有效的摄像机ID，则巡检所有摄像机
                         all_cameras_patrol();
+                        auto warnstr = alarm_manager.output_alarms(currentCameraId);
                         // 巡检完成后构造JSON响应
                         nlohmann::json result;
                         result["status"] = "end";
+                        // 将warnings字符串解析为JSON对象，然后提取其中的warnings数组
+                        nlohmann::json warn_json = nlohmann::json::parse(warnstr);
+                        result["warnings"] = warn_json["warnings"];
                         result["msg"] = "All cameras patrol has completed successfully";
                         result["cmd"] = "action";
                         result["reqId"] = currentReqId; // 添加reqId到响应中
@@ -345,7 +353,6 @@ int CameraController::calibrate(int camera_id)
     return 0;
 }
 
-int CameraController::cooldown = 0;
 int CameraController::load_config_from_file(const std::string& config_file_path)
 {
     try {
@@ -361,7 +368,7 @@ int CameraController::load_config_from_file(const std::string& config_file_path)
         config_file >> config;
 
         if (config.contains("cooldown")){
-            cooldown = std::stoi(config["cooldown"].get<std::string>());
+            alarm_manager.cooldown = std::stoi(config["cooldown"].get<std::string>());
         }
 
         // 遍历相机列表
@@ -404,7 +411,6 @@ int CameraController::load_config_from_file(const std::string& config_file_path)
                         camera->add_preset_position(pos); // 设置点位信息
                     }
                 }
-                camera->start();
 
                 // 将相机添加到控制器
                 cameras[camera->id] = camera;
@@ -421,6 +427,21 @@ int CameraController::load_config_from_file(const std::string& config_file_path)
 int CameraController::start()
 {
     running = true; // 标记控制器为运行状态
+
+    // 创建线程并行启动所有摄像机
+    std::vector<std::thread> start_threads;
+    for (auto& camera : cameras) {
+        start_threads.emplace_back([camera = camera.second]() {
+            camera->start(); // 启动相机
+        });
+    }
+
+    // 等待所有相机启动完成
+    for (auto& thread : start_threads) {
+        if (thread.joinable()) {
+            thread.join();
+        }
+    }
 
     // 创建并启动一个新线程来执行receive_input函数
     input_thread = std::thread(&CameraController::receive_input_loop, this);
@@ -447,7 +468,7 @@ void CameraController::early_warning_process(int camera_id)
     auto &camera = this->cameras[camera_id];
     if (camera != nullptr && camera->is_patroling() && camera->posture_completed) {
         WTALOGI("为摄像头id[%d]生成告警!", camera_id);
-        alarm_generator.generateAlarm(AlarmType::LINE_CROSSING, "", 1, camera);
+        alarm_manager.generateAlarm(AlarmType::LINE_CROSSING, "", 1, camera);
     }
 }
 
