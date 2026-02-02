@@ -55,7 +55,7 @@ private:
         axdl_point_t max_negative_point_pos;
     };
 
-    static std::map<int, ChannelAmplitudeData> channel_amplitude_map;  // 通道ID到振幅数据的映射
+    static std::map<std::string, ChannelAmplitudeData> channel_amplitude_map;  // 通道name到振幅数据的映射
 
     static std::mutex amplitude_mutex;
     static std::thread export_thread;

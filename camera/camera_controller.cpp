@@ -10,7 +10,7 @@ std::string Camera::capture_path ="/wt_tech/conf/img/"; // 图像保存路径初
 
 CameraController::CameraController()
 {
-    WTALOGI("\n=======%s==============", "摄像头控制器启动...");
+    WTALOGI("\n===================%s==============", "摄像头控制器启动...");
 
     // 初始化libcurl全局环境
     CURLcode res = curl_global_init(CURL_GLOBAL_ALL);
@@ -385,6 +385,8 @@ int CameraController::load_config_from_file(const std::string& config_file_path)
                 // 设置相机基本信息
                 camera->id = std::stoi(camera_config["id"].get<std::string>());
 
+                camera->name = camera_config["name"];
+
                 if (camera_config.contains("ip")) {
                     camera->ip = camera_config["ip"];
                 }
@@ -478,6 +480,15 @@ void CameraController::setCameraPipe(int camera_id, pipeline_t *pipe)
     if (camera != nullptr) {
         camera->setPipe(pipe);
     }
+}
+
+Camera *CameraController::getCamera(int camera_id)
+{
+    auto it = cameras.find(camera_id);
+    if (it != cameras.end()) {
+        return it->second;
+    }
+    return nullptr;
 }
 
 /* ================================== */
@@ -598,6 +609,11 @@ bool Camera::start_take_a_picture(int kind)
 {
     m_pipeline->whatPicture = kind; // 标识拍照
     return false;
+}
+
+std::string Camera::getName()
+{
+    return name;
 }
 
 int Camera::patrol_with_calibration_loop(bool is_calibrate)

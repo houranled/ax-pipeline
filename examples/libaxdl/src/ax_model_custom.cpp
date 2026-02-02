@@ -5,12 +5,15 @@
 #include <iomanip>
 #include "../../utilities/json.hpp"
 
+#include "../../camera/camera_controller.hpp"
+#include <time.h>
+
 
 // 初始化静态成员
 std::mutex ax_model_custom::amplitude_mutex;
 std::thread ax_model_custom::export_thread;
 std::atomic<bool> ax_model_custom::export_thread_running(false);
-std::map<int, ax_model_custom::ChannelAmplitudeData> ax_model_custom::channel_amplitude_map;
+std::map<std::string, ax_model_custom::ChannelAmplitudeData> ax_model_custom::channel_amplitude_map;
 
 void ax_model_custom::draw_custom(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y)
 {
@@ -32,7 +35,11 @@ void ax_model_custom::draw_custom(int chn, axdl_results_t *results, float fontsc
      * 2、详情可以参考 examples/libaxdl/include/ax_osd_drawer.hpp 定义的结构体
      */
 
-    auto& cad = channel_amplitude_map[chn];
+    auto camera =  CameraController::getInstance()->getCamera(chn/2); // 获取相机
+    auto name = camera->getName();
+
+    auto& cad = channel_amplitude_map[name];
+
     axdl_point_t pos = {cad.origin_x, cad.occlusion_pixel_height/m_drawers[chn].get_height()};
     m_drawers[chn].add_point(&pos, {255, 0, 0, 255}, 6);  //添加初始位置坐标
 
@@ -53,7 +60,8 @@ void ax_model_custom::process_texts(axdl_results_t *results, int &chn, int d, fl
     auto image_width = m_drawers[chn].get_width();   //用来反归一化，即像平面的像素宽度， 单位为像素
     auto &obj = results->mObjects[d];
 
-    auto& cad = channel_amplitude_map[chn];
+    auto name = CameraController::getInstance()->getCamera(chn/2)->getName();
+    auto& cad = channel_amplitude_map[name];
 
     //tan(画面上沿视线与摄像头主视线的垂直夹角) 即 原镜头中间水平线到画面上沿的距离长度÷焦距 是个比例值
     auto tan_xita = (m_drawers[chn].get_height() - cad.occlusion_pixel_height) /  m_drawers[chn].get_height();
@@ -101,18 +109,25 @@ void ax_model_custom::export_amplitude()
 
         // 写入时间戳
         auto now = std::chrono::system_clock::now();
-        auto time_t = std::chrono::system_clock::to_time_t(now);
-        std::cout << std::put_time(std::localtime(&time_t), "%Y-%m-%d %H:%M:%S") << " ";
+        auto now_time = std::chrono::system_clock::to_time_t(now);
+
+        std::tm tm_now;
+        localtime_r(&now_time, &tm_now);  // Linux平台
+
+        std::ostringstream time_stream;
+        time_stream << std::put_time(&tm_now, "%Y-%m-%d %H:%M:%S");
 
         std::lock_guard<std::mutex> lock(amplitude_mutex);
         // 收集数据并输出JSON
         // 从channel_amplitude_map获取数据
-        for (auto& [chn, data] : channel_amplitude_map) {
+        for (auto& [name, data] : channel_amplitude_map) {
             if (!data.amplitude_datas.empty()) {
-                output_json[std::to_string(chn)] = data.amplitude_datas;
+                output_json[name] = data.amplitude_datas;
                 data.amplitude_datas.clear();
             }
         }
+
+        output_json["time"] = time_stream.str(); // 添加时间戳
 
         if (!output_json.empty()) {
             std::cout << output_json.dump() << std::endl;

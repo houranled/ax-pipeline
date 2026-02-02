@@ -818,7 +818,7 @@ bool init_ffmpeg_pipe(pipeline_t *pipeline)
 }
 
 // 初始化FFmpeg管道用于异常记录
-bool finish_ffmpeg_pipe_video(pipeline_t *pipe)
+bool record_ffmpeg_pipe_video(pipeline_t *pipe)
 {
     char filename[128]={0};
     if(NULL == pipe->ffmpeg_pipe_file) {
@@ -830,7 +830,7 @@ bool finish_ffmpeg_pipe_video(pipeline_t *pipe)
         // /wt_tech/data/F02/20260101/20260101_01/video/
         char dateStr[16] = {0};
         sprintf(dateStr, "%04d%02d%02d", t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
-        sprintf(dirname, "/wt_tech/data/%s%s/%s_%d/video", "F02", dateStr,dateStr,1);
+        sprintf(dirname, "/wt_tech/data/%s/%s/%s_%d/video", "F02", dateStr,dateStr, 1);
             //%d%02d%02d" , t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
         //detection::CreateDir(dirname);
         if(access(dirname,0)!=0) {
@@ -852,6 +852,7 @@ bool finish_ffmpeg_pipe_video(pipeline_t *pipe)
         //完成录制，关闭文件
         pclose(pipe->ffmpeg_pipe_file);
         pipe->ffmpeg_pipe_file = NULL;
+        pipe->IsRecordVideo = false; //关闭录制
         WTALOGI("录制视频完成，关闭文件[%s]", filename);
     }
 

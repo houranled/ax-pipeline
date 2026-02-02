@@ -39,6 +39,7 @@ public:
     int stop(); // 关闭处理线程
     void early_warning_process(int camera_id); // 对摄像机id为camera_id触发预警
     void setCameraPipe(int camera_id, pipeline_t *pipe);
+    Camera* getCamera(int camera_id); // 根据id获取相机对象
 
 private:
     // 将构造函数设为私有
@@ -92,9 +93,11 @@ public:
     void setPipe(pipeline_t * pipe); // 绑定pipeline
     bool start_record_video(); // 录制视频
     bool start_take_a_picture(int kind); // 拍照
+    std::string getName(); // 获取相机名称
 
 private:
     int id;
+    std::string name; // 相机名称
     std::string ip;  // 相机ip地址
     std::string ptz_ip; //云台ip地址
     int rotation_x=0;  // 当前水平角度

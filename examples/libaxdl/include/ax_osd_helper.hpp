@@ -198,10 +198,6 @@ private:
                     {
                         axdl_native_osd_draw_results(gModels, osd_pipe->pipeid, &mResults, 0.6, 2);
 
-                        /* 这里保存图片和视频 当draw_custom执行时若检测到告警， 这里进行图片和视频保存。
-                         * 或者camera处于巡逻patrol模式时，也进行保存
-                         */
-
                         AX_IVPS_RGN_DISP_GROUP_T *rgn_disp_grp = (AX_IVPS_RGN_DISP_GROUP_T *)axdl_native_osd_get_handle(gModels, osd_pipe->pipeid);
                         if (rgn_disp_grp)
                         {

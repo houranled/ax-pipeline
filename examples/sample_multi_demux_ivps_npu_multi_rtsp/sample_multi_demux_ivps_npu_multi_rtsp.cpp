@@ -144,7 +144,7 @@ void ai_inference_func(pipeline_buffer_t *buff)
 }
 
 // 初始化FFmpeg管道保存图像
-static bool init_ffmpeg_pipe_jpg(void *p_hevc , int pLen, int what_kind_pic) //what_kind_pic, 0:无 1：标定 2：巡检
+static bool record_ffmpeg_pipe_jpg(void *p_hevc , int pLen, int what_kind_pic) //what_kind_pic, 0:无 1：标定 2：巡检
 {
     char cmd[512]={0};
     time_t timeReal;
@@ -210,7 +210,7 @@ void h265_save_func(pipeline_buffer_t *buff) //buff->p_vir 包含一帧编码后
 
     int frameMax = 15 * 25 ; //录制一次视频总帧数 相当于记录时长(15秒)*帧率
     if(pipe->h26data[num].frameNum >= frameMax) { //完成录制
-        finish_ffmpeg_pipe_video(pipe);
+        record_ffmpeg_pipe_video(pipe);
 
         pipe->h26data[num].IsWrite = 0;
         pipe->h26data[1-num].IsWrite =1;
@@ -218,8 +218,8 @@ void h265_save_func(pipeline_buffer_t *buff) //buff->p_vir 包含一帧编码后
         pipe->h26data[1-num].frameNum = 0;
     }
 
-    if (auto what_kind = pipe->whatPicture) {
-        init_ffmpeg_pipe_jpg(buff->p_vir, buff->n_size, what_kind); //保存图片
+    if (pipe->whatPicture) {
+        record_ffmpeg_pipe_jpg(buff->p_vir, buff->n_size, pipe->whatPicture); //保存图片
     }
 
 }
