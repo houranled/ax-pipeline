@@ -15,6 +15,9 @@ std::thread ax_model_custom::export_thread;
 std::atomic<bool> ax_model_custom::export_thread_running(false);
 std::map<std::string, ax_model_custom::ChannelAmplitudeData> ax_model_custom::channel_amplitude_map;
 
+std::string ax_model_custom::car_no = "";
+float ax_model_custom::ChannelAmplitudeData::Y = 0;
+
 void ax_model_custom::draw_custom(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y)
 {
     /*
@@ -42,6 +45,23 @@ void ax_model_custom::draw_custom(int chn, axdl_results_t *results, float fontsc
 
     axdl_point_t pos = {cad.origin_x, cad.occlusion_pixel_height/m_drawers[chn].get_height()};
     m_drawers[chn].add_point(&pos, {255, 0, 0, 255}, 6);  //添加初始位置坐标
+
+    //视频左上角绘制车牌号水印 carNo 与时间戳
+    if (car_no != "") {
+        m_drawers[chn].add_text(car_no, {0, 0}, {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
+    }
+    // 获取当前时间
+    auto now = std::chrono::system_clock::now();
+    auto now_time = std::chrono::system_clock::to_time_t(now);
+
+    std::tm tm_now;
+    localtime_r(&now_time, &tm_now);  // Linux平台
+
+    std::ostringstream time_stream;
+    time_stream << std::put_time(&tm_now, "%Y-%m-%d %H:%M:%S");
+
+    // 在车牌号下方显示时间戳
+    m_drawers[chn].add_text(time_stream.str(), {0, 0.05}, {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
 
     draw_bbox(chn, results, fontscale, thickness);
 }
@@ -73,6 +93,8 @@ void ax_model_custom::process_texts(axdl_results_t *results, int &chn, int d, fl
          * tan_xita /*tan仰角*/;
     }
 
+    auto distance_now = std::round((cad.amplitude_now+cad.Y) * 100000) / 100000; //保留小数点后5位并加上初始距离形成绝对距离
+
     if (cad.amplitude_now > 0 && cad.amplitude_now > cad.amp_max_positive) {
         cad.amp_max_positive = cad.amplitude_now;
         cad.max_positive_point_pos = {obj.bbox.x, obj.bbox.y};
@@ -86,9 +108,9 @@ void ax_model_custom::process_texts(axdl_results_t *results, int &chn, int d, fl
     if (cad.amp_max_negative)
         m_drawers[chn].add_point(&cad.max_negative_point_pos, {0, 127, 0, 255}, 6);
 
-    cad.amplitude_datas.push_back(cad.amplitude_now); // 将振幅数据存储到数组中
+    cad.amplitude_datas.push_back(distance_now); // 将距离数据存储到数组中
 
-    m_drawers[chn].add_text(std::string(obj.objname) + ":" + std::to_string(cad.amplitude_now),
+    m_drawers[chn].add_text(std::string(obj.objname) + ":" + std::to_string(distance_now),
         {obj.bbox.x, obj.bbox.y},
         {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
 
@@ -122,7 +144,13 @@ void ax_model_custom::export_amplitude()
         // 从channel_amplitude_map获取数据
         for (auto& [name, data] : channel_amplitude_map) {
             if (!data.amplitude_datas.empty()) {
-                output_json[name] = data.amplitude_datas;
+                std::vector<std::string> formatted_amplitudes;
+                for (float amplitude : data.amplitude_datas) {
+                    std::ostringstream oss;
+                    oss << std::fixed << std::setprecision(5) << amplitude;
+                    formatted_amplitudes.push_back(oss.str());
+                }
+                output_json[name] = formatted_amplitudes;
                 data.amplitude_datas.clear();
             }
         }
@@ -134,4 +162,34 @@ void ax_model_custom::export_amplitude()
         }
     }
 
+}
+
+void ax_model_custom::load_config()
+{
+    try {
+        // 打开配置文件
+        std::ifstream config_file("/wt_tech/conf/rt.json");
+        if (!config_file.is_open()) {
+            ALOGE("Failed to open config file: /wt_tech/conf/rt.json");
+            return;
+        }
+
+        // 解析 JSON
+        nlohmann::json config;
+        config_file >> config;
+
+        // 获取carNo字段
+        if (config.contains("carNo")) {
+            car_no = config["carNo"].get<std::string>();
+            ALOGI("Loaded carNo from config: %s", car_no.c_str());
+        } else {
+            ALOGW("carNo not found in config file");
+        }
+
+        if (config.contains("calibration")) {
+            ax_model_custom::ChannelAmplitudeData::Y =  std::stof(config["calibration"].get<std::string>());
+        }
+    } catch (const std::exception& e) {
+        ALOGE("Error loading config: %s", e.what());
+    }
 }

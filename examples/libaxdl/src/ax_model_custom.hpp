@@ -13,6 +13,9 @@ class ax_model_custom : public ax_model_yolov8_native
 public:
 
     ax_model_custom() {
+        //加载配置
+        load_config();
+
         if (!export_thread_running.exchange(true)) {
             export_thread = std::thread(export_amplitude);
         }
@@ -35,15 +38,17 @@ protected:
     void draw_custom(int chn, axdl_results_t *results, float fontscale, int thickness) override;
     void process_texts(axdl_results_t *results, int &chn, int d, float fontscale) override;
     static void export_amplitude();
+    void load_config();
 
 private:
 
     // 为每个通道创建独立的振幅数据存储
     struct ChannelAmplitudeData {
-        float occlusion_pixel_height = 190; //画面遮挡部分的高度差190 单位像素
         float origin_x=0.133f; //原始x像素坐标归一化形式 范围为[0,1]
-        float f = 0.0028;   //焦距 单位m  焦距28mm
         float X = 0.25f;    //扇叶左半边真实长度 单位m
+        static float Y;       //扇叶于下方平板距离（标定）
+        float occlusion_pixel_height = 190; //画面遮挡部分的高度差190 单位像素
+        float f = 0.0028;   //焦距 单位m  焦距28mm
         float size_per_pixel = 0.0000001f; //摄像传感器像素大小 单位 m/像素
 
         std::vector<float> amplitude_datas;
@@ -60,6 +65,10 @@ private:
     static std::mutex amplitude_mutex;
     static std::thread export_thread;
     static std::atomic<bool> export_thread_running;
+
+    // 添加静态成员变量存储carNo
+    static std::string car_no;
+
 
 };
 REGISTER(MT_CUSTOM_MODEL, ax_model_custom)
