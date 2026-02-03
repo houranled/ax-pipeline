@@ -143,43 +143,6 @@ void ai_inference_func(pipeline_buffer_t *buff)
     }
 }
 
-// 初始化FFmpeg管道保存图像
-static bool record_ffmpeg_pipe_jpg(void *p_hevc , int pLen, int what_kind_pic) //what_kind_pic, 0:无 1：标定 2：巡检
-{
-    char cmd[512]={0};
-    time_t timeReal;
-    time(&timeReal);
-    timeReal = timeReal + 8 * 3600;
-    tm *t = gmtime(&timeReal);
-    char dirname[128] ={0};
-    sprintf(dirname , "/wt_tech/data/pic/%d%02d%02d" , t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
-    //detection::CreateDir(dirname);
-    if(access(dirname,0)!=0) {
-        mkdir(dirname,0777);
-    }
-    char filePath[128]={0};
-    sprintf(filePath, "%s/%d_%02d_%02d_%02d_%02d_%02d.jpg",dirname ,  t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
-    sprintf(cmd , "ffmpeg -y -f hevc -i pipe:0 -vframes 1 -q:v 2 %s" , filePath);
-    // 使用 popen 创建管道
-    FILE* pipe_fd = popen(cmd, "w");
-    if (!pipe_fd) {
-        perror("popen");
-        return false;
-    }
-    // 写入 HEVC 数据
-    size_t written = fwrite(p_hevc, 1, pLen, pipe_fd);
-    if (written != pLen) {
-        perror("fwrite");
-        pclose(pipe_fd);
-        return false;
-    }
-    // 关闭管道
-    if (pclose(pipe_fd) == -1) {
-        perror("pclose");
-        return false;
-    }
-    return true;
-}
 
 // h265保存函数
 void h265_save_func(pipeline_buffer_t *buff) //buff->p_vir 包含一帧编码后的数据
@@ -219,7 +182,7 @@ void h265_save_func(pipeline_buffer_t *buff) //buff->p_vir 包含一帧编码后
     }
 
     if (pipe->whatPicture) {
-        record_ffmpeg_pipe_jpg(buff->p_vir, buff->n_size, pipe->whatPicture); //保存图片
+        record_ffmpeg_pipe_jpg(pipe, buff->p_vir, buff->n_size, pipe->whatPicture); //保存图片
     }
 
 }

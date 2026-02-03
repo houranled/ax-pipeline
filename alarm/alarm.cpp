@@ -3,6 +3,7 @@
 
 #include "../camera/camera_controller.hpp"
 #include "../examples/utilities/json.hpp"
+#include "../examples/utilities/sample_log.h"
 
 uint32_t AlarmManager::cooldown = 0;
 
@@ -11,22 +12,28 @@ bool AlarmManager::isAlarmTriggered(AlarmType type, const std::string &message, 
     return false;
 }
 
-Alarm AlarmManager::generateAlarm(AlarmType type, const std::string& message, float confidence, Camera *camera)
+bool AlarmManager::generateAlarm(AlarmType type, const std::string& message, float confidence, Camera *camera)
 {
+    if (camera == nullptr || !camera->is_patroling() || !camera->posture_completed)
+        return false;
+
     Alarm alarm;
     alarm.cameraId = camera->get_id();
+    WTALOGI("为摄像头id[%d]生成告警!", alarm.cameraId);
+
     alarm.point_id = camera->now_point_id;
     alarm.type = type;
     alarm.timestamp = time(nullptr);  // 获取当前时间戳
     alarm.confidence = confidence;
+    alarm.picPath = camera->get_pic_path();
 
     // 使用互斥锁保护队列操作
     std::lock_guard<std::mutex> lock(queueMutex);
-    alarmMapDatas[alarm.cameraId].push(alarm);
+    alarm_map_datas[alarm.cameraId].push(alarm);
 
     // 通知等待的线程有新的告警
     queueCondition.notify_one();
-    return alarm;
+    return true;
 }
 
 
@@ -42,10 +49,10 @@ std::string AlarmManager::output_alarms(int camera_id)
     // 处理所有通道的告警
     if (camera_id > 0) {
         // 处理指定通道的告警
-        if (alarmMapDatas.find(camera_id) != alarmMapDatas.end()) {
-            while (!alarmMapDatas[camera_id].empty()) {
-                Alarm alarm = alarmMapDatas[camera_id].front();
-                alarmMapDatas[camera_id].pop();
+        if (alarm_map_datas.find(camera_id) != alarm_map_datas.end()) {
+            while (!alarm_map_datas[camera_id].empty()) {
+                Alarm alarm = alarm_map_datas[camera_id].front();
+                alarm_map_datas[camera_id].pop();
 
                 nlohmann::json warning;
                 warning["point_id"] = alarm.point_id;
@@ -57,11 +64,11 @@ std::string AlarmManager::output_alarms(int camera_id)
         }
     } else {
         // 处理所有通道的告警
-        for (auto& pair : alarmMapDatas) {
+        for (auto& pair : alarm_map_datas) {
             int current_camera_id = pair.first;
-            while (!alarmMapDatas[current_camera_id].empty()) {
-                Alarm alarm = alarmMapDatas[current_camera_id].front();
-                alarmMapDatas[current_camera_id].pop();
+            while (!alarm_map_datas[current_camera_id].empty()) {
+                Alarm alarm = alarm_map_datas[current_camera_id].front();
+                alarm_map_datas[current_camera_id].pop();
 
                 nlohmann::json one_warning;
                 one_warning["point_id"] = alarm.point_id;

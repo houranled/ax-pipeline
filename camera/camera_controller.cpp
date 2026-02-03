@@ -54,7 +54,6 @@ int CameraController::receive_input_loop() {
         }
 
         nlohmann::json response;  //响应
-
         // 处理JSON命令
         int camera_id = -1;
         if (json_request.contains("id")) {
@@ -201,9 +200,9 @@ int CameraController::receive_input_loop() {
 
             // 根据是否指定了有效的摄像机ID返回不同的消息
             if (camera_id > 0 && cameras.find(camera_id) != cameras.end()) {
-                response["msg"] = "Camera " + std::to_string(camera_id) + " patrol started in background...";
+                response["msg"] = "相机[" + std::to_string(camera_id) + "] 巡检于后台开始运行...";
             } else {
-                response["msg"] = "All cameras patrol started in background...";
+                response["msg"] = "所有摄像机的巡检任务于后台开始运行...";
             }
             response["status"] = "start";
 
@@ -214,27 +213,29 @@ int CameraController::receive_input_loop() {
                     if (currentCameraId > 0 && cameras.find(currentCameraId) != cameras.end()) {
                         Camera* camera = cameras[currentCameraId];
                         camera->patrol_with_calibration_loop(false);
-                        auto warnstr = alarm_manager.output_alarms(currentCameraId);
+                        auto warnstr = alarm_manager.output_alarms(currentCameraId); //
+
                         // 巡检完成后构造JSON响应
                         nlohmann::json result;
                         result["status"] = "end";
                         // 将warnings字符串解析为JSON对象，然后提取其中的warnings数组
                         nlohmann::json warn_json = nlohmann::json::parse(warnstr);
                         result["warnings"] = warn_json["warnings"];
-                        result["msg"] = "Camera " + std::to_string(currentCameraId) + " patrol has completed successfully";
+                        result["msg"] = "相机[" + std::to_string(currentCameraId) + "] 巡检任务结束";
                         result["cmd"] = "action";
                         result["reqId"] = currentReqId; // 添加reqId到响应中
                         std::cout << result.dump() << std::endl;
                     } else {  // 如果没有指定有效的摄像机ID，则巡检所有摄像机
                         all_cameras_patrol();
-                        auto warnstr = alarm_manager.output_alarms(currentCameraId);
+                        auto warnstr = alarm_manager.output_alarms(currentCameraId); //批量检查告警
+
                         // 巡检完成后构造JSON响应
                         nlohmann::json result;
                         result["status"] = "end";
                         // 将warnings字符串解析为JSON对象，然后提取其中的warnings数组
                         nlohmann::json warn_json = nlohmann::json::parse(warnstr);
                         result["warnings"] = warn_json["warnings"];
-                        result["msg"] = "All cameras patrol has completed successfully";
+                        result["msg"] = "所有摄像头的巡检任务结束";
                         result["cmd"] = "action";
                         result["reqId"] = currentReqId; // 添加reqId到响应中
                         std::cout << result.dump() << std::endl;
@@ -264,7 +265,7 @@ int CameraController::receive_input_loop() {
                 std::thread calibrate_thread([this, currentReqId, currentCameraId]() {
                     // 如果指定了有效的摄像机ID，则只标定该摄像机；否则标定所有摄像机
                     if (currentCameraId > 0 && cameras.find(currentCameraId) != cameras.end()) {
-                        calibrate(currentCameraId); // 标定指定摄像机
+                        auto res = calibrate(currentCameraId); // 标定指定摄像机
                         // 标定完成后构造JSON响应
                         nlohmann::json result;
                         result["status"] = 200;
@@ -274,7 +275,7 @@ int CameraController::receive_input_loop() {
                         std::cout << result.dump() << std::endl;
                     } else {
                         // 如果没有指定有效的摄像机ID，则标定所有摄像机
-                        calibrate(-1); // -1表示标定所有摄像机
+                        auto res = calibrate(-1); // -1表示标定所有摄像机
                         // 标定完成后构造JSON响应
                         nlohmann::json result;
                         result["status"] = 200;
@@ -318,13 +319,14 @@ int CameraController::all_cameras_patrol()
     // 遍历所有摄像机，设置不标定模式并启动巡逻
     std::vector<std::thread> threads;
 
+    bool res = false;
     for (auto& pair : cameras) {
         // 为每个摄像机创建一个线程执行patrol_with_calibration_loop
         if (!pair.second->m_pipeline)
             continue;
 
-        threads.emplace_back([camera = pair.second]() {
-            camera->patrol_with_calibration_loop(false);
+        threads.emplace_back([camera = pair.second, &res]() {
+            res = camera->patrol_with_calibration_loop(false);
         });
     }
 
@@ -338,19 +340,20 @@ int CameraController::all_cameras_patrol()
     return 0;
 }
 
-int CameraController::calibrate(int camera_id)
+int CameraController::calibrate(int camera_id) //return 0正常  非0异常
 {
+    int res = 0;
     // 如果指定了有效的摄像机ID，则只标定该摄像机；否则标定所有摄像机
     if (camera_id > 0 && cameras.find(camera_id) != cameras.end()) {
         Camera* camera = cameras[camera_id];
-        return camera->patrol_with_calibration_loop(true);
+        res =  camera->patrol_with_calibration_loop(true);
     } else {
         // 遍历所有摄像机，设置标定模式并启动标定
         for (auto& pair : cameras) {
-            pair.second->patrol_with_calibration_loop(true);
+            res |= pair.second->patrol_with_calibration_loop(true);
         }
     }
-    return 0;
+    return res;
 }
 
 int CameraController::load_config_from_file(const std::string& config_file_path)
@@ -468,10 +471,8 @@ int CameraController::stop()
 void CameraController::early_warning_process(int camera_id)
 {
     auto &camera = this->cameras[camera_id];
-    if (camera != nullptr && camera->is_patroling() && camera->posture_completed) {
-        WTALOGI("为摄像头id[%d]生成告警!", camera_id);
-        alarm_manager.generateAlarm(AlarmType::LINE_CROSSING, "", 1, camera);
-    }
+    alarm_manager.generateAlarm(AlarmType::LINE_CROSSING, "", 1, camera);
+
 }
 
 void CameraController::setCameraPipe(int camera_id, pipeline_t *pipe)
@@ -616,9 +617,16 @@ std::string Camera::getName()
     return name;
 }
 
-int Camera::patrol_with_calibration_loop(bool is_calibrate)
+std::string Camera::get_pic_path() const
+{
+    return this->m_pipeline->pic_filename; // 返回图片路径
+}
+
+int Camera::patrol_with_calibration_loop(bool is_calibrate) //return 0表示正常 非0表示异常
 {
     patrolling = true; // 标识进入巡逻模式
+
+    int res = 0;
 
     /* 这里实现点位切换逻辑
      * 例如：遍历预设点位列表，定期切换到下一个点位
@@ -654,6 +662,7 @@ int Camera::patrol_with_calibration_loop(bool is_calibrate)
             }
         } else {
             WTALOGI("摄像机[%d]状态切换失败", id);
+            res = 1;
         }
 
         // 判断是否是最后一个点位
@@ -670,7 +679,7 @@ int Camera::patrol_with_calibration_loop(bool is_calibrate)
 
         now_point_id++;// 更新当前点位ID
     }
-    return 0;
+    return res;
 }
 
 bool Camera::is_posture_completed()

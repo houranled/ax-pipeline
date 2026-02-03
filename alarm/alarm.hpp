@@ -42,13 +42,13 @@ public:
     bool isAlarmTriggered(AlarmType type, const std::string& message, int cameraId, float confidence);
 
 
-    Alarm generateAlarm(AlarmType type, const std::string& message, float confidence, Camera *camera); // 生成告警
+    bool generateAlarm(AlarmType type, const std::string& message, float confidence, Camera *camera); // 生成告警
     std::string output_alarms(int camera_id); // 输出对应id的摄像机的告警信息
 
     static uint32_t cooldown;
 
 private:
-    std::map<int, std::queue<Alarm>> alarmMapDatas;  // 按通道ID分别存储的告警队列
+    std::map<int, std::queue<Alarm>> alarm_map_datas;  // 按通道ID分别存储的告警队列
     std::mutex queueMutex;         // 队列互斥锁
     std::condition_variable queueCondition;  // 队列条件变量
 };

@@ -94,6 +94,7 @@ public:
     bool start_record_video(); // 录制视频
     bool start_take_a_picture(int kind); // 拍照
     std::string getName(); // 获取相机名称
+    std::string get_pic_path() const; // 获取当前录制图片路径
 
 private:
     int id;

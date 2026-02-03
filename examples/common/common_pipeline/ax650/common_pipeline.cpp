@@ -807,15 +807,15 @@ int user_input(pipeline_t *pipe, int pipe_cnt, pipeline_buffer_t *buf)
     return 0;
 }
 
-// 初始化FFmpeg管道用于正常记录
-bool init_ffmpeg_pipe(pipeline_t *pipeline)
-{
-    char cmd[512]={0};
-    sprintf(cmd , "ffmpeg -y -f hevc -i pipe:0 -c:v copy -f mp4 /wt_tech/data/video2/out%d.mp4", pipeline->pipeid);
-    // 使用 popen 创建管道
-    pipeline->ffmpeg_pipe_file = popen(cmd, "w");
-    return pipeline->ffmpeg_pipe_file != nullptr;
-}
+//// 初始化FFmpeg管道用于正常记录
+//bool init_ffmpeg_pipe(pipeline_t *pipeline)
+//{
+//    char cmd[512]={0};
+//    sprintf(cmd , "ffmpeg -y -f hevc -i pipe:0 -c:v copy -f mp4 /wt_tech/data/video2/out%d.mp4", pipeline->pipeid);
+//    // 使用 popen 创建管道
+//    pipeline->ffmpeg_pipe_file = popen(cmd, "w");
+//    return pipeline->ffmpeg_pipe_file != nullptr;
+//}
 
 // 初始化FFmpeg管道用于异常记录
 bool record_ffmpeg_pipe_video(pipeline_t *pipe)
@@ -838,6 +838,8 @@ bool record_ffmpeg_pipe_video(pipeline_t *pipe)
         }
         sprintf(filename, "%s/%d-%02d-%02d_%02d-%02d-%02d.mp4",dirname ,t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
 
+        strcpy(pipe->video_filename, filename); // 将文件路径保存到pipeline_t结构体中
+
         char cmd[512]={0};
         sprintf(cmd , "ffmpeg -y -f hevc -i pipe:0 -c:v copy -f mp4 %s", filename);
         // 使用 popen 创建管道
@@ -853,8 +855,52 @@ bool record_ffmpeg_pipe_video(pipeline_t *pipe)
         pclose(pipe->ffmpeg_pipe_file);
         pipe->ffmpeg_pipe_file = NULL;
         pipe->IsRecordVideo = false; //关闭录制
-        WTALOGI("录制视频完成，关闭文件[%s]", filename);
+        WTALOGI("录制视频完成，关闭文件[%s]", pipe->video_filename);
     }
 
     return pipe->ffmpeg_pipe_file != NULL;
+}
+
+// 初始化FFmpeg管道保存图像
+bool record_ffmpeg_pipe_jpg(pipeline_t *pipe, void *p_hevc , int pLen, int what_kind_pic)
+{
+    char cmd[512]={0};
+    time_t timeReal;
+    time(&timeReal);
+    timeReal = timeReal + 8 * 3600;
+    tm *t = gmtime(&timeReal);
+    char dirname[128] ={0};
+    sprintf(dirname , "/wt_tech/data/pic/%d%02d%02d" , t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
+    //detection::CreateDir(dirname);
+    if(access(dirname,0)!=0) {
+        mkdir(dirname,0777);
+    }
+    char filePath[128]={0};
+    sprintf(filePath, "%s/%d_%02d_%02d_%02d_%02d_%02d.jpg",dirname ,  t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
+    // 将图片路径保存到pipeline_t结构体中
+    strcpy(pipe->pic_filename, filePath);
+    sprintf(cmd , "ffmpeg -y -f hevc -i pipe:0 -vframes 1 -q:v 2 %s" , filePath);
+    // 使用 popen 创建管道
+    FILE* pipe_fd = popen(cmd, "w");
+    if (!pipe_fd) {
+        perror("popen");
+        return false;
+    }
+    // 写入 HEVC 数据
+    size_t written = fwrite(p_hevc, 1, pLen, pipe_fd);
+    if (written != pLen) {
+        perror("fwrite");
+        pclose(pipe_fd);
+        pipe->whatPicture = 0;
+        return false;
+    }
+    // 关闭管道
+    if (pclose(pipe_fd) == -1) {
+        perror("pclose");
+        pipe->whatPicture = 0;
+        return false;
+    }
+
+    pipe->whatPicture = 0; // 保存完图片后，将标志位重置
+    return true;
 }

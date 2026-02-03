@@ -16,7 +16,6 @@ std::atomic<bool> ax_model_custom::export_thread_running(false);
 std::map<std::string, ax_model_custom::ChannelAmplitudeData> ax_model_custom::channel_amplitude_map;
 
 std::string ax_model_custom::car_no = "";
-float ax_model_custom::ChannelAmplitudeData::Y = 0;
 
 void ax_model_custom::draw_custom(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y)
 {
@@ -170,7 +169,7 @@ void ax_model_custom::load_config()
         // 打开配置文件
         std::ifstream config_file("/wt_tech/conf/rt.json");
         if (!config_file.is_open()) {
-            ALOGE("Failed to open config file: /wt_tech/conf/rt.json");
+            WTALOGI("Failed to open config file: /wt_tech/conf/rt.json");
             return;
         }
 
@@ -181,15 +180,23 @@ void ax_model_custom::load_config()
         // 获取carNo字段
         if (config.contains("carNo")) {
             car_no = config["carNo"].get<std::string>();
-            ALOGI("Loaded carNo from config: %s", car_no.c_str());
+            WTALOGI("Loaded carNo from config: %s", car_no.c_str());
         } else {
-            ALOGW("carNo not found in config file");
+            WTALOGI("carNo not found in config file");
         }
 
-        if (config.contains("calibration")) {
-            ax_model_custom::ChannelAmplitudeData::Y =  std::stof(config["calibration"].get<std::string>());
+        if (config.contains("chl_list")) {
+            for (const auto& one_chl_config : config["chl_list"]) {
+                if (one_chl_config["type"] != "Webcam")
+                    continue;
+
+                std::string name = one_chl_config.value("name", "");
+                std::string Y = one_chl_config.value("calibration", "");
+                channel_amplitude_map[name].Y = std::stof(Y); // 将字符串转换为浮点数
+            }
         }
+
     } catch (const std::exception& e) {
-        ALOGE("Error loading config: %s", e.what());
+        WTALOGI("Error loading config: %s", e.what());
     }
 }
