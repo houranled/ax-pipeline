@@ -378,7 +378,9 @@ int CameraController::load_config_from_file(const std::string& config_file_path)
         if (config.contains("chl_list") && config["chl_list"].is_array()) {
             for (const auto& camera_config : config["chl_list"]) {
                 auto type = camera_config["type"];
-                if (type != "Webcam") {//该通道不是相机 跳过该设备解析
+                auto enable = camera_config["enable"];
+                if (type != "Webcam" || enable != "1") {//该通道不是相机或使能关闭 跳过该设备解析
+                    WTALOGI("不是相机或使能关闭 跳过该设备解析");
                     continue;
                 }
 

@@ -67,12 +67,12 @@ void ax_model_custom::draw_custom(int chn, axdl_results_t *results, float fontsc
 
 void ax_model_custom::process_texts(axdl_results_t *results, int &chn, int d, float fontscale)
 {
-    /* 计算振幅
+    /* 计算振幅△Y:
      * 根据x =fX/Z (透视原理. XYZ是监测视点在物理世界的坐标, xy是其在画面屏幕上的坐标)可以得出:
      * 1、 x' = f*X/Z'  →  Z' = fX/x'       # 第0帧的景深 = 焦距 * 扇叶宽度 / 帧0识别框左上角横坐标
      * 2、 x'' = f*X/Z'' → Z'' = fX/x''      # 第n帧的景深 = 焦距 * 扇叶宽度 / 帧n识别框左上角横坐标
      * 已知x' x'' f  X  ,求出了 Z' 和 Z''两个景深.
-     * 然后计算景深差 △Z = Z'' - Z'   # 景深差 = 第n帧的景深 - 第0帧的景深
+     * 然后计算△Z景深差： △Z = Z'' - Z'   # 景深差 = 第n帧的景深 - 第0帧的景深
      * 需要提前知道摄像头上沿视线与摄像头主视线的垂直夹角,
      * 然后通过  tanθ= △Y /△Z    →   △Y = △Z * tan仰角得出△Y, 即振幅.
     */
@@ -80,16 +80,16 @@ void ax_model_custom::process_texts(axdl_results_t *results, int &chn, int d, fl
     auto &obj = results->mObjects[d];
 
     auto name = CameraController::getInstance()->getCamera(chn/2)->getName();
-    auto& cad = channel_amplitude_map[name];
+    auto& cad = channel_amplitude_map[name];  //cad: channel amplitude data
 
-    //tan(画面上沿视线与摄像头主视线的垂直夹角) 即 原镜头中间水平线到画面上沿的距离长度÷焦距 是个比例值
-    auto tan_xita = (m_drawers[chn].get_height() - cad.occlusion_pixel_height) /  m_drawers[chn].get_height();
+    //tan(画面上沿视线与摄像头主视线的垂直夹角) 即 镜头中间水平线到画面上沿的距离长度÷焦距 是个比例值
+    auto tanAngle = (m_drawers[chn].get_height()/2.0f - cad.occlusion_pixel_height) /  (cad.f/cad.size_per_pixel);
 
     if (0.5f == obj.bbox.x || 0.5f == cad.origin_x) {
         cad.amplitude_now = 0;
     } else {
         cad.amplitude_now/*振幅*/= cad.f * cad.X /(image_width * cad.size_per_pixel) * (1/(0.5f - obj.bbox.x)  - 1/(0.5f - cad.origin_x)) /*△Z*/
-         * tan_xita /*tan仰角*/;
+         * tanAngle /*tan仰角*/;
     }
 
     auto distance_now = std::round((cad.amplitude_now+cad.Y) * 100000) / 100000; //保留小数点后5位并加上初始距离形成绝对距离
