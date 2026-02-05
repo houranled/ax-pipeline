@@ -90,7 +90,6 @@ public:
     bool is_patroling() const; // 获取是否在巡逻中
     void finish_patrolling(); // 告知巡逻结束
     int add_preset_position(PresetPosition pos); // 添加单个点位到点位集合中
-    void setPipe(pipeline_t * pipe); // 绑定pipeline
     bool start_record_video(); // 录制视频
     bool start_take_a_picture(int kind); // 拍照
     std::string getName(); // 获取相机名称
@@ -122,6 +121,7 @@ private:
 
     int patrol_with_calibration_loop(bool is_calibrate);  // 摄像机巡检(可伴随标定)
     bool is_posture_completed(); // 判断是否到达指定位置
+    void setPipe(pipeline_t * pipe); // 绑定pipeline
     bool connect_modbus(); // 重连modbus
 
 };

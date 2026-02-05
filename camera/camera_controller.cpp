@@ -22,6 +22,7 @@ CameraController::~CameraController()
 {
     // 清理libcurl全局环境
     curl_global_cleanup();
+    this->stop(); // 停止接收输入循环
 }
 
 /*

@@ -33,7 +33,8 @@ public:
 protected:
     // 在这里添加自定义属性
 
-    //int post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results) override;
+    int preprocess(axdl_image_t *srcFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results) override; // 推理前
+    //int post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results) override; // 推理后归一化前
     void draw_custom(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y) override;
     void draw_custom(int chn, axdl_results_t *results, float fontscale, int thickness) override;
     void process_texts(axdl_results_t *results, int &chn, int d, float fontscale) override;
@@ -45,7 +46,7 @@ private:
     // 为每个通道创建独立的振幅相关数据存储
     struct ChannelAmplitudeData {
         float origin_x=0.133f; //原始x像素坐标归一化形式 范围为[0,1]
-        float X = 0.25f;    //扇叶左半边真实长度 单位m
+        float X = 2.3f;    //扇叶左半边真实长度 单位m
         float Y = 0;       //扇叶于下方平板标定距离 单位m
         float occlusion_pixel_height = 190; //画面遮挡部分的高度差190 单位像素
         float f = 0.0028;   //焦距 单位m  焦距28mm

@@ -17,6 +17,57 @@ std::map<std::string, ax_model_custom::ChannelAmplitudeData> ax_model_custom::ch
 
 std::string ax_model_custom::car_no = "";
 
+int ax_model_custom::preprocess(axdl_image_t *srcFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results)
+{
+    // 在图像上方绘制红色遮罩框
+    if (srcFrame && srcFrame->pVir) {
+        // 根据图像格式直接操作
+        if (srcFrame->eDtype == axdl_color_space_nv12) {
+            // NV12格式直接操作YUV分量
+            int width = srcFrame->nWidth;
+            int height = 190; // 遮罩高度
+
+            // 直接操作Y分量，设置为暗色
+            unsigned char* y_plane = (unsigned char*)srcFrame->pVir;
+            for (int y = 0; y < height; y++) {
+                for (int x = 0; x < width; x++) {
+                    y_plane[y * width + x] = 76; // Y=76对应较暗的颜色
+                }
+            }
+
+            // 操作UV分量，设置为红色
+            unsigned char* uv_plane = (unsigned char*)srcFrame->pVir + width * srcFrame->nHeight;
+            for (int y = 0; y < height / 2; y++) {
+                for (int x = 0; x < width; x += 2) {
+                    uv_plane[y * width + x] = 85; // U=85
+                    uv_plane[y * width + x + 1] = 255; // V=255
+                }
+            }
+        } else if (srcFrame->eDtype == axdl_color_space_bgr || srcFrame->eDtype == axdl_color_space_rgb) {
+            // BGR或RGB格式，创建cv::Mat对象但不复制数据
+            cv::Mat image(srcFrame->nHeight, srcFrame->nWidth, CV_8UC3, srcFrame->pVir);
+
+            // 绘制红色遮罩框
+            cv::Rect red_mask(0, 0, image.cols, 190);
+
+            // 直接在image上绘制，避免创建ROI
+            if (srcFrame->eDtype == axdl_color_space_rgb) {
+                cv::rectangle(image, red_mask, cv::Scalar(255, 0, 0), -1); // RGB格式下的红色，填充矩形
+            } else {
+                cv::rectangle(image, red_mask, cv::Scalar(0, 0, 255), -1); // BGR格式下的红色，填充矩形
+            }
+
+            // 如果是RGB格式，转换回RGB
+            if (srcFrame->eDtype == axdl_color_space_rgb) {
+                cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
+            }
+        }
+    }
+    auto ret = ax_model_single_base_t::preprocess(srcFrame, crop_resize_box, results); // 保留原有逻辑
+
+    return ret;
+}
+
 void ax_model_custom::draw_custom(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y)
 {
     /*
