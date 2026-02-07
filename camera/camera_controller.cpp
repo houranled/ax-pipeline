@@ -440,7 +440,8 @@ int CameraController::start()
     std::vector<std::thread> start_threads;
     for (auto& camera : cameras) {
         start_threads.emplace_back([camera = camera.second]() {
-            camera->start(); // 启动相机
+            if (camera)
+                camera->start(); // 启动相机
         });
     }
 
@@ -462,7 +463,7 @@ int CameraController::stop()
     running = false; // 标记控制器为停止状态
 
     if (input_thread.joinable()) {
-        input_thread.join(); // 等待输入线程结束
+        //input_thread.join(); // 等待输入线程结束
     }
     // 停止所有摄像机
     for (auto camera : cameras) {

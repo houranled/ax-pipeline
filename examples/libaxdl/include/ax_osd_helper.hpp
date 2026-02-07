@@ -15,6 +15,8 @@
 
 #include "opencv2/opencv.hpp"
 
+extern volatile AX_S32 gLoopExit;
+
 class ax_osd_helper
 {
 private:
@@ -212,7 +214,8 @@ private:
                                         if (cnt++ % 100 == 0)
                                         {
                                             ALOGE("AX_IVPS_RGN_Update fail, ret=0x%x, hChnRgn=%d", ret, osd_pipe->m_ivps_attr.n_osd_rgn_chn[0]);
-                                            exit(EXIT_FAILURE); //TODO: 临时方案退出程序
+                                            fprintf(stderr, "exit");
+                                            ::gLoopExit = 1;
                                         }
                                         usleep(30 * 1000);
                                     }

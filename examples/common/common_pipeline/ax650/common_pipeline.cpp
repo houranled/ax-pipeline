@@ -38,6 +38,8 @@
 #include <sys/types.h>
 #include <ctime>
 
+extern volatile AX_S32 gLoopExit;
+
 #define RTSP_PORT 8554
 
 typedef struct
@@ -752,6 +754,8 @@ int user_input(pipeline_t *pipe, int pipe_cnt, pipeline_buffer_t *buf)
                 if (ret != 0)
                 {
                     ALOGE("AX_VDEC_SendStream 0x%x,data=0x%x len=%d", ret, stream.pu8Addr, stream.u32StreamPackLen);
+                    fprintf(stderr, "exit");
+                    ::gLoopExit = 1;
                 }
                 tmp_.push_back(pipe[i].m_vdec_attr.n_vdec_grp);
             }
