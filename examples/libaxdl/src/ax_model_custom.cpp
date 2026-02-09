@@ -136,11 +136,12 @@ void ax_model_custom::process_texts(axdl_results_t *results, int &chn, int d, fl
     //tan(画面上沿视线与摄像头主视线的垂直夹角) 即 镜头中间水平线到画面上沿的距离长度÷焦距 是个比例值
     auto tanAngle = (m_drawers[chn].get_height()/2.0f - cad.occlusion_pixel_height) /  (cad.f/cad.size_per_pixel);
 
-    if (0.5f == obj.bbox.x || 0.5f == cad.origin_x) {
+    if (0.5f == obj.bbox.x || 0.5f == cad.origin_x_no_uniform/m_drawers[chn].get_width()) {
         cad.amplitude_now = 0;
     } else {
-        cad.amplitude_now/*振幅*/= cad.f * cad.X /(image_width * cad.size_per_pixel) * (1/(0.5f - obj.bbox.x)  - 1/(0.5f - cad.origin_x)) /*△Z*/
-         * tanAngle /*tan仰角*/;
+        cad.amplitude_now/*振幅*/= cad.f * cad.X /(image_width * cad.size_per_pixel) * (1/(0.5f - obj.bbox.x)
+                - 1/(0.5f - cad.origin_x_no_uniform/m_drawers[chn].get_width())) /*△Z*/
+                * tanAngle /*tan仰角*/;
     }
 
     auto distance_now = std::round((cad.amplitude_now+cad.Y) * 100000) / 100000; //保留小数点后5位并加上初始距离形成绝对距离
@@ -244,6 +245,13 @@ void ax_model_custom::load_config()
                 std::string name = one_chl_config.value("name", "");
                 std::string Y = one_chl_config.value("calibration", "");
                 channel_amplitude_map[name].Y = std::stof(Y); // 将字符串转换为浮点数
+
+                auto point = one_chl_config["point"];
+                if (!point.empty()) {
+                    channel_amplitude_map[name].origin_x_no_uniform = point.value("x", 0.0f);
+                    //channel_amplitude_map[name].occlusion_pixel_height = point.value("y", 0.0f);
+                }
+                channel_amplitude_map[name].X = std::stof(one_chl_config.value("width", "")) / 2;
             }
         }
 

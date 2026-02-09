@@ -45,6 +45,7 @@ private:
 
     // 为每个通道创建独立的振幅相关数据存储
     struct ChannelAmplitudeData {
+        float origin_x_no_uniform = 167; //原始x像素坐标未归一化 单位像素
         float origin_x=0.133f; //原始x像素坐标归一化形式 范围为[0,1]
         float X = 2.3f;    //扇叶左半边真实长度 单位m
         float Y = 0;       //扇叶于下方平板标定距离 单位m
