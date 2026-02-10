@@ -41,7 +41,7 @@ void *_ivps_get_frame_thread(void *arg)
 {
     pipeline_t *pipe = (pipeline_t *)arg;
 
-    AX_S32 nMilliSec = 200;
+    AX_S32 nMilliSec = 1000;
 
     // prctl(PR_SET_NAME, "SAMPLE_IVPS_GET");
 
