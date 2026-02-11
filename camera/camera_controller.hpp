@@ -17,8 +17,6 @@
 
 #define CONFIG_FILE_PATH "/wt_tech/conf/rt.json"
 
-#define MODBUSPTZ  0x4450  //云台modbus参数起始地址
-#define MODBUSPORT 8802    // 默认Modbus TCP 端口为 502改为8802
 
 class Camera; // 声明Camera类，以便在CameraController类中使用
 
@@ -62,6 +60,11 @@ private:
 };
 
 class Camera {
+    #define MODBUSPTZ  0x4450  //云台modbus参数起始地址
+    #define MODBUSPORT 8802    // 默认Modbus TCP 端口为 502改为8802
+    #define MODBUSWIPER 0x4458
+    #define MODBUSSYS   0x4461
+
     friend CameraController;  // 允许CameraController类访问Camera类的私有成员
     friend AlarmManager;      // 允许AlarmManager类访问Camera类的私有成员
 
@@ -83,6 +86,7 @@ public:
     int start(); // 启动相机执行点位循环遍历任务
     int pause(); // 暂停相机任务
     int set_ptz(int horizontal, int vertical, int brightness);
+    int set_wiper(int _switch); // 单独控制雨刷
     int set_brighten(int brightness); //单独控制补光灯
     int set_zoom_and_focus(int zoom, int focus);
     int fetch_remote_status();
@@ -105,6 +109,7 @@ private:
     int zoom=0; // 当前焦距
     int focus=0;   // 当前聚焦
     int brightness=0; // 当前补光灯亮度
+    int wiper_switch=0; // 雨刷开关
 
     bool running;
     bool patrolling = false;  // 是否在巡逻中

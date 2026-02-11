@@ -63,8 +63,7 @@ int ax_model_custom::preprocess(axdl_image_t *srcFrame, axdl_bbox_t *crop_resize
             }
         }
     }
-    auto ret = ax_model_single_base_t::preprocess(srcFrame, crop_resize_box, results); // 保留原有逻辑
-
+    auto ret = this->ax_model_single_base_t::preprocess(srcFrame, crop_resize_box, results); // 保留原有逻辑
     return ret;
 }
 

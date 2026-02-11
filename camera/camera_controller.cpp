@@ -50,7 +50,7 @@ int CameraController::receive_input_loop() {
             // 解析JSON字符串(处理JSON命令)
             json_request = nlohmann::json::parse(json_str);
         } catch (const nlohmann::json::parse_error& e) {
-            ALOGE("json parse error%s", e.what());
+            ALOGE("%s json parse error%s",json_str.c_str(),e.what());
             continue;
         }
 
@@ -89,6 +89,7 @@ int CameraController::receive_input_loop() {
                 resp_first_camera_data["brightness"] = camera->brightness;
                 resp_first_camera_data["point_id"] = camera->now_point_id;
                 resp_first_camera_data["patrol"] = camera->patrolling;
+                resp_first_camera_data["wiper"] = std::to_string(camera->wiper_switch); // 雨刷开关
             } else if (camera_id > 0) {
                 response["msg"] = "该相机不存在";
                 response["status"] = 500;
@@ -107,6 +108,7 @@ int CameraController::receive_input_loop() {
                     resp_one_camera_data["brightness"] = camera->brightness;
                     resp_one_camera_data["point_id"] = camera->now_point_id;
                     resp_one_camera_data["patrol"] = camera->patrolling;
+                    resp_one_camera_data["wiper"] = std::to_string(camera->wiper_switch); // 雨刷开关
                 }
             }
         } else if (cmd == "set" || cmd == "add") {
@@ -129,6 +131,7 @@ int CameraController::receive_input_loop() {
                 bool has_zoom =  data.contains("zoom");
                 bool has_focus = data.contains("focus");
                 bool has_brightness = data.contains("brightness");
+                bool has_wiper = data.contains("wiper");
 
                 int origin_rotatex, origin_rotatey, origin_zoom, origin_focus, origin_brightness;
                 if (cmd == "set") {
@@ -146,8 +149,8 @@ int CameraController::receive_input_loop() {
                 }
 
                 int x=-1, y=-1, zoom=-1, focus=-1,brightness=-1; //最终值 -1表示此次不需要更改该值
-
-                int new_rotatex,new_rotatey,new_zoom,new_focus,new_brightness=0;
+                int wiper_switch = -1; // -1表示此次不需要更改该值
+                int new_rotatex=0,new_rotatey=0,new_zoom=0,new_focus=0,new_brightness=0;
                 if (has_rotatex) {
                     new_rotatex = data["rotatex"];
                     x = (origin_rotatex + new_rotatex%360)%360;
@@ -155,8 +158,11 @@ int CameraController::receive_input_loop() {
                 }
                 if (has_rotatey) {
                     new_rotatey = data["rotatey"];
-                    y = (origin_rotatey + new_rotatey%360)%360;
-                    y<0? y+=360 : y;
+                    y = (origin_rotatey - new_rotatey + 360) % 360;
+                    if (!(y>=0&&y<=90 || y>=230&&y<=360)) {
+                        y = -1;
+                        WTALOGI("无效角度:超出范围,忽略");
+                    }
                 }
                 if (has_zoom) {
                     new_zoom = data["zoom"];
@@ -170,6 +176,9 @@ int CameraController::receive_input_loop() {
                     new_brightness = data["brightness"];
                     brightness = origin_brightness + new_brightness;
                 }
+                if (has_wiper) {
+                    wiper_switch = std::stoi(data["wiper"].get<std::string>());
+                }
 
                 std::string err_msg = "";
                 bool has_error = false;
@@ -182,6 +191,13 @@ int CameraController::receive_input_loop() {
                 if (camera->set_zoom_and_focus(zoom, focus) < 0) {
                     err_msg += "对摄像机操作失败!";
                     has_error = true;
+                }
+
+                if (wiper_switch != -1) {
+                    if (camera->set_wiper(wiper_switch)<0) {
+                        err_msg += "对雨刷的操作失败!";
+                        has_error = true;
+                    }
                 }
                 response["msg"] = err_msg;
 
@@ -209,7 +225,7 @@ int CameraController::receive_input_loop() {
 
             // 创建后台线程执行巡检任务
             try {
-                std::thread patrol_thread([this, currentReqId, currentCameraId]() {
+                std::thread patrol_thread([this, currentReqId, currentCameraId]() { // 值捕获方式
                     // 如果指定了有效的摄像机ID，则只巡检该摄像机；否则巡检所有摄像机
                     if (currentCameraId > 0 && cameras.find(currentCameraId) != cameras.end()) {
                         Camera* camera = cameras[currentCameraId];
@@ -242,7 +258,7 @@ int CameraController::receive_input_loop() {
                         std::cout << result.dump() << std::endl;
                     }
                 });
-                patrol_thread.detach();
+
             } catch (const std::system_error& e) {
                 response["status"] = 500;
                 response["msg"] = "Failed to create patrol thread: " + std::string(e.what());
@@ -754,6 +770,25 @@ int Camera::set_ptz(int horizontal, int vertical, int brightness)
     return 0;
 }
 
+int Camera::set_wiper(int _switch)
+{
+    if (modbus_ctx == nullptr)
+        return -1;
+
+    // 准备要写入的寄存器值（假设开关寄存器地址为0x4451）
+    uint16_t wiper_reg = static_cast<uint16_t>(_switch);
+
+    // 写入保持寄存器
+    int rc = modbus_write_registers(modbus_ctx, MODBUSWIPER, 1, &wiper_reg);
+    if (rc == -1) {
+        WTALOGI("Failed to write wiper register: %s", modbus_strerror(errno));
+        return -1;
+    }
+
+    this->wiper_switch = _switch; // 更新内部状态
+    return 0;
+}
+
 int Camera::set_brighten(int brightness)
 {
     // 使用Modbus设置亮度
@@ -768,7 +803,7 @@ int Camera::set_brighten(int brightness)
     // 写入保持寄存器
     int rc = modbus_write_registers(modbus_ctx, MODBUSPTZ+2, 1, &brightness_reg);
     if (rc == -1) {
-        std::cerr << "Failed to write brightness register: " << modbus_strerror(errno) << std::endl;
+        WTALOGI("Failed to write brighten register: %s", modbus_strerror(errno));
         return -1;
     }
 
@@ -832,62 +867,87 @@ int Camera::set_zoom_and_focus(int zoom, int focus)
 
 int Camera::fetch_remote_status()
 {
-    bool error = false;
-    std::string url = "http://" + ip + "/cgi-bin/param.cgi?action=list&group=CAMPOS&channel=0";
-    curl_easy_setopt(curl_handle, CURLOPT_URL, url.c_str());
+    int res1 = 0;
+    std::thread th1([this, &res1](){
+        bool error = false;
+        std::string url = "http://" + ip + "/cgi-bin/param.cgi?action=list&group=CAMPOS&channel=0";
+        curl_easy_setopt(curl_handle, CURLOPT_URL, url.c_str());
 
-    // 创建一个缓冲区来存储响应数据
-    std::string response;
-    curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteCallback);
-    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, &response);
+        // 创建一个缓冲区来存储响应数据
+        std::string response;
+        curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteCallback);
+        curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, &response);
 
-    CURLcode res = curl_easy_perform(curl_handle);
-    if(res == CURLE_OK) {
-        // 检查错误码
-        size_t err_no_pos = response.find("root.ERR.no=");
-        if (err_no_pos != std::string::npos) {
-            size_t err_no_end = response.find("\n", err_no_pos);
-            std::string err_no_str = response.substr(err_no_pos + 12, err_no_end - err_no_pos - 12);
-            int err_no = std::stoi(err_no_str);
+        CURLcode res = curl_easy_perform(curl_handle);
+        if(res == CURLE_OK) {
+            // 检查错误码
+            size_t err_no_pos = response.find("root.ERR.no=");
+            if (err_no_pos != std::string::npos) {
+                size_t err_no_end = response.find("\n", err_no_pos);
+                std::string err_no_str = response.substr(err_no_pos + 12, err_no_end - err_no_pos - 12);
+                int err_no = std::stoi(err_no_str);
 
-            if (err_no != 0) {
-                // 获取错误描述
-                size_t err_des_pos = response.find("root.ERR.des=");
-                if (err_des_pos != std::string::npos) {
-                    size_t err_des_end = response.find("\n", err_des_pos);
-                    std::string err_des = response.substr(err_des_pos + 13, err_des_end - err_des_pos - 13);
+                if (err_no != 0) {
+                    // 获取错误描述
+                    size_t err_des_pos = response.find("root.ERR.des=");
+                    if (err_des_pos != std::string::npos) {
+                        size_t err_des_end = response.find("\n", err_des_pos);
+                        std::string err_des = response.substr(err_des_pos + 13, err_des_end - err_des_pos - 13);
+                    }
+                    error = true;
                 }
-                error = true;
             }
+
+            if (!error) {
+                // 解析缩放位置
+                size_t zoompos_pos = response.find("root.CAMPOS.zoompos=");
+                if (zoompos_pos != std::string::npos) {
+                    size_t zoompos_end = response.find("\n", zoompos_pos);
+                    std::string zoompos_str = response.substr(zoompos_pos + 19, zoompos_end - zoompos_pos - 19);
+                    zoom = std::stoi(zoompos_str);
+                }
+
+                // 解析焦距位置
+                size_t focuspos_pos = response.find("root.CAMPOS.focuspos=");
+                if (focuspos_pos != std::string::npos) {
+                    size_t focuspos_end = response.find("\n", focuspos_pos);
+                    std::string focuspos_str = response.substr(focuspos_pos + 20, focuspos_end - focuspos_pos - 20);
+                    // 焦距位置可以存储在类成员变量
+                    focus = std::stoi(focuspos_str);
+                }
+            }
+        } else {
+            res1 = -1;
+        }
+    }); // 创建一个线程来执行curl_easy_perform
+
+    int res2 = 0;
+    std::thread th2([this,&res2](){
+        //调用modbus获取云台姿态
+        uint16_t regs[3];
+        int rc = modbus_read_registers(modbus_ctx, MODBUSPTZ, 3, regs);
+        if (rc == -1) {
+            res2 = -1;
+        } else {
+            rotation_x = regs[0]/100;
+            rotation_y = regs[1]/100;
+            brightness = regs[2];
         }
 
-        if (!error) {
-            // 解析缩放位置
-            size_t zoompos_pos = response.find("root.CAMPOS.zoompos=");
-            if (zoompos_pos != std::string::npos) {
-                size_t zoompos_end = response.find("\n", zoompos_pos);
-                std::string zoompos_str = response.substr(zoompos_pos + 19, zoompos_end - zoompos_pos - 19);
-            }
-
-            // 解析焦距位置
-            size_t focuspos_pos = response.find("root.CAMPOS.focuspos=");
-            if (focuspos_pos != std::string::npos) {
-                size_t focuspos_end = response.find("\n", focuspos_pos);
-                std::string focuspos_str = response.substr(focuspos_pos + 20, focuspos_end - focuspos_pos - 20);
-                // 焦距位置可以存储在类成员变量中，如果需要的话
-                // focuspos = std::stoi(focuspos_str);
-            }
+        rc = modbus_read_registers(modbus_ctx, MODBUSSYS, 1, regs);
+        if (rc == -1) {
+            res2 = -1;
+        } else {
+            (regs[0] & 1<<8) ? this->wiper_switch = true : this->wiper_switch = false; //第9bit位是雨刮器开关状态
         }
-    }
 
-    //调用modbus获取云台姿态
-    uint16_t regs[3];
-    int rc = modbus_read_registers(modbus_ctx, MODBUSPTZ, 3, regs);
-    if (rc == -1) {
+    });
+
+    // 等待两个线程完成
+    th1.join(), th2.join();
+
+    if (res1 == -1 || res2 == -1)
         return -1;
-    }
-    rotation_x = regs[0]/100;
-    rotation_y = regs[1]/100;
-    brightness = regs[2];
-    return 0;
+    else
+        return 0;
 }
