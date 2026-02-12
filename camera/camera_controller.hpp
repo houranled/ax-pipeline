@@ -16,6 +16,8 @@
 
 #include "../examples/common/common_pipeline/common_pipeline.h"
 
+#include "../examples/libaxdl/include/ax_model_base.hpp"
+
 #define CONFIG_FILE_PATH "/wt_tech/conf/rt.json"
 
 
@@ -23,7 +25,6 @@ class Camera; // 声明Camera类，以便在CameraController类中使用
 
 class CameraController {
 public:
-
     // 单例模式获取实例
     static CameraController* getInstance() {
         static CameraController instance;
@@ -61,6 +62,7 @@ private:
     static CURL *curl_handle;  // 持久化的curl句柄用于通过http与摄像机通信并控制
 
     AlarmManager alarm_manager; // 告警生成器
+    ax_model_base* _model;
 
     // a function for executing in new thread to receive the input read from std-io
     int receive_input_loop();

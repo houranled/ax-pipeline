@@ -14,6 +14,8 @@ public:
 
     ax_model_damage() {}
 
+    //virtual int inference(axdl_image_t *pstFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results) override;
+
 protected:
     // 在这里添加自定义属性
 
@@ -25,4 +27,11 @@ private:
     //AlarmGenerator m_alarm_generator; //告警检测器
 
 };
-REGISTER(MT_DAMAGE_MODEL, ax_model_damage)
+
+
+class wt_damage_multi_model_recognize : public wt_ax_model_multi_base_t {
+public:
+    // 推理
+    virtual int inference(axdl_image_t *pstFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results) override;
+};
+REGISTER(WT_DAMAGE_MULTI_MODEL_RECOGNIZE, wt_damage_multi_model_recognize)

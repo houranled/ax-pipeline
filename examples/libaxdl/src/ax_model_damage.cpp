@@ -4,6 +4,13 @@
 #include <numeric>  // 添加此行以使用 std::accumulate
 #include "../../camera/camera_controller.hpp"
 
+//int ax_model_damage::inference(axdl_image_t *pstFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results)
+//{
+//    this->ax_model_single_base_t::inference(pstFrame, crop_resize_box, results); // 调用基类推理函数 后续重写推理逻辑:使用多模型
+
+//    return 0;
+//}
+
 int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results)
 {
     // 获取模型输出
@@ -128,10 +135,20 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
 //    //                results->mObjects[i].bbox_vertices[0],
 //    //                {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
 //    //        }
+//
+//            //生成告警 调用camera_Controller
+//            CameraController::getInstance()->early_warning_process(chn/2);
+//        }
+//    }
 
-//    //        // 生成告警 调用camera_Controller
-//    //        CameraController::getInstance()->early_warning_process(chn/2);
-//    //    }
-//    //}
-//    //draw_bbox(chn, results, fontscale, thickness);
 //}
+
+int wt_damage_multi_model_recognize::inference(axdl_image_t *pstFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results)
+{
+    // 推理时根据当前摄像头是哪个点位来选用模型进行推理
+    WTALOGI("推理时根据当前摄像头是哪个点位来选用模型进行推理");
+    //CameraController::getInstance()->getCamera()
+    m_models[0].get()->inference(pstFrame, crop_resize_box, results); // todo: 根据当前摄像头是哪个点位来选用模型进行推理
+
+    return 0;
+}

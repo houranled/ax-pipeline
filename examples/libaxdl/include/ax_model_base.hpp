@@ -283,3 +283,21 @@ public:
     int get_algo_width() override { return model_0->get_algo_width(); }
     int get_algo_height() override { return model_0->get_algo_height(); }
 };
+
+// weiti 多模型基类
+class wt_ax_model_multi_base_t : public ax_model_base
+{
+protected:
+    std::vector<std::shared_ptr<ax_model_base>> m_models;
+
+public:
+    wt_ax_model_multi_base_t()
+    {
+    };
+
+    virtual int init(void *json_obj) override;
+    virtual void deinit() override {};
+    axdl_color_space_e get_color_space() override { return m_models[0]->get_color_space(); }
+    int get_algo_width() override { return m_models[0]->get_algo_width(); }
+    int get_algo_height() override { return m_models[0]->get_algo_height(); }
+};

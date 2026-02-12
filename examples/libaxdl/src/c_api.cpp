@@ -60,7 +60,7 @@ int axdl_parse_param_init(char *json_file_path, void **pModels, const char* chan
         return -1;
     }
     *pModels = new ax_model_handle_t;
-    ax_model_base *model = (ax_model_base *)OBJFactory::getInstance().getObjectByID(mt);
+    ax_model_base *model = (ax_model_base *)OBJFactory::getInstance().getObjectByID(mt); // TODO 多模型？
     if (model == nullptr)
     {
         ALOGE("create model failed mt=%d", mt);
