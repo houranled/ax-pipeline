@@ -61,7 +61,7 @@ private:
 
 class Camera {
     #define MODBUSPTZ  0x4450  //云台modbus参数起始地址
-    #define MODBUSPORT 8802    // 默认Modbus TCP 端口为 502改为8802
+    #define MODBUSPORT 8802    // 默认Modbus TCP 端口为 502 改为8802
     #define MODBUSWIPER 0x4458
     #define MODBUSSYS   0x4461
 

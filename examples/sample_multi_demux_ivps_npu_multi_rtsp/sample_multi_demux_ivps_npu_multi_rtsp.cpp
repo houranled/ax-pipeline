@@ -566,5 +566,6 @@ EXIT_1:
     g_sample.Deinit();
 
     ALOGN("sample end\n");
+    fprintf(stderr, "exit");
     return 0;
 }
