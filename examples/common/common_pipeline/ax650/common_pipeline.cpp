@@ -750,7 +750,7 @@ int user_input(pipeline_t *pipe, int pipe_cnt, pipeline_buffer_t *buf)
         {
             if (!contain(tmp_, pipe[i].m_vdec_attr.n_vdec_grp))
             {
-                ret = AX_VDEC_SendStream(pipe[i].m_vdec_attr.n_vdec_grp, &stream, 10000);
+                ret = AX_VDEC_SendStream(pipe[i].m_vdec_attr.n_vdec_grp, &stream, 1000);
                 if (ret != 0)
                 {
                     ALOGE("AX_VDEC_SendStream 0x%x,data=0x%x len=%d", ret, stream.pu8Addr, stream.u32StreamPackLen);
@@ -873,13 +873,17 @@ bool record_ffmpeg_pipe_jpg(pipeline_t *pipe, void *p_hevc , int pLen, int what_
     timeReal = timeReal + 8 * 3600;
     tm *t = gmtime(&timeReal);
     char dirname[128] ={0};
-    sprintf(dirname , "/wt_tech/data/pic/%d%02d%02d" , t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
+    auto ymd = std::to_string(t->tm_year + 1900) + std::to_string(t->tm_mon + 1) + std::to_string(t->tm_mday);
+    sprintf(dirname , "/wt_tech/data/%d/%s/%s_%d/image" ,pipe->pipeid, ymd.c_str());
     //detection::CreateDir(dirname);
     if(access(dirname,0)!=0) {
         mkdir(dirname,0777);
     }
     char filePath[128]={0};
-    sprintf(filePath, "%s/%d_%02d_%02d_%02d_%02d_%02d.jpg",dirname ,  t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
+    auto camera_name = "";
+    auto pointid = "";
+    std::string filename(ymd+"_"+std::to_string(t->tm_hour)+"_"+camera_name+"_"+pointid+".jpg");
+    sprintf(filePath, "%s/%d_%02d_%02d_%02d_%02d_%02d.jpg" ,dirname,  t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
     // 将图片路径保存到pipeline_t结构体中
     strcpy(pipe->pic_filename, filePath);
     sprintf(cmd , "ffmpeg -y -f hevc -i pipe:0 -vframes 1 -q:v 2 %s" , filePath);

@@ -75,7 +75,7 @@ static void init_wt_log_file() {
     init_wt_log_file(); \
     if (wt_log_file && log_level >= SAMPLE_LOG_EMERGENCY) { \
         fprintf(wt_log_file, "[wt][%32s][%4d]: " fmt "\n", __FUNCTION__, __LINE__, ##__VA_ARGS__); \
-        fflush(log_file); \
+        fflush(wt_log_file); \
     } \
 } while(0)
 

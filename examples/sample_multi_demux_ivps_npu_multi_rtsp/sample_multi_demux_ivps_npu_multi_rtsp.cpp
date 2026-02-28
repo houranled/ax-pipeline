@@ -152,7 +152,7 @@ void h265_save_func(pipeline_buffer_t *buff) //buff->p_vir 包含一帧编码后
     if (!pipe->IsRecordVideo&& !pipe->ffmpeg_pipe_file)
         return ;
 
-    WTALOGI("%s","可进行视频录制相关过程\n");
+
     if(pipe->h26data[0].p_h26data == NULL) {
         pipe->h26data[0].p_h26data  = (unsigned char *)calloc(1 , 60*1024*1024);
         pipe->h26data[1].p_h26data  = (unsigned char *)calloc(1 , 60*1024*1024);

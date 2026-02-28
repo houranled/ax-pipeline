@@ -62,8 +62,9 @@ private:
 class Camera {
     #define MODBUSPTZ  0x4450  //云台modbus参数起始地址
     #define MODBUSPORT 8802    // 默认Modbus TCP 端口为 502 改为8802
-    #define MODBUSWIPER 0x4458
-    #define MODBUSSYS   0x4461
+    #define MODBUSWIPER 0x4458 // 雨刮器
+    #define MODBUSSYS   0x4461 // 系统状态查看寄存器
+    #define MODBUSPSENT 0x4466 // 光敏值地址
 
     friend CameraController;  // 允许CameraController类访问Camera类的私有成员
     friend AlarmManager;      // 允许AlarmManager类访问Camera类的私有成员
@@ -88,6 +89,8 @@ public:
     int set_ptz(int horizontal, int vertical, int brightness);
     int set_wiper(int _switch); // 单独控制雨刷
     int set_brighten(int brightness); //单独控制补光灯
+    int getPhotosensitive();
+
     int set_zoom_and_focus(int zoom, int focus);
     int fetch_remote_status();
     int get_id() const;
@@ -110,6 +113,7 @@ private:
     int focus=0;   // 当前聚焦
     int brightness=0; // 当前补光灯亮度
     int wiper_switch=0; // 雨刷开关
+    int photosensitive=0; // 光敏值
 
     bool running;
     bool patrolling = false;  // 是否在巡逻中
