@@ -10,7 +10,7 @@ std::string Camera::capture_path ="/wt_tech/conf/img/"; // 图像保存路径初
 
 CameraController::CameraController()
 {
-    WTALOGI("\n===================%s==============", "摄像头控制器启动...");
+    WTALOGI("创建摄像头控制器实例.");
 
     // 初始化libcurl全局环境
     CURLcode res = curl_global_init(CURL_GLOBAL_ALL);
@@ -433,9 +433,11 @@ int CameraController::load_config_from_file(const std::string& config_file_path)
 
                 // 将相机添加到控制器
                 cameras[camera->id] = camera;
+                WTALOGI("点位数量为:%d", camera->preset_positions.size());
+                WTALOGI("相机[id:%d]构造完成:name:%s, ip:%s, ptz_ip:%s",camera->id, camera->ip.c_str(), camera->ptz_ip.c_str());
             }
         }
-
+        WTALOGI("完成配置加载!");
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "Error loading config: " << e.what() << std::endl;
@@ -445,6 +447,7 @@ int CameraController::load_config_from_file(const std::string& config_file_path)
 
 int CameraController::start()
 {
+    WTALOGI("启动相机控制器...");
     running = true; // 标记控制器为运行状态
 
     // 创建线程并行启动所有摄像机
@@ -511,7 +514,7 @@ Camera *CameraController::getCamera(int camera_id)
 
 Camera::Camera()
 {
-    WTALOGI("构建相机");
+    WTALOGI("相机被构建...");
     curl_handle = curl_easy_init();
     // 设置请求基本通用选项
     curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 5L);  // 5秒超时
@@ -601,11 +604,11 @@ bool Camera::is_patroling() const
 void Camera::finish_patrolling()
 {
     patrolling = false;
+    WTALOGI("结束巡逻");
 }
 
 int Camera::add_preset_position(Camera::PresetPosition pos)
 {
-    WTALOGI("添加预置点位");
     this->preset_positions.push_back(pos);
     return 0;
 }
