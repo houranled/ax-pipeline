@@ -833,9 +833,8 @@ bool record_ffmpeg_pipe_video(pipeline_t *pipe)
         // /wt_tech/data/F02/20260101/20260101_01/video/
         char dateStr[16] = {0};
         sprintf(dateStr, "%04d%02d%02d", t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
-        sprintf(dirname, "/wt_tech/data/%s/%s/%s_%d/video", "F02", dateStr,dateStr, 1);
-            //%d%02d%02d" , t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
-        //detection::CreateDir(dirname);
+        sprintf(dirname, "/wt_tech/data/%s/%s/%s_%d", "F02", dateStr,dateStr, 1);
+
         if(access(dirname,0)!=0) {
             mkdir(dirname,0777);
         }
@@ -865,7 +864,7 @@ bool record_ffmpeg_pipe_video(pipeline_t *pipe)
 }
 
 // 初始化FFmpeg管道保存图像
-bool record_ffmpeg_pipe_jpg(pipeline_t *pipe, void *p_hevc , int pLen, int what_kind_pic)
+bool record_ffmpeg_pipe_jpg(pipeline_t *pipe, void *p_hevc , int pLen)
 {
     char cmd[512]={0};
     time_t timeReal;
@@ -873,19 +872,28 @@ bool record_ffmpeg_pipe_jpg(pipeline_t *pipe, void *p_hevc , int pLen, int what_
     timeReal = timeReal + 8 * 3600;
     tm *t = gmtime(&timeReal);
     char dirname[128] ={0};
-    auto ymd = std::to_string(t->tm_year + 1900) + std::to_string(t->tm_mon + 1) + std::to_string(t->tm_mday);
-    sprintf(dirname , "/wt_tech/data/%d/%s/%s_%d/image" ,pipe->pipeid, ymd.c_str());
-    //detection::CreateDir(dirname);
+    char ymd[14] = {0};
+    snprintf(ymd, sizeof(ymd), "%04d%02d%02d",
+        t->tm_year + 1900,t->tm_mon + 1,t->tm_mday);
+
+    sprintf(dirname, "/wt_tech/data/F02/%s/%s_%d",
+        ymd, ymd, t->tm_hour);
+
     if(access(dirname,0)!=0) {
         mkdir(dirname,0777);
     }
-    char filePath[128]={0};
-    auto camera_name = "";
-    auto pointid = "";
-    std::string filename(ymd+"_"+std::to_string(t->tm_hour)+"_"+camera_name+"_"+pointid+".jpg");
-    sprintf(filePath, "%s/%d_%02d_%02d_%02d_%02d_%02d.jpg" ,dirname,  t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
-    // 将图片路径保存到pipeline_t结构体中
-    strcpy(pipe->pic_filename, filePath);
+
+    char filename[128] = {0};
+    snprintf(filename, sizeof(filename), "%s_%02d_%s_%d.jpg",
+         ymd,
+         t->tm_hour,
+         pipe->channel_name,
+         pipe->point_id);
+
+    char filePath[256]={0};
+    sprintf(filePath, "%s/%s" ,dirname, filename);
+    strcpy(pipe->pic_filename, filePath); // 将图片路径保存到pipeline_t结构体中
+
     sprintf(cmd , "ffmpeg -y -f hevc -i pipe:0 -vframes 1 -q:v 2 %s" , filePath);
     // 使用 popen 创建管道
     FILE* pipe_fd = popen(cmd, "w");
@@ -909,5 +917,6 @@ bool record_ffmpeg_pipe_jpg(pipeline_t *pipe, void *p_hevc , int pLen, int what_
     }
 
     pipe->whatPicture = 0; // 保存完图片后，将标志位重置
+    WTALOGI("录制图片完成，关闭文件[%s]", pipe->pic_filename);
     return true;
 }

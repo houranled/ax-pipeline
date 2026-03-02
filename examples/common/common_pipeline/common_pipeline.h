@@ -220,14 +220,16 @@ extern "C"
         h26xData_t h26data[2];
         //FILE *ffmpeg_pipe;
 
-
         FILE *ffmpeg_pipe_file; // 用于录制视频
 
         bool IsRecordVideo = false;
-        int whatPicture = 0;  // 0:不拍 1：标定 2：巡检
+        int whatPicture = 0;  //what_kind_pic, 0:不拍 1：标定 2：巡检
 
-        char video_filename[128]; // 存储录制视频的文件路径
-        char pic_filename[128]; // 存储录制图片的文件路径
+        char video_filename[256]; // 存储录制视频的文件路径
+        char pic_filename[256]; // 存储录制图片的文件路径
+
+        char channel_name[64]={0};
+        int point_id=0;
     } pipeline_t;
 
     int create_pipeline(pipeline_t *pipe);
@@ -239,7 +241,7 @@ extern "C"
     // FFmpeg相关函数
     //bool init_ffmpeg_pipe(pipeline_t *pipe);
     bool record_ffmpeg_pipe_video(pipeline_t *pipe); // 录制视频
-    bool record_ffmpeg_pipe_jpg(pipeline_t *pipe, void *p_hevc , int pLen, int what_kind_pic); //what_kind_pic, 0:无 1：标定 2：巡检
+    bool record_ffmpeg_pipe_jpg(pipeline_t *pipe, void *p_hevc , int pLen);
 
 #if __cplusplus
 }

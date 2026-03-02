@@ -75,8 +75,8 @@ public:
         std::string name;
         int distance;
         int duration; // 时间间隔
-        int rotation_x;
-        int rotation_y;
+        int web_rotation_x;
+        int web_rotation_y;
         int zoom;
         int focus;
         int brightness;
@@ -107,8 +107,12 @@ private:
     std::string name; // 相机名称
     std::string ip;  // 相机ip地址
     std::string ptz_ip; //云台ip地址
-    int rotation_x=0;  // 当前水平角度
-    int rotation_y=0; // 当前垂直角度
+    int web_rotation_x=0;  // 当前水平角度
+    int rotation_x = 0;
+
+    int web_rotation_y=0; // 当前垂直角度
+    int rotation_y=0;
+
     int zoom=0; // 当前焦距
     int focus=0;   // 当前聚焦
     int brightness=0; // 当前补光灯亮度

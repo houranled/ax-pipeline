@@ -182,7 +182,7 @@ void h265_save_func(pipeline_buffer_t *buff) //buff->p_vir 包含一帧编码后
     }
 
     if (pipe->whatPicture) {
-        record_ffmpeg_pipe_jpg(pipe, buff->p_vir, buff->n_size, pipe->whatPicture); //保存图片
+        record_ffmpeg_pipe_jpg(pipe, buff->p_vir, buff->n_size); //保存图片
     }
 
 }
