@@ -538,6 +538,10 @@ Camera::Camera()
     curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 5L);  // 5秒超时
     curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 1L);  // 跟随重定向
 
+    // 设置Basic认证
+    std::string auth = "YWRtaW46MTIzNDU=";
+    curl_easy_setopt(curl_handle, CURLOPT_USERPWD, auth.c_str());
+    curl_easy_setopt(curl_handle, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
 }
 
 Camera::~Camera()
