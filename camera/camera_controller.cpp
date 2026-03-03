@@ -5,6 +5,7 @@
 #include "../examples/utilities/json.hpp"
 #include <fstream>
 #include "../examples/utilities/sample_log.h"
+#include <unistd.h>
 
 std::string Camera::capture_path ="/wt_tech/conf/img/"; // 图像保存路径初始化
 
@@ -75,7 +76,7 @@ int CameraController::receive_input_loop() {
             camera = cameras[camera_id];
         }
 
-        WTALOGI("执行命令:[%s],相机id:[%d]\n", json_str.c_str(), camera_id);
+        WTALOGI("接收到命令:[%s],相机id:[%d]\n", json_str.c_str(), camera_id);
         if (cmd == "get") {
             if (camera_id > 0 && camera != NULL) {
                 response["data"] = nlohmann::json::array();
@@ -167,9 +168,9 @@ int CameraController::receive_input_loop() {
                     } else if (-180<=camera->web_rotation_x && camera->web_rotation_x <0){
                         x = (360 + camera->web_rotation_x) * 100;
                     } else {
+                        WTALOGI("无效x角度%d超出范围,忽略", camera->web_rotation_x);
                         x = -1;
                         camera->web_rotation_x = origin_rotatex;
-                        WTALOGI("无效x角度:超出范围,忽略");
                     }
 
                 }
@@ -182,9 +183,10 @@ int CameraController::receive_input_loop() {
                     } else if (-40<=camera->web_rotation_y && camera->web_rotation_y <0){
                         y = (360 + camera->web_rotation_y) * 100;
                     } else {
+                        WTALOGI("无效y角度%d超出范围,忽略", camera->web_rotation_y);
                         y = -1;
                         camera->web_rotation_y = origin_rotatey;
-                        WTALOGI("无效y角度:超出范围,忽略");
+
                     }
                 }
                 if (has_zoom) {
@@ -766,7 +768,7 @@ bool Camera::is_posture_completed()
     uint16_t regs[1];
     int rc = modbus_read_registers(modbus_ctx, 0x4461, 1, regs);
     if (rc == -1) {
-        std::cerr << "Failed to read rotation registers: " << modbus_strerror(errno) << std::endl;
+        WTALOGI("相机[%d] Failed to read rotation registers: %s", id, modbus_strerror(errno));
     }
 
     if ((regs[0] & 0x3) == 0) { // 检查最低两位都为0
@@ -841,6 +843,8 @@ int Camera::set_brighten(int brightness)
 {
     if (brightness==-1)
         return 0;
+
+    WTALOGI("相机[%d] 设置亮度:%d", id, brightness);
 
     // 使用Modbus设置亮度
     if (modbus_ctx == nullptr) {
@@ -1025,8 +1029,9 @@ int Camera::fetch_remote_status()
 
         regs[0] = 0;
         regs[1] = 0;
-        rc = modbus_read_registers(modbus_ctx, MODBUSPTZ, 2, regs);
+        rc = modbus_read_registers(modbus_ctx, 0x445A, 2, regs);
         if (rc == -1) {
+            WTALOGI("摄像机[%d] read position failed: %s", id, modbus_strerror(errno));
             res2 = -1;
         } else {
             rotation_x = regs[0];
