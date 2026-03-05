@@ -161,16 +161,27 @@ int CameraController::receive_input_loop() {
 
                 if (has_rotatex) {
                     new_rotatex = data["rotatex"]; //前端值
-                    camera->web_rotation_x = origin_rotatex + new_rotatex; // 更新前端值
+                    camera->web_rotation_x = (origin_rotatex + new_rotatex)%360; // 更新前端值
 
-                    if (0<=camera->web_rotation_x && camera->web_rotation_x<=180) {
+                    //if (0<=camera->web_rotation_x && camera->web_rotation_x<=180) { // 0~180
+                    //    x = camera->web_rotation_x * 100;
+                    //}  else if (camera->web_rotation_x > 180) { // 180~360
+                    //    camera->web_rotation_x = (camera->web_rotation_x - 360) % 360;
+                    //    x = camera->web_rotation_x * 100;
+                    //} else if (camera->web_rotation_x < 0) { // <0
+                    //    camera->web_rotation_x = camera->web_rotation_x % 360;
+                    //    x = (360 + camera->web_rotation_x) * 100;
+                    //}
+                    if (0<=camera->web_rotation_x && camera->web_rotation_x<=180) { //右半圈
                         x = camera->web_rotation_x * 100;
-                    } else if (-180<=camera->web_rotation_x && camera->web_rotation_x <0){
+                    } else if (180 < camera->web_rotation_x && camera->web_rotation_x<=360) { //左半圈
+                        x = camera->web_rotation_x * 100;
+                        camera->web_rotation_x = 180 - camera->web_rotation_x;
+                    } else if (-180<=camera->web_rotation_x && camera->web_rotation_x<0) { //左半圈
                         x = (360 + camera->web_rotation_x) * 100;
-                    } else {
-                        WTALOGI("无效x角度%d超出范围,忽略", camera->web_rotation_x);
-                        x = -1;
-                        camera->web_rotation_x = origin_rotatex;
+                    } else if (camera->web_rotation_x>=-360 && camera->web_rotation_x<-180) { //右半圈
+                        camera->web_rotation_x = 360 + camera->web_rotation_x;
+                        x = camera->web_rotation_x * 100;
                     }
 
                 }
@@ -1034,8 +1045,8 @@ int Camera::fetch_remote_status()
             WTALOGI("摄像机[%d] read position failed: %s", id, modbus_strerror(errno));
             res2 = -1;
         } else {
-            rotation_x = regs[0];
-            rotation_y = regs[1];
+            rotation_y = regs[0];
+            rotation_x = regs[1];
 
             if (0<=rotation_x && rotation_x<=18000) {
                 web_rotation_x = rotation_x/100;
