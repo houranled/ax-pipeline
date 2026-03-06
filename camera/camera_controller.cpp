@@ -160,35 +160,15 @@ int CameraController::receive_input_loop() {
                 int new_rotatex=0,new_rotatey=0,new_zoom=0,new_focus=0,new_brightness=0;
 
                 if (has_rotatex) {
-                    new_rotatex = data["rotatex"]; //前端值
-                    camera->web_rotation_x = (origin_rotatex + new_rotatex)%360; // 更新前端值
-
-                    if (0<=camera->web_rotation_x && camera->web_rotation_x<=180) { //右半圈
-                        x = camera->web_rotation_x * 100;
-                    } else if (180 < camera->web_rotation_x && camera->web_rotation_x<=360) { //左半圈
-                        x = camera->web_rotation_x * 100;
-                        camera->web_rotation_x -= 360;
-                    } else if (-180<=camera->web_rotation_x && camera->web_rotation_x<0) { //左半圈
-                        x = (360 + camera->web_rotation_x) * 100;
-                    } else if (camera->web_rotation_x>=-360 && camera->web_rotation_x<-180) { //右半圈
-                        camera->web_rotation_x += 360;
-                        x = camera->web_rotation_x * 100;
-                    }
+                    new_rotatex = data["rotatex"]; //前端角度变化量x
+                    camera->web_rotation_x = (origin_rotatex + new_rotatex)%360; // 更新前端值x
+                    x = (360+camera->web_rotation_x)%360 * 100;  // 映射后端值x
                 }
 
                 if (has_rotatey) {
-                    new_rotatey = data["rotatey"]; // 前端值
-                    camera->web_rotation_y = origin_rotatey + new_rotatey; // 更新前端值
-
-                    if (0<=camera->web_rotation_y && camera->web_rotation_y<=90) {
-                        y = camera->web_rotation_y * 100;
-                    } else if (-40<=camera->web_rotation_y && camera->web_rotation_y <0){
-                        y = (360 + camera->web_rotation_y) * 100;
-                    } else {
-                        WTALOGI("无效y角度%d超出范围,忽略", camera->web_rotation_y);
-                        y = -1;
-                        camera->web_rotation_y = origin_rotatey;
-                    }
+                    new_rotatey = data["rotatey"]; // 前端角度变化量y
+                    camera->web_rotation_y = (origin_rotatey + new_rotatey)%360; // 更新前端值y
+                    y = (360+camera->web_rotation_y)%360 * 100;  // 映射后端值y
                 }
 
                 if (has_zoom) {
@@ -689,28 +669,15 @@ int Camera::patrol_with_calibration_loop(bool is_calibrate) //return 0表示正�
      */
     now_point_id = 1; // 当前所在的预置点位ID记录
     for(auto position = preset_positions.begin(); position != preset_positions.end(); ++position, now_point_id++) {
-        int px=0;
-        int py=0;
-
-        if (0<=position->web_rotation_x && position->web_rotation_x <=180) {
-            px = position->web_rotation_x * 100;
-        } else if (-180<=position->web_rotation_x && position->web_rotation_x <0){
-            px = (360 + position->web_rotation_x) * 100;
-        } else {
-            px = -1;
-        }
-
-        if (0<=position->web_rotation_y && position->web_rotation_y<90) {
-            py = position->web_rotation_y * 100;
-        } else if (-40 <= position->web_rotation_y && position->web_rotation_y <0){
-            py = (360 + position->web_rotation_y) * 100;
-
-        } else {
-            py = -1;
-            WTALOGI("无效角度:超出范围,忽略");
-        }
+        /* 前端值映射为后端值 */
+        auto px = (360+position->web_rotation_x)%360 * 100;
+        auto py = (360+position->web_rotation_y)%360 * 100;
 
         set_ptz(px, py, position->brightness); // 设置转向和亮度
+
+        web_rotation_x = position->web_rotation_x;
+        web_rotation_y = position->web_rotation_y;
+
         set_zoom_and_focus(position->zoom, position->focus); // 设置缩放级别
 
         this->m_pipeline->point_id = now_point_id; // 设置当前点位ID
@@ -734,7 +701,7 @@ int Camera::patrol_with_calibration_loop(bool is_calibrate) //return 0表示正�
         WTALOGI("摄像机[%d]状态%s切换到点位[%d]", id, status, now_point_id);
         if (posture_completed) {
             if (is_calibrate) { //标定模式
-                start_take_a_picture(1);
+                start_take_a_picture(1); //标定拍 0:不拍 1：标定 2：巡检
             } else  { //巡航模式
                 start_record_video();  // 录像
                 start_take_a_picture(2);//拍照 0:不拍 1：标定 2：巡检
@@ -744,19 +711,17 @@ int Camera::patrol_with_calibration_loop(bool is_calibrate) //return 0表示正�
             res = 1;
         }
 
-        // 判断是否是最后一个点位
-        if (std::next(position) == preset_positions.end()) {
-            //最后一个点位，可以开始切换到非巡逻模式
-            finish_patrolling();
-            WTALOGI("摄像机[%d]保持灯光", id);
-            //set_brighten(0); //不需要光照 补光灯关闭
-        }
-
         if (is_calibrate)
             std::this_thread::sleep_for(std::chrono::milliseconds(2000)); //进行标定的话可以快速切换点位
         else
             std::this_thread::sleep_for(std::chrono::milliseconds(position->duration));  // 每隔duration切换下一次点位
 
+        // 判断是否是最后一个点位
+        if (std::next(position) == preset_positions.end()) {
+            //最后一个点位关闭补光灯
+            WTALOGI("摄像机[%d]关闭灯光", id);
+            set_brighten(0); //不需要光照 补光灯关闭
+        }
     }
     finish_patrolling(); // 巡逻结束
     return res;
@@ -856,7 +821,10 @@ int Camera::set_brighten(int brightness)
         return -1;
     }
 
-    // 准备要写入的寄存器值（假设亮度寄存器地址为0x44A5）
+    // 更新内部状态
+    this->brightness = brightness;
+
+    // 准备要写入的寄存器值（补光灯亮度寄存器地址为0x44A5）
     uint16_t brightness_reg[2];
     brightness_reg[0] = static_cast<uint16_t>(brightness);
     brightness_reg[1] = static_cast<uint16_t>(brightness);
@@ -867,9 +835,6 @@ int Camera::set_brighten(int brightness)
         WTALOGI("Failed to write brighten register: %s", modbus_strerror(errno));
         return -1;
     }
-
-    // 更新内部状态
-    this->brightness = brightness;
 
     return 0;
 }
@@ -1041,18 +1006,27 @@ int Camera::fetch_remote_status()
             rotation_y = regs[0];
             rotation_x = regs[1];
 
+            /* 后端值映射为前端值 */
+
             if (0<=rotation_x && rotation_x<=18000) {
                 web_rotation_x = rotation_x/100;
             } else if (18000 <rotation_x && rotation_x<=36000) {
                 web_rotation_x =  (rotation_x - 36000)/100;
             }
 
-            if (0<=rotation_y && rotation_y<=9000) {
+            if (0<=rotation_y && rotation_y<=18000) {
                 web_rotation_y = rotation_y/100;
-            } else if (32000<= rotation_y && rotation_y<=36000) {
+            } else if (18000 < rotation_y && rotation_y<=36000) {
                 web_rotation_y = (rotation_y - 36000)/100;
             }
             WTALOGI("摄像机[%d]同步当前姿态: x=%d, y=%d",id, web_rotation_x, web_rotation_y);
+        }
+
+        rc = modbus_read_registers(modbus_ctx, 0x44A5, 2, regs); // 读取远光灯亮度
+        if (rc == -1) {
+            res2 = -1;
+        } else {
+            this->brightness = regs[0];
         }
 
         rc = modbus_read_registers(modbus_ctx, MODBUSSYS, 1, regs);
