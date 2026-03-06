@@ -6,6 +6,7 @@
 #include <fstream>
 #include "../examples/utilities/sample_log.h"
 #include <unistd.h>
+#include <pthread.h>
 
 std::string Camera::capture_path ="/wt_tech/conf/img/"; // 图像保存路径初始化
 
@@ -23,7 +24,7 @@ CameraController::~CameraController()
 {
     // 清理libcurl全局环境
     curl_global_cleanup();
-    this->stop(); // 停止接收输入循环
+    stop(); // 停止接收输入循环
 }
 
 /*
@@ -487,7 +488,8 @@ int CameraController::stop()
     running = false; // 标记控制器为停止状态
 
     if (input_thread.joinable()) {
-        //input_thread.join(); // 等待输入线程结束
+        pthread_cancel(reinterpret_cast<pthread_t>(input_thread.native_handle()));
+        input_thread.join();
     }
     // 停止所有摄像机
     for (auto camera : cameras) {
