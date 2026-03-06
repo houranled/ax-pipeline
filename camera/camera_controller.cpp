@@ -183,6 +183,11 @@ int CameraController::receive_input_loop() {
                 if (has_brightness) {
                     new_brightness = data["brightness"];
                     brightness = origin_brightness + new_brightness;
+                    if (brightness<0) {
+                        brightness = 0;
+                    } else if (brightness>1000) {
+                        brightness = 1000;
+                    }
                 }
                 if (has_wiper) {
                     wiper_switch = std::stoi(data["wiper"].get<std::string>());
@@ -828,8 +833,8 @@ int Camera::set_brighten(int brightness)
 
     // 准备要写入的寄存器值（补光灯亮度寄存器地址为0x44A5）
     uint16_t brightness_reg[2];
-    brightness_reg[0] = static_cast<uint16_t>(brightness);
-    brightness_reg[1] = static_cast<uint16_t>(brightness);
+    brightness_reg[0] = static_cast<uint16_t>(brightness*100);
+    brightness_reg[1] = static_cast<uint16_t>(brightness*100);
 
     // 写入保持寄存器
     int rc = modbus_write_registers(modbus_ctx, 0x44A5, 2, brightness_reg);
@@ -1028,7 +1033,7 @@ int Camera::fetch_remote_status()
         if (rc == -1) {
             res2 = -1;
         } else {
-            this->brightness = regs[0];
+            this->brightness = regs[0]/100;
         }
 
         rc = modbus_read_registers(modbus_ctx, MODBUSSYS, 1, regs);
