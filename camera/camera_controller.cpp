@@ -163,28 +163,19 @@ int CameraController::receive_input_loop() {
                     new_rotatex = data["rotatex"]; //前端值
                     camera->web_rotation_x = (origin_rotatex + new_rotatex)%360; // 更新前端值
 
-                    //if (0<=camera->web_rotation_x && camera->web_rotation_x<=180) { // 0~180
-                    //    x = camera->web_rotation_x * 100;
-                    //}  else if (camera->web_rotation_x > 180) { // 180~360
-                    //    camera->web_rotation_x = (camera->web_rotation_x - 360) % 360;
-                    //    x = camera->web_rotation_x * 100;
-                    //} else if (camera->web_rotation_x < 0) { // <0
-                    //    camera->web_rotation_x = camera->web_rotation_x % 360;
-                    //    x = (360 + camera->web_rotation_x) * 100;
-                    //}
                     if (0<=camera->web_rotation_x && camera->web_rotation_x<=180) { //右半圈
                         x = camera->web_rotation_x * 100;
                     } else if (180 < camera->web_rotation_x && camera->web_rotation_x<=360) { //左半圈
                         x = camera->web_rotation_x * 100;
-                        camera->web_rotation_x = 180 - camera->web_rotation_x;
+                        camera->web_rotation_x -= 360;
                     } else if (-180<=camera->web_rotation_x && camera->web_rotation_x<0) { //左半圈
                         x = (360 + camera->web_rotation_x) * 100;
                     } else if (camera->web_rotation_x>=-360 && camera->web_rotation_x<-180) { //右半圈
-                        camera->web_rotation_x = 360 + camera->web_rotation_x;
+                        camera->web_rotation_x += 360;
                         x = camera->web_rotation_x * 100;
                     }
-
                 }
+
                 if (has_rotatey) {
                     new_rotatey = data["rotatey"]; // 前端值
                     camera->web_rotation_y = origin_rotatey + new_rotatey; // 更新前端值
@@ -197,9 +188,9 @@ int CameraController::receive_input_loop() {
                         WTALOGI("无效y角度%d超出范围,忽略", camera->web_rotation_y);
                         y = -1;
                         camera->web_rotation_y = origin_rotatey;
-
                     }
                 }
+
                 if (has_zoom) {
                     new_zoom = data["zoom"];
                     zoom = origin_zoom + new_zoom;
