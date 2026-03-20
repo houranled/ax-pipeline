@@ -56,6 +56,9 @@ int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resi
         results->mObjects[i].label = obj.label;
         results->mObjects[i].prob = obj.prob;
 
+        WTALOGI("Object %d: label=%d, prob=%.4f, x=%.2f, y=%.2f, w=%.2f, h=%.2f",
+            i, obj.label, obj.prob, obj.rect.x, obj.rect.y, obj.rect.width, obj.rect.height);
+
         // Set OBB vertices
         results->mObjects[i].bHasBoxVertices = 1;
         for (int j = 0; j < 4; ++j) {
