@@ -234,8 +234,7 @@ int CameraController::receive_input_loop() {
             } else {
                 response["msg"] = "所有摄像机的巡检任务于后台开始运行...";
             }
-            response["status"] = "end"; // 临时忽略巡检动作
-            goto Finish; // 临时忽略巡检动作: 跳转到Finish标签处，结束函数执行
+            response["status"] = "start";
 
             // 创建后台线程执行巡检任务
             std::thread patrol_thread([this, currentReqId, currentCameraId]() { // 值捕获方式
