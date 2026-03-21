@@ -38,6 +38,12 @@ int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resi
     detection::generate_proposals_yolov8_obb_native(grid_strides, output_ptr, PROB_THRESHOLD, proposals,
         get_algo_width(), get_algo_height(), num_classes);
 
+    // Print proposals for debugging
+    for (auto& proposal : proposals) {
+        WTALOGI("Proposal: label=%d, prob=%.4f, x=%.2f, y=%.2f, w=%.2f, h=%.2f, angle=%.2f",
+          proposal.label,proposal.prob, proposal.rect.x, proposal.rect.y, proposal.rect.width, proposal.rect.height, proposal.angle);
+    }
+
     // Apply NMS and coordinate transformation
     std::vector<detection::Object> objects;
     detection::get_out_obb_bbox(proposals, objects, NMS_THRESHOLD, get_algo_width(), get_algo_height(),

@@ -2093,7 +2093,7 @@ namespace detection
                 obj.rect.width = w * stride;
                 obj.rect.height = h * stride;
                 obj.label = max_class;
-                obj.prob = max_score;
+                obj.prob = sigmoid(max_score);
                 obj.angle = angle; // Store angle in radians
 
                 // Calculate OBB vertices
@@ -2219,21 +2219,6 @@ namespace detection
                 objects[i].obb_vertices[j].x = x;
                 objects[i].obb_vertices[j].y = y;
             }
-
-            // Update axis-aligned bbox for compatibility
-            float min_x = std::min({objects[i].obb_vertices[0].x, objects[i].obb_vertices[1].x,
-                                   objects[i].obb_vertices[2].x, objects[i].obb_vertices[3].x});
-            float max_x = std::max({objects[i].obb_vertices[0].x, objects[i].obb_vertices[1].x,
-                                   objects[i].obb_vertices[2].x, objects[i].obb_vertices[3].x});
-            float min_y = std::min({objects[i].obb_vertices[0].y, objects[i].obb_vertices[1].y,
-                                   objects[i].obb_vertices[2].y, objects[i].obb_vertices[3].y});
-            float max_y = std::max({objects[i].obb_vertices[0].y, objects[i].obb_vertices[1].y,
-                                   objects[i].obb_vertices[2].y, objects[i].obb_vertices[3].y});
-
-            objects[i].rect.x = min_x;
-            objects[i].rect.y = min_y;
-            objects[i].rect.width = max_x - min_x;
-            objects[i].rect.height = max_y - min_y;
         }
     }
 
