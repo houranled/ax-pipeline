@@ -48,8 +48,8 @@ namespace detection
         std::string text;
 
         /* for OBB */
-        float angle;  // 旋转角度
-        cv::Point2f obb_vertices[4];  // 旋转框的四个顶点
+        float angle;                 // 旋转角度
+        cv::Point2f obb_vertices[4]; // 旋转框的四个顶点
     } Object;
 
     /* for palm hand detection */
@@ -2048,75 +2048,64 @@ namespace detection
     }
 
     // Generate YOLOv8-OBB proposals using native approach (similar to AXERA implementation)
-    static void generate_proposals_yolov8_obb_native(const std::vector<GridAndStride> &grid_strides, const float *feat_ptr,
-                                                     float prob_threshold, std::vector<Object> &proposals, int input_w, int input_h,
-                                                     int num_classes)
+    static void generate_proposals_yolov8_obb_native(const std::vector<GridAndStride> &grid_strides, const float *feat,
+                                                     float prob_threshold, std::vector<Object> &objects, int letterbox_cols, int letterbox_rows, int cls_num = 15)
     {
-        proposals.clear();
-
-        const int num_anchors = grid_strides.size();
-        const int num_params = 5; // [cx, cy, w, h, angle]
-
-        for (int anchor_idx = 0; anchor_idx < num_anchors; ++anchor_idx) {
-            const auto &grid_stride = grid_strides[anchor_idx];
-            int grid0 = grid_stride.grid0;
-            int grid1 = grid_stride.grid1;
-            int stride = grid_stride.stride;
-
-            // Get the feature pointer for this anchor
-            const float *anchor_ptr = feat_ptr + anchor_idx * (num_params + num_classes);
-
-            // Extract OBB parameters
-            float cx = anchor_ptr[0];
-            float cy = anchor_ptr[1];
-            float w = anchor_ptr[2];
-            float h = anchor_ptr[3];
-            float angle = anchor_ptr[4];
-
-            // Find max class score
-            float max_score = 0;
-            int max_class = 0;
-            for (int j = 0; j < num_classes; ++j) {
-                float score = anchor_ptr[num_params + j];
-                if (score > max_score) {
-                    max_score = score;
-                    max_class = j;
+        const int num_points = grid_strides.size();
+        int reg_max = 16;
+        auto feat_ptr = feat;
+        std::vector<float> dis_after_sm(reg_max, 0.f);
+        for (int i = 0; i < num_points; i++) {
+            // process cls score
+            int class_index = 0;
+            float class_score = -FLT_MAX;
+            for (int s = 0; s < cls_num; s++) {
+                float score = feat_ptr[s + 4 * reg_max];
+                if (score > class_score) {
+                    class_index = s;
+                    class_score = score;
                 }
             }
 
-            // Apply confidence threshold
-            if (max_score >= prob_threshold) {
+            float box_prob = sigmoid(class_score);
+            if (box_prob > prob_threshold) {
+                float pred_ltrb[4];
+                for (int k = 0; k < 4; k++)
+                {
+                    float dis = softmax(feat_ptr + k * reg_max, dis_after_sm.data(), reg_max);
+                    pred_ltrb[k] = dis * grid_strides[i].stride;
+                }
+
+                float angle = feat_ptr[4 * reg_max + cls_num];
+
+                float pb_cx = (grid_strides[i].grid0 + 0.5f) * grid_strides[i].stride;
+                float pb_cy = (grid_strides[i].grid1 + 0.5f) * grid_strides[i].stride;
+
+                float cos = std::cos(angle);
+                float sin = std::sin(angle);
+
+                float x = (pred_ltrb[2] - pred_ltrb[0]) * 0.5f;
+                float y = (pred_ltrb[3] - pred_ltrb[1]) * 0.5f;
+                float xc = x * cos - y * sin + pb_cx;
+                float yc = x * sin + y * cos + pb_cy;
+                float w = pred_ltrb[2] + pred_ltrb[0];
+                float h = pred_ltrb[3] + pred_ltrb[1];
+
+                // 添加调试信息
+                WTALOGI("pred_ltrb: l=%.2f, t=%.2f, r=%.2f, b=%.2f, angle=%.4f", pred_ltrb[0], pred_ltrb[1], pred_ltrb[2], pred_ltrb[3], angle);
+
                 Object obj;
-                // Convert from grid coordinates to input image coordinates
-                obj.rect.x = (cx + grid0) * stride;
-                obj.rect.y = (cy + grid1) * stride;
-                obj.rect.width = w * stride;
-                obj.rect.height = h * stride;
-                obj.label = max_class;
-                obj.prob = sigmoid(max_score);
-                obj.angle = angle; // Store angle in radians
+                obj.rect.x = xc; // center x
+                obj.rect.y = yc; // center y
+                obj.rect.width = w;
+                obj.rect.height = h;
+                obj.label = class_index;
+                obj.prob = box_prob;
+                obj.angle = angle;
 
-                // Calculate OBB vertices
-                float center_x = obj.rect.x + obj.rect.width / 2;
-                float center_y = obj.rect.y + obj.rect.height / 2;
-                float cos_a = cos(angle);
-                float sin_a = sin(angle);
-
-                // Calculate 4 vertices of rotated rectangle
-                float dx = obj.rect.width / 2;
-                float dy = obj.rect.height / 2;
-
-                obj.obb_vertices[0].x = center_x - dx * cos_a + dy * sin_a;
-                obj.obb_vertices[0].y = center_y - dx * sin_a - dy * cos_a;
-                obj.obb_vertices[1].x = center_x + dx * cos_a + dy * sin_a;
-                obj.obb_vertices[1].y = center_y + dx * sin_a - dy * cos_a;
-                obj.obb_vertices[2].x = center_x + dx * cos_a - dy * sin_a;
-                obj.obb_vertices[2].y = center_y + dx * sin_a + dy * cos_a;
-                obj.obb_vertices[3].x = center_x - dx * cos_a - dy * sin_a;
-                obj.obb_vertices[3].y = center_y - dx * sin_a + dy * cos_a;
-
-                proposals.push_back(obj);
+                objects.push_back(obj);
             }
+            feat_ptr += (cls_num + 4 * reg_max + 1);
         }
     }
 
@@ -2124,11 +2113,11 @@ namespace detection
     static float obb_intersection_area(const T &a, const T &b)
     {
         // 创建旋转矩形，使用中心点、尺寸和角度
-        cv::Point2f center_a(a.rect.x + a.rect.width/2, a.rect.y + a.rect.height/2);
+        cv::Point2f center_a(a.rect.x + a.rect.width / 2, a.rect.y + a.rect.height / 2);
         cv::Size2f size_a(a.rect.width, a.rect.height);
         cv::RotatedRect ra(center_a, size_a, a.angle * 180 / M_PI);
 
-        cv::Point2f center_b(b.rect.x + b.rect.width/2, b.rect.y + b.rect.height/2);
+        cv::Point2f center_b(b.rect.x + b.rect.width / 2, b.rect.y + b.rect.height / 2);
         cv::Size2f size_b(b.rect.width, b.rect.height);
         cv::RotatedRect rb(center_b, size_b, b.angle * 180 / M_PI);
 
@@ -2174,8 +2163,9 @@ namespace detection
     }
 
     // Apply NMS and coordinate transformation for OBB results
-    static void get_out_obb_bbox(std::vector<Object>& proposals, std::vector<Object>& objects, float nms_threshold,
-                                        int letterbox_rows, int letterbox_cols, int src_rows, int src_cols) {
+    static void get_out_obb_bbox(std::vector<Object> &proposals, std::vector<Object> &objects, float nms_threshold,
+                                 int letterbox_rows, int letterbox_cols, int src_rows, int src_cols)
+    {
         // Sort by confidence
         qsort_descent_inplace(proposals);
 
@@ -2188,7 +2178,8 @@ namespace detection
         int resize_rows, resize_cols;
         if ((letterbox_rows * 1.0 / src_rows) < (letterbox_cols * 1.0 / src_cols)) {
             scale_letterbox = letterbox_rows * 1.0 / src_rows;
-        } else {
+        }
+        else {
             scale_letterbox = letterbox_cols * 1.0 / src_cols;
         }
         resize_cols = int(scale_letterbox * src_cols);
@@ -2202,11 +2193,13 @@ namespace detection
 
         // Process picked objects
         objects.resize(picked.size());
-        for (size_t i = 0; i < picked.size(); ++i) {
+        for (size_t i = 0; i < picked.size(); ++i)
+        {
             objects[i] = proposals[picked[i]];
 
             // Transform coordinates back to original image space
-            for (int j = 0; j < 4; ++j) {
+            for (int j = 0; j < 4; ++j)
+            {
                 float x = objects[i].obb_vertices[j].x;
                 float y = objects[i].obb_vertices[j].y;
 
@@ -2223,31 +2216,36 @@ namespace detection
     }
 
     // Draw OBB objects on image
-    static void draw_objects_obb(cv::Mat& mat, const std::vector<Object>& objects, const char* const class_names[],
-                                 const char* save_path = nullptr, int save_flag = 0) {
-        for (size_t i = 0; i < objects.size(); ++i) {
-            const auto& obj = objects[i];
+    static void draw_objects_obb(cv::Mat &mat, const std::vector<Object> &objects, const char *const class_names[],
+                                 const char *save_path = nullptr, int save_flag = 0)
+    {
+        for (size_t i = 0; i < objects.size(); ++i)
+        {
+            const auto &obj = objects[i];
 
             // Draw rotated rectangle
             cv::Point pts[4];
-            for (int j = 0; j < 4; ++j) {
+            for (int j = 0; j < 4; ++j)
+            {
                 pts[j] = cv::Point(static_cast<int>(obj.obb_vertices[j].x),
-                                  static_cast<int>(obj.obb_vertices[j].y));
+                                   static_cast<int>(obj.obb_vertices[j].y));
             }
 
             // Draw polygon
-            for (int j = 0; j < 4; ++j) {
+            for (int j = 0; j < 4; ++j)
+            {
                 cv::line(mat, pts[j], pts[(j + 1) % 4], cv::Scalar(0, 255, 0), 2);
             }
 
             // Draw label
             char label[256];
             snprintf(label, sizeof(label), "%s %.2f",
-                    class_names[obj.label], obj.prob);
+                     class_names[obj.label], obj.prob);
             cv::putText(mat, label, pts[0], cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 1);
         }
 
-        if (save_path && save_flag) {
+        if (save_path && save_flag)
+        {
             cv::imwrite(save_path, mat);
         }
     }

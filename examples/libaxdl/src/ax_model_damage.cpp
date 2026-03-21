@@ -17,7 +17,7 @@ int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resi
     if (pOutputsInfo[0].vShape.size() == 3) {
         // YOLOv8 OBB format: [batch=1, channels=5+classes, anchors=8400]
         num_anchors = (int)pOutputsInfo[0].vShape[2];  // 8400
-        int channels = (int)pOutputsInfo[0].vShape[1];  // 5 + num_classes?
+        int channels = (int)pOutputsInfo[0].vShape[1];  // 5 + num_classes
     } else {
         ALOGE("YOLOv8 OBB requires 3D output [batch, channels, anchors]");
         return -1;
@@ -83,6 +83,7 @@ int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resi
     return 0;
 }
 
+
 void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y)
 {
     // Draw OBB polygons for each detected object
@@ -136,11 +137,8 @@ void ax_model_damage::draw_custom(int chn, axdl_results_t *results, float fontsc
                     {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
             }
 
-            //生成告警 调用camera_Controller
+            // 生成告警 调用camera_Controller
             CameraController::getInstance()->early_warning_process(chn/2);
         }
     }
-
-
-
 }
