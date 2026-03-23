@@ -2084,12 +2084,12 @@ namespace detection
                 float cos = std::cos(angle);
                 float sin = std::sin(angle);
 
-                float x = (pred_ltrb[2] - pred_ltrb[0]) * 0.5f;
-                float y = (pred_ltrb[3] - pred_ltrb[1]) * 0.5f;
-                float xc = x * cos - y * sin + pb_cx;
-                float yc = x * sin + y * cos + pb_cy;
-                float w = pred_ltrb[2] + pred_ltrb[0];
-                float h = pred_ltrb[3] + pred_ltrb[1];
+                float x = (pred_ltrb[2] - pred_ltrb[0]) * 0.5f; // 横向偏心距离
+                float y = (pred_ltrb[3] - pred_ltrb[1]) * 0.5f; // 纵向偏心距离
+                float xc = x * cos - y * sin + pb_cx; // xc: 旋转后的x坐标，通过旋转变换公式计算，并加上原始中心点x坐标
+                float yc = x * sin + y * cos + pb_cy; // yc: 旋转后的y坐标，通过旋转变换公式计算，并加上原始中心点y坐标
+                float w = pred_ltrb[2] + pred_ltrb[0]; // w: 边界框的宽度，通过左右边界点相加得到
+                float h = pred_ltrb[3] + pred_ltrb[1]; // h: 边界框的高度，通过上下边界点相加得到
 
                 // 添加调试信息
                 WTALOGI("pred_ltrb: l=%.2f, t=%.2f, r=%.2f, b=%.2f, angle=%.4f", pred_ltrb[0], pred_ltrb[1], pred_ltrb[2], pred_ltrb[3], angle);
