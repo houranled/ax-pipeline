@@ -618,7 +618,7 @@ int Camera::get_id() const
 
 bool Camera::is_patroling() const
 {
-    WTALOGI("查看是否处于巡检状态:%s", patrolling? "是":"否");
+    //WTALOGI("查看是否处于巡检状态:%s", patrolling? "是":"否");
     return patrolling;
 }
 

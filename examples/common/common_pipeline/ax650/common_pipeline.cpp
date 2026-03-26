@@ -836,9 +836,11 @@ bool record_ffmpeg_pipe_video(pipeline_t *pipe)
         sprintf(dirname, "/wt_tech/data/%s/%s/%s_%d", "F02", dateStr,dateStr, 1);
 
         if(access(dirname,0)!=0) {
-            mkdir(dirname,0777);
+            char cmd[256] = {0};
+            sprintf(cmd, "mkdir -p %s", dirname);
+            system(cmd);
         }
-        sprintf(filename, "%s/%d-%02d-%02d_%02d-%02d-%02d.mp4",dirname ,t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
+        sprintf(filename, "%s/%d-%02d-%02d_%02d_%s.mp4",dirname ,t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, pipe->channel_name);
 
         strcpy(pipe->video_filename, filename); // 将文件路径保存到pipeline_t结构体中
 
@@ -880,7 +882,9 @@ bool record_ffmpeg_pipe_jpg(pipeline_t *pipe, void *p_hevc , int pLen)
         ymd, ymd, t->tm_hour);
 
     if(access(dirname,0)!=0) {
-        mkdir(dirname,0777);
+        char cmd[256] = {0};
+        sprintf(cmd, "mkdir -p %s", dirname);
+        system(cmd);
     }
 
     char filename[128] = {0};
