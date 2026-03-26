@@ -65,6 +65,7 @@ class Camera {
     #define MODBUSWIPER 0x4458 // 雨刮器
     #define MODBUSSYS   0x4461 // 系统状态查看寄存器
     #define MODBUSPSENT 0x4466 // 光敏值地址
+    #define MODBUSPTHRESHOLD  0x4468 // 光敏阈值读写地址
 
     friend CameraController;  // 允许CameraController类访问Camera类的私有成员
     friend AlarmManager;      // 允许AlarmManager类访问Camera类的私有成员
@@ -90,6 +91,7 @@ public:
     int set_wiper(int _switch); // 单独控制雨刷
     int set_brighten(int brightness); //单独控制补光灯
     int getPhotosensitive();
+    int setphotosensitiveThreshold(int threshold);
 
     int set_zoom_and_focus(int zoom, int focus);
     int fetch_remote_status();
@@ -118,6 +120,7 @@ private:
     int brightness=0; // 当前补光灯亮度
     int wiper_switch=0; // 雨刷开关
     int photosensitive=0; // 光敏值
+    int photosensitiveThreshold=0; // 光敏值阈值
 
     bool running;
     bool patrolling = false;  // 是否在巡逻中

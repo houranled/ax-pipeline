@@ -93,8 +93,8 @@ int CameraController::receive_input_loop() {
                 resp_first_camera_data["point_id"] = camera->now_point_id;
                 resp_first_camera_data["patrol"] = camera->patrolling;
                 resp_first_camera_data["wiper"] = std::to_string(camera->wiper_switch); // 雨刷开关
-                camera->getPhotosensitive();
                 resp_first_camera_data["photosensitive"] = camera->photosensitive;
+                resp_first_camera_data["photosensitiveThreshold"] = camera->photosensitiveThreshold;
             } else if (camera_id > 0) {
                 response["msg"] = "该相机不存在";
                 response["status"] = 500;
@@ -115,8 +115,8 @@ int CameraController::receive_input_loop() {
                     resp_one_camera_data["point_id"] = camera->now_point_id;
                     resp_one_camera_data["patrol"] = camera->patrolling;
                     resp_one_camera_data["wiper"] = std::to_string(camera->wiper_switch); // 雨刷开关
-                    camera->getPhotosensitive();
                     resp_one_camera_data["photosensitive"] = camera->photosensitive; // 光敏
+                    resp_one_camera_data["photosensitiveThreshold"] = camera->photosensitiveThreshold; // 光敏阈值
                 }
             }
         } else if (cmd == "set" || cmd == "add") {
@@ -140,8 +140,10 @@ int CameraController::receive_input_loop() {
                 bool has_focus = data.contains("focus");
                 bool has_brightness = data.contains("brightness");
                 bool has_wiper = data.contains("wiper");
+                bool has_photosensitiveThreshold = data.contains("photosensitiveThreshold");
 
                 int origin_rotatex, origin_rotatey, origin_zoom, origin_focus, origin_brightness; //前端原有值
+                int photosensitiveThreshold = -1;
                 if (cmd == "set") {
                     origin_rotatex = 0;
                     origin_rotatey = 0;
@@ -212,6 +214,15 @@ int CameraController::receive_input_loop() {
                         has_error = true;
                     }
                 }
+
+                if (has_photosensitiveThreshold) {
+                    photosensitiveThreshold = data["photosensitiveThreshold"];
+                    if (camera->setphotosensitiveThreshold(photosensitiveThreshold)<0) {
+                        err_msg += "对摄像机操作失败!";
+                        has_error = true;
+                    }
+                }
+
                 response["msg"] = err_msg;
 
                 if (has_error == true)
@@ -811,7 +822,7 @@ int Camera::set_wiper(int _switch)
     }
 
     this->wiper_switch = _switch; // 更新内部状态
-    return 0;
+    return 1;
 }
 
 int Camera::set_brighten(int brightness)
@@ -845,6 +856,7 @@ int Camera::set_brighten(int brightness)
     return 0;
 }
 
+// 获取云台设备上的光敏亮度值和阈值
 int Camera::getPhotosensitive()
 {
     if (modbus_ctx == nullptr)
@@ -856,8 +868,36 @@ int Camera::getPhotosensitive()
     if (rc == -1) {
         WTALOGI("Failed to read photosensitive register");
     }
-    this->photosensitive = regs[0]; // 更新内部状态
-    return regs[0];
+    photosensitive = regs[0]; // 更新内部状态
+
+    regs[1] = 0;
+    rc = modbus_read_registers(modbus_ctx, MODBUSPTHRESHOLD, 1, regs);
+    if (rc == -1) {
+        WTALOGI("Failed to read photosensitivet register");
+    }
+    photosensitiveThreshold = regs[0]; // 更新内部状态
+
+    return 1;
+}
+
+int Camera::setphotosensitiveThreshold(int threshold)
+{
+    if (modbus_ctx == nullptr)
+        return -1;
+
+    if (threshold == -1)
+        return 0;
+
+    uint16_t reg = 0;
+    reg = threshold;
+    int rc = modbus_write_register(modbus_ctx, MODBUSPTHRESHOLD, reg);
+    if (rc == -1) {
+        WTALOGI("Failed to read photosensitive register");
+        return -1;
+    }
+    photosensitiveThreshold = threshold;
+
+    return 1;
 }
 
 // 回调函数，用于处理HTTP响应
@@ -1041,6 +1081,8 @@ int Camera::fetch_remote_status()
         } else {
             (regs[0] & 1<<8) ? this->wiper_switch = true : this->wiper_switch = false; //第9bit位是雨刮器开关状态
         }
+
+        getPhotosensitive();
 
     });
 
