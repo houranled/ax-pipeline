@@ -35,7 +35,7 @@ int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resi
 
     // Generate OBB proposals using AXERA-style approach
     std::vector<detection::Object> proposals;
-    detection::generate_proposals_yolov8_obb_native(grid_strides, output_ptr, PROB_THRESHOLD, proposals,
+    detection::generate_proposals_yolov8_obb_native_xyxyxyxy(grid_strides, output_ptr, PROB_THRESHOLD, proposals,
         get_algo_width(), get_algo_height(), num_classes);
 
     // Apply NMS and coordinate transformation

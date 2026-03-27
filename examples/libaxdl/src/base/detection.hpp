@@ -2109,6 +2109,68 @@ namespace detection
         }
     }
 
+    static void generate_proposals_yolov8_obb_native_xyxyxyxy(
+        const std::vector<GridAndStride> &grid_strides,
+        const float *feat,
+        float prob_threshold,
+        std::vector<Object> &objects,
+        int letterbox_cols,
+        int letterbox_rows,
+        int cls_num = 11)  // 修改为11个类别
+    {
+        const int num_points = grid_strides.size();
+        auto feat_ptr = feat;
+
+        for (int i = 0; i < num_points; i++) {
+            // 1. 提取8个顶点坐标
+            float x1 = feat_ptr[0];
+            float y1 = feat_ptr[1];
+            float x2 = feat_ptr[2];
+            float y2 = feat_ptr[3];
+            float x3 = feat_ptr[4];
+            float y3 = feat_ptr[5];
+            float x4 = feat_ptr[6];
+            float y4 = feat_ptr[7];
+
+            // 2. 提取目标置信度
+            float objectness = sigmoid(feat_ptr[8]);
+
+            // 3. 提取类别分数并找到最大值
+            int class_index = 0;
+            float class_score = -FLT_MAX;
+            for (int s = 0; s < cls_num; s++) {
+                float score = feat_ptr[9 + s];  // 从第9个通道开始
+                if (score > class_score) {
+                    class_index = s;
+                    class_score = score;
+                }
+            }
+
+            // 4. 计算最终得分
+            float final_score = objectness * sigmoid(class_score);
+
+            if (final_score > prob_threshold) {
+                Object obj;
+                // 设置顶点坐标
+                obj.obb_vertices[0] = cv::Point2f(x1, y1);
+                obj.obb_vertices[1] = cv::Point2f(x2, y2);
+                obj.obb_vertices[2] = cv::Point2f(x3, y3);
+                obj.obb_vertices[3] = cv::Point2f(x4, y4);
+
+                // 添加调试信息
+                WTALOGI("obb_vertices: p1[%d,%d], p2[%d,%d], p3[%d,%d], p4[%d,%d]", x1, y1, x2, y2, x3, y3, x4, y4);
+
+                obj.label = class_index;
+                obj.prob = final_score;
+
+                objects.push_back(obj);
+            }
+
+            feat_ptr += (8 + 1 + cls_num);  // 8个坐标 + 1个objectness + cls_num个类别
+        }
+    }
+
+
     template <typename T>
     static float obb_intersection_area(const T &a, const T &b)
     {
