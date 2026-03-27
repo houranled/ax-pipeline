@@ -38,12 +38,6 @@ int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resi
     detection::generate_proposals_yolov8_obb_native(grid_strides, output_ptr, PROB_THRESHOLD, proposals,
         get_algo_width(), get_algo_height(), num_classes);
 
-    // Print proposals for debugging
-    for (auto& proposal : proposals) {
-        WTALOGI("Proposal: label=%d, prob=%.4f, x=%.2f, y=%.2f, w=%.2f, h=%.2f, angle=%.2f",
-          proposal.label,proposal.prob, proposal.rect.x, proposal.rect.y, proposal.rect.width, proposal.rect.height, proposal.angle);
-    }
-
     // Apply NMS and coordinate transformation
     std::vector<detection::Object> objects;
     detection::get_out_obb_bbox(proposals, objects, NMS_THRESHOLD, get_algo_width(), get_algo_height(),
@@ -61,16 +55,36 @@ int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resi
         results->mObjects[i].bbox.h = obj.rect.height;
         results->mObjects[i].label = obj.label;
         results->mObjects[i].prob = obj.prob;
+        /* ↑ 似乎是冗余的 */
 
         WTALOGI("Object %d: label=%d, prob=%.4f, x=%.2f, y=%.2f, w=%.2f, h=%.2f",
             i, obj.label, obj.prob, obj.rect.x, obj.rect.y, obj.rect.width, obj.rect.height);
 
-        // Set OBB vertices
+        // 计算旋转矩形的四个顶点
+        float cos_a = std::cos(objects[i].angle);
+        float sin_a = std::sin(objects[i].angle);
+        float wx = obj.rect.width / 2 * cos_a;
+        float wy = obj.rect.width / 2 * sin_a;
+        float hx = -obj.rect.height / 2 * sin_a;
+        float hy = obj.rect.height / 2 * cos_a;
+
+        // Set OBB vertices:
         results->mObjects[i].bHasBoxVertices = 1;
-        for (int j = 0; j < 4; ++j) {
-            results->mObjects[i].bbox_vertices[j].x = obj.obb_vertices[j].x;
-            results->mObjects[i].bbox_vertices[j].y = obj.obb_vertices[j].y;
-        }
+        // 顶点1：左上
+        results->mObjects[i].bbox_vertices[0].x = objects[i].rect.x - wx - hx;
+        results->mObjects[i].bbox_vertices[0].y = objects[i].rect.y - wy - hy;
+
+        // 顶点2：右上
+        results->mObjects[i].bbox_vertices[1].x = objects[i].rect.x + wx - hx;
+        results->mObjects[i].bbox_vertices[1].y = objects[i].rect.y + wy - hy;
+
+        // 顶点3：右下
+        results->mObjects[i].bbox_vertices[2].x  = objects[i].rect.x + wx + hx;
+        results->mObjects[i].bbox_vertices[2].y  = objects[i].rect.y + wy + hy;
+
+        // 顶点4：左下
+        results->mObjects[i].bbox_vertices[3].x  = objects[i].rect.x - wx + hx;
+        results->mObjects[i].bbox_vertices[3].y  = objects[i].rect.y - wy + hy;
 
         // Set object name using OBB class names
         if (obj.label < (int)CLASS_NAMES.size()) {

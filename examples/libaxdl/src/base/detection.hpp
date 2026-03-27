@@ -2130,34 +2130,116 @@ namespace detection
         return cv::contourArea(intersection);
     }
 
-    template <typename T>
-    static void nms_sorted_obb(const std::vector<T> &faceobjects, std::vector<int> &picked, float nms_threshold)
+    static inline float fast_log2(float x)
     {
-        picked.clear();
-        const int n = faceobjects.size();
-        std::vector<float> areas(n);
-
-        for (int i = 0; i < n; i++)
+        union
         {
-            areas[i] = faceobjects[i].rect.width * faceobjects[i].rect.height;
+            float f;
+            int i;
+        } v;
+        v.f = x;
+        int* const exp_ptr = &v.i;
+        int m = *exp_ptr;
+        const int log_2 = ((m >> 23) & 255) - 128;
+        m &= ~(255 << 23);
+        m += 127 << 23;
+        *exp_ptr = m;
+        return (((-1.f / 3) * v.f + 2) * v.f - 2.f / 3 + log_2);
+    }
+
+    static inline float fast_log(const float x)
+    {
+        return 0.69314718f * fast_log2(x);
+    }
+
+    static inline float clamp_(float v, float min = 0.f, float max = std::numeric_limits<float>::infinity())
+    {
+        return std::max(std::min(v, max), min);
+    }
+
+    inline float fast_exp(const float& x)
+    {
+        union
+        {
+            uint32_t i;
+            float f;
+        } v{};
+        v.i = (1 << 23) * (1.4426950409 * x + 126.93490512f);
+        return v.f;
+    }
+
+    static inline float probiou(
+        const Object& obj1,
+        const Object& obj2,
+        const cv::Point3f& covar1,
+        const cv::Point3f& covar2)
+    {
+        float v_x1_x2 = covar1.x + covar2.x;
+        float v_y1_y2 = covar1.y + covar2.y;
+        float x1_x2 = obj1.rect.x - obj2.rect.x;
+        float y1_y2 = obj1.rect.y - obj2.rect.y;
+        float dem1 = clamp_(covar1.x * covar1.y - covar1.z * covar1.z);
+        float dem2 = clamp_(covar2.x * covar2.y - covar2.z * covar2.z);
+        float dem_num = v_x1_x2 * v_y1_y2 - (covar1.z + covar2.z) * (covar1.z + covar2.z);
+
+        float t1 = (v_x1_x2 * y1_y2 * y1_y2 + v_y1_y2 * x1_x2 * x1_x2) / (dem_num + 1e-7) * 0.25f;
+        float t2 = ((covar1.z + covar2.z) * (-x1_x2) * y1_y2) / (dem_num + 1e-7) * 0.5f;
+        float t3 = fast_log(0.25f * dem_num / (std::sqrt(dem1 * dem2) + 1e-7) + 1e-7) * 0.5f;
+
+        float bd = t1 + t2 + t3;
+        float iou = fast_exp(-clamp_(bd, 1e-7, 100.f));
+        return iou;
+    }
+
+    static inline void get_covariance_matrix(
+        const std::vector<Object>& objects,
+        std::vector<cv::Point3f>& covar_maxtirx)
+    {
+        int n = objects.size();
+        for (size_t i = 0; i < n; ++i)
+        {
+            float a = objects[i].rect.width * objects[i].rect.width * 0.0833333333f;
+            float b = objects[i].rect.height * objects[i].rect.height * 0.0833333333f;
+            float c = objects[i].angle;
+
+            float c_sin = std::sin(c);
+            float c_cos = std::cos(c);
+
+            float x = a * c_cos * c_cos + b * c_sin * c_sin;
+            float y = a * c_sin * c_sin + b * c_cos * c_cos;
+            float z = a * c_cos * c_sin - b * c_sin * c_cos;
+            covar_maxtirx.push_back(cv::Point3f(x, y, z));
         }
+    }
 
-        for (int i = 0; i < n; i++)
+    template <typename T>
+    static void nms_rotated_sorted_bboxes(
+        const std::vector<T> &objects,
+        std::vector<int> &picked,
+        float nms_threshold)
+    {
+        std::vector<cv::Point3f> covar_maxtrix;
+        get_covariance_matrix(objects, covar_maxtrix);
+
+        float nms_threshold_ = (1.f - nms_threshold) * (1.f - nms_threshold);
+        int n = objects.size();
+
+        for (size_t i = 0; i < n; ++i)
         {
-            const T &a = faceobjects[i];
-            int keep = 1;
+            float max_iou = 0.f;
+            const Object& obj1 = objects[i];
 
-            for (int j = 0; j < (int)picked.size(); j++)
+            for (size_t j = 0; j < i; ++j)
             {
-                const T &b = faceobjects[picked[j]];
-                float inter_area = obb_intersection_area(a, b);
-                float union_area = areas[i] + areas[picked[j]] - inter_area;
+                const Object& obj2 = objects[j];
 
-                if (inter_area / union_area > nms_threshold)
-                    keep = 0;
+                float iou = probiou(obj1, obj2, covar_maxtrix[i], covar_maxtrix[j]);
+                if (iou > max_iou)
+                {
+                    max_iou = iou;
+                }
             }
-
-            if (keep)
+            if (max_iou < nms_threshold_)
                 picked.push_back(i);
         }
     }
@@ -2171,7 +2253,7 @@ namespace detection
 
         // Apply OBB NMS
         std::vector<int> picked;
-        nms_sorted_obb(proposals, picked, nms_threshold);
+        nms_rotated_sorted_bboxes(proposals, picked, nms_threshold);
 
         // Calculate scaling parameters
         float scale_letterbox;
@@ -2191,27 +2273,34 @@ namespace detection
         float ratio_x = (float)src_cols / resize_cols;
         float ratio_y = (float)src_rows / resize_rows;
 
-        // Process picked objects
-        objects.resize(picked.size());
-        for (size_t i = 0; i < picked.size(); ++i)
+        int count = picked.size();
+        double pi = M_PI;
+        double pi_2 = M_PI_2;
+        objects.resize(count);
+        for (int i = 0; i < count; i++)
         {
             objects[i] = proposals[picked[i]];
 
-            // Transform coordinates back to original image space
-            for (int j = 0; j < 4; ++j)
-            {
-                float x = objects[i].obb_vertices[j].x;
-                float y = objects[i].obb_vertices[j].y;
+            float w_ = objects[i].rect.width > objects[i].rect.height ? objects[i].rect.width : objects[i].rect.height;
+            float h_ = objects[i].rect.width > objects[i].rect.height ? objects[i].rect.height : objects[i].rect.width;
+            float a_ = (float)std::fmod((objects[i].rect.width > objects[i].rect.height ? objects[i].angle : objects[i].angle + pi_2), pi);
 
-                x = (x - tmp_w) * ratio_x;
-                y = (y - tmp_h) * ratio_y;
+            float xc = (objects[i].rect.x - tmp_w) * ratio_x;
+            float yc = (objects[i].rect.y - tmp_h) * ratio_y;
+            float w = w_ * ratio_x;
+            float h = h_ * ratio_y;
 
-                x = std::max(std::min(x, (float)(src_cols - 1)), 0.f);
-                y = std::max(std::min(y, (float)(src_rows - 1)), 0.f);
+            // clip
+            xc = std::max(std::min(xc, (float)(src_cols - 1)), 0.f);
+            yc = std::max(std::min(yc, (float)(src_rows - 1)), 0.f);
+            w = std::max(std::min(w, (float)(src_cols - 1)), 0.f);
+            h = std::max(std::min(h, (float)(src_rows - 1)), 0.f);
 
-                objects[i].obb_vertices[j].x = x;
-                objects[i].obb_vertices[j].y = y;
-            }
+            objects[i].rect.x = xc;
+            objects[i].rect.y = yc;
+            objects[i].rect.width = w;
+            objects[i].rect.height = h;
+            objects[i].angle = a_;
         }
     }
 
