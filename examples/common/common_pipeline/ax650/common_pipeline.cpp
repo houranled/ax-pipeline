@@ -754,7 +754,7 @@ int user_input(pipeline_t *pipe, int pipe_cnt, pipeline_buffer_t *buf)
                 if (ret != 0)
                 {
                     ALOGE("AX_VDEC_SendStream 0x%x,data=0x%x len=%d", ret, stream.pu8Addr, stream.u32StreamPackLen);
-                    ::gLoopExit = 1;
+                    //::gLoopExit = 1;
                 }
                 tmp_.push_back(pipe[i].m_vdec_attr.n_vdec_grp);
             }

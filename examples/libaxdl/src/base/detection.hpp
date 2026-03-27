@@ -2109,66 +2109,106 @@ namespace detection
         }
     }
 
-    static void generate_proposals_yolov8_obb_native_xyxyxyxy(
+    static void generate_proposals_yolov8_obb_xyxyxyxy(
         const std::vector<GridAndStride> &grid_strides,
         const float *feat,
         float prob_threshold,
         std::vector<Object> &objects,
         int letterbox_cols,
         int letterbox_rows,
-        int cls_num = 11)  // 修改为11个类别
+        int cls_num = 11)
     {
         const int num_points = grid_strides.size();
         auto feat_ptr = feat;
 
+        /* class_num个得分 置信度 xyxyxyxy */
         for (int i = 0; i < num_points; i++) {
-            // 1. 提取8个顶点坐标
-            float x1 = feat_ptr[0];
-            float y1 = feat_ptr[1];
-            float x2 = feat_ptr[2];
-            float y2 = feat_ptr[3];
-            float x3 = feat_ptr[4];
-            float y3 = feat_ptr[5];
-            float x4 = feat_ptr[6];
-            float y4 = feat_ptr[7];
-
-            // 2. 提取目标置信度
-            float objectness = sigmoid(feat_ptr[8]);
-
-            // 3. 提取类别分数并找到最大值
+            // 1. 提取类别得分并找到最大值
             int class_index = 0;
             float class_score = -FLT_MAX;
             for (int s = 0; s < cls_num; s++) {
-                float score = feat_ptr[9 + s];  // 从第9个通道开始
+                float score = feat_ptr[s];
                 if (score > class_score) {
                     class_index = s;
                     class_score = score;
                 }
             }
 
-            // 4. 计算最终得分
+            // 2. 提取目标置信度
+            float objectness = sigmoid(feat_ptr[cls_num]);
+
+            // 3. 计算最终得分
             float final_score = objectness * sigmoid(class_score);
 
             if (final_score > prob_threshold) {
+                // 4. 提取8个顶点坐标
+                float x1 = feat_ptr[cls_num + 1];
+                float y1 = feat_ptr[cls_num + 2];
+                float x2 = feat_ptr[cls_num + 3];
+                float y2 = feat_ptr[cls_num + 4];
+                float x3 = feat_ptr[cls_num + 5];
+                float y3 = feat_ptr[cls_num + 6];
+                float x4 = feat_ptr[cls_num + 7];
+                float y4 = feat_ptr[cls_num + 8];
+
+                // 检查数据有效性
+                if (!std::isfinite(x1) || !std::isfinite(y1) ||
+                    !std::isfinite(x2) || !std::isfinite(y2) ||
+                    !std::isfinite(x3) || !std::isfinite(y3) ||
+                    !std::isfinite(x4) || !std::isfinite(y4)) {
+                    WTALOGI("Invalid coordinates at point %d", i);
+                    feat_ptr += (cls_num + 1 + 8);
+                    continue;
+                }
+
                 Object obj;
-                // 设置顶点坐标
-                obj.obb_vertices[0] = cv::Point2f(x1, y1);
-                obj.obb_vertices[1] = cv::Point2f(x2, y2);
-                obj.obb_vertices[2] = cv::Point2f(x3, y3);
-                obj.obb_vertices[3] = cv::Point2f(x4, y4);
 
-                // 添加调试信息
-                WTALOGI("obb_vertices: p1[%d,%d], p2[%d,%d], p3[%d,%d], p4[%d,%d]", x1, y1, x2, y2, x3, y3, x4, y4);
+                // 计算实际坐标（考虑网格偏移）
+                float grid_x = grid_strides[i].grid0 + 0.5f;
+                float grid_y = grid_strides[i].grid1 + 0.5f;
+                float stride = grid_strides[i].stride;
 
+                obj.obb_vertices[0].x = x1 + grid_x * stride;
+                obj.obb_vertices[0].y = y1 + grid_y * stride;
+                obj.obb_vertices[1].x = x2 + grid_x * stride;
+                obj.obb_vertices[1].y = y2 + grid_y * stride;
+                obj.obb_vertices[2].x = x3 + grid_x * stride;
+                obj.obb_vertices[2].y = y3 + grid_y * stride;
+                obj.obb_vertices[3].x = x4 + grid_x * stride;
+                obj.obb_vertices[3].y = y4 + grid_y * stride;
+
+                // 计算轴对齐边界框
+                float min_x = std::min({obj.obb_vertices[0].x, obj.obb_vertices[1].x,
+                                       obj.obb_vertices[2].x, obj.obb_vertices[3].x});
+                float min_y = std::min({obj.obb_vertices[0].y, obj.obb_vertices[1].y,
+                                       obj.obb_vertices[2].y, obj.obb_vertices[3].y});
+                float max_x = std::max({obj.obb_vertices[0].x, obj.obb_vertices[1].x,
+                                       obj.obb_vertices[2].x, obj.obb_vertices[3].x});
+                float max_y = std::max({obj.obb_vertices[0].y, obj.obb_vertices[1].y,
+                                       obj.obb_vertices[2].y, obj.obb_vertices[3].y});
+
+                obj.rect.x = min_x;
+                obj.rect.y = min_y;
+                obj.rect.width = max_x - min_x;
+                obj.rect.height = max_y - min_y;
                 obj.label = class_index;
                 obj.prob = final_score;
+
+                // 添加调试信息
+                WTALOGI("obb_vertices: p1[%.2f,%.2f], p2[%.2f,%.2f], p3[%.2f,%.2f], p4[%.2f,%.2f]",
+                       obj.obb_vertices[0].x, obj.obb_vertices[0].y,
+                       obj.obb_vertices[1].x, obj.obb_vertices[1].y,
+                       obj.obb_vertices[2].x, obj.obb_vertices[2].y,
+                       obj.obb_vertices[3].x, obj.obb_vertices[3].y);
+                WTALOGI("Score: %.4f, Class: %d", final_score, class_index);
 
                 objects.push_back(obj);
             }
 
-            feat_ptr += (8 + 1 + cls_num);  // 8个坐标 + 1个objectness + cls_num个类别
+            feat_ptr += (cls_num + 1 + 8);
         }
     }
+
 
 
     template <typename T>

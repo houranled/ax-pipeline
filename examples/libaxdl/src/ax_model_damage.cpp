@@ -35,12 +35,12 @@ int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resi
 
     // Generate OBB proposals using AXERA-style approach
     std::vector<detection::Object> proposals;
-    detection::generate_proposals_yolov8_obb_native_xyxyxyxy(grid_strides, output_ptr, PROB_THRESHOLD, proposals,
+    detection::generate_proposals_yolov8_obb_xyxyxyxy(grid_strides, output_ptr, PROB_THRESHOLD, proposals,
         get_algo_width(), get_algo_height(), num_classes);
 
     // Apply NMS and coordinate transformation
     std::vector<detection::Object> objects;
-    detection::get_out_obb_bbox(proposals, objects, NMS_THRESHOLD, get_algo_width(), get_algo_height(),
+    detection::get_out_bbox(proposals, objects, NMS_THRESHOLD, get_algo_width(), get_algo_height(),
                                 pstFrame->nHeight, pstFrame->nWidth);
 
     // Convert to axdl_results_t format
@@ -57,34 +57,12 @@ int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resi
         results->mObjects[i].prob = obj.prob;
         /* ↑ 似乎是冗余的 */
 
-        WTALOGI("Object %d: label=%d, prob=%.4f, x=%.2f, y=%.2f, w=%.2f, h=%.2f",
-            i, obj.label, obj.prob, obj.rect.x, obj.rect.y, obj.rect.width, obj.rect.height);
-
-        // 计算旋转矩形的四个顶点
-        float cos_a = std::cos(objects[i].angle);
-        float sin_a = std::sin(objects[i].angle);
-        float wx = obj.rect.width / 2 * cos_a;
-        float wy = obj.rect.width / 2 * sin_a;
-        float hx = -obj.rect.height / 2 * sin_a;
-        float hy = obj.rect.height / 2 * cos_a;
-
         // Set OBB vertices:
         results->mObjects[i].bHasBoxVertices = 1;
-        // 顶点1：左上
-        results->mObjects[i].bbox_vertices[0].x = objects[i].rect.x - wx - hx;
-        results->mObjects[i].bbox_vertices[0].y = objects[i].rect.y - wy - hy;
-
-        // 顶点2：右上
-        results->mObjects[i].bbox_vertices[1].x = objects[i].rect.x + wx - hx;
-        results->mObjects[i].bbox_vertices[1].y = objects[i].rect.y + wy - hy;
-
-        // 顶点3：右下
-        results->mObjects[i].bbox_vertices[2].x  = objects[i].rect.x + wx + hx;
-        results->mObjects[i].bbox_vertices[2].y  = objects[i].rect.y + wy + hy;
-
-        // 顶点4：左下
-        results->mObjects[i].bbox_vertices[3].x  = objects[i].rect.x - wx + hx;
-        results->mObjects[i].bbox_vertices[3].y  = objects[i].rect.y - wy + hy;
+        for (int j = 0; j < 4; j++) {
+            results->mObjects[i].bbox_vertices[j].x = obj.obb_vertices[j].x;
+            results->mObjects[i].bbox_vertices[j].y = obj.obb_vertices[j].y;
+        }
 
         // Set object name using OBB class names
         if (obj.label < (int)CLASS_NAMES.size()) {
@@ -152,7 +130,7 @@ void ax_model_damage::draw_custom(int chn, axdl_results_t *results, float fontsc
             }
 
             // 生成告警 调用camera_Controller
-            CameraController::getInstance()->early_warning_process(chn/2);
+            //CameraController::getInstance()->early_warning_process(chn/2);
         }
     }
 }
