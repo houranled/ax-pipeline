@@ -104,33 +104,34 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
     }
 }
 
-void ax_model_damage::draw_custom(int chn, axdl_results_t *results, float fontscale, int thickness)
-{
-    // Custom OSD drawing for OBB - use polygon drawing
-    for (int i = 0; i < results->nObjSize; i++) {
-        if (results->mObjects[i].bHasBoxVertices) {
-            if (results->bObjTrack) {
-                m_drawers[chn].add_polygon(results->mObjects[i].bbox_vertices, 4,
-                    COCO_COLORS_ARGB[results->mObjects[i].track_id % COCO_COLORS_ARGB.size()], thickness);
-            } else {
-                m_drawers[chn].add_polygon(results->mObjects[i].bbox_vertices, 4,
-                    COCO_COLORS_ARGB[results->mObjects[i].label % COCO_COLORS_ARGB.size()], thickness);
-            }
+//void ax_model_damage::draw_custom(int chn, axdl_results_t *results, float fontscale, int thickness)
+//{
+//    // Custom OSD drawing for OBB - use polygon drawing
+//    //for (int i = 0; i < results->nObjSize; i++) {
+//    //    if (results->mObjects[i].bHasBoxVertices) {
+//    //        if (results->bObjTrack) {
+//    //            m_drawers[chn].add_polygon(results->mObjects[i].bbox_vertices, 4,
+//    //                COCO_COLORS_ARGB[results->mObjects[i].track_id % COCO_COLORS_ARGB.size()], thickness);
+//    //        } else {
+//    //            m_drawers[chn].add_polygon(results->mObjects[i].bbox_vertices, 4,
+//    //                COCO_COLORS_ARGB[results->mObjects[i].label % COCO_COLORS_ARGB.size()], thickness);
+//    //        }
 
-            // Add label
-            if (results->bObjTrack && b_draw_obj_name) {
-                m_drawers[chn].add_text(
-                    std::string(results->mObjects[i].objname) + " " + std::to_string(results->mObjects[i].track_id),
-                    results->mObjects[i].bbox_vertices[0],
-                    {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
-            } else if (b_draw_obj_name) {
-                m_drawers[chn].add_text(results->mObjects[i].objname,
-                    results->mObjects[i].bbox_vertices[0],
-                    {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
-            }
+//    //        // Add label
+//    //        if (results->bObjTrack && b_draw_obj_name) {
+//    //            m_drawers[chn].add_text(
+//    //                std::string(results->mObjects[i].objname) + " " + std::to_string(results->mObjects[i].track_id),
+//    //                results->mObjects[i].bbox_vertices[0],
+//    //                {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
+//    //        } else if (b_draw_obj_name) {
+//    //            m_drawers[chn].add_text(results->mObjects[i].objname,
+//    //                results->mObjects[i].bbox_vertices[0],
+//    //                {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
+//    //        }
 
-            // 生成告警 调用camera_Controller
-            //CameraController::getInstance()->early_warning_process(chn/2);
-        }
-    }
-}
+//    //        // 生成告警 调用camera_Controller
+//    //        CameraController::getInstance()->early_warning_process(chn/2);
+//    //    }
+//    //}
+//    //draw_bbox(chn, results, fontscale, thickness);
+//}

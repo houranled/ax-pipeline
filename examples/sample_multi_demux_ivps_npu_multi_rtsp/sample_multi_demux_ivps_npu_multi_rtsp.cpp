@@ -138,7 +138,7 @@ void ai_inference_func(pipeline_buffer_t *buff)
         tSrcFrame.nSize = buff->n_size;
 
         axdl_inference(g_sample.osd_target_map[pipe->pipeid]->gModel, &tSrcFrame, &mResults[pipe->pipeid]);
-        // ALOGI("pipe=%d detect%d", pipe->pipeid, mResults[pipe->pipeid].nObjSize);
+        WTALOGI("pipe=%d detect%d", pipe->pipeid, mResults[pipe->pipeid].nObjSize);
         g_sample.osd_target_map[pipe->pipeid]->osd_helper.Update(&mResults[pipe->pipeid]);
     }
 }

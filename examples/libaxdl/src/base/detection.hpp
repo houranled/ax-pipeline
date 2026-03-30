@@ -2194,14 +2194,6 @@ namespace detection
                 obj.label = class_index;
                 obj.prob = final_score;
 
-                // 添加调试信息
-                WTALOGI("obb_vertices: p1[%.2f,%.2f], p2[%.2f,%.2f], p3[%.2f,%.2f], p4[%.2f,%.2f]",
-                       obj.obb_vertices[0].x, obj.obb_vertices[0].y,
-                       obj.obb_vertices[1].x, obj.obb_vertices[1].y,
-                       obj.obb_vertices[2].x, obj.obb_vertices[2].y,
-                       obj.obb_vertices[3].x, obj.obb_vertices[3].y);
-                WTALOGI("Score: %.4f, Class: %d", final_score, class_index);
-
                 objects.push_back(obj);
             }
 
