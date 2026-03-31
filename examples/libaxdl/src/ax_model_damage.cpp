@@ -40,7 +40,7 @@ int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resi
 
     // Apply NMS and coordinate transformation
     std::vector<detection::Object> objects;
-    detection::get_out_bbox(proposals, objects, NMS_THRESHOLD, get_algo_width(), get_algo_height(),
+    detection::get_out_obb_bbox(proposals, objects, NMS_THRESHOLD, get_algo_width(), get_algo_height(),
                                 pstFrame->nHeight, pstFrame->nWidth);
 
     // Convert to axdl_results_t format

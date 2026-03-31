@@ -2339,15 +2339,12 @@ namespace detection
     }
 
     // Apply NMS and coordinate transformation for OBB results
-    static void get_out_obb_bbox(std::vector<Object> &proposals, std::vector<Object> &objects, float nms_threshold,
-                                 int letterbox_rows, int letterbox_cols, int src_rows, int src_cols)
+    static void get_out_obb_bbox(std::vector<Object> &proposals, std::vector<Object> &objects, const float nms_threshold,
+        int letterbox_rows, int letterbox_cols, int src_rows, int src_cols)
     {
-        // Sort by confidence
         qsort_descent_inplace(proposals);
-
-        // Apply OBB NMS
         std::vector<int> picked;
-        nms_rotated_sorted_bboxes(proposals, picked, nms_threshold);
+        nms_sorted_bboxes(proposals, picked, nms_threshold);
 
         // Calculate scaling parameters
         float scale_letterbox;
@@ -2364,39 +2361,42 @@ namespace detection
         int tmp_h = (letterbox_rows - resize_rows) / 2;
         int tmp_w = (letterbox_cols - resize_cols) / 2;
 
-        float ratio_x = (float)src_cols / resize_cols;
-        float ratio_y = (float)src_rows / resize_rows;
+        float ratio_x = (float)src_rows / resize_rows;
+        float ratio_y = (float)src_cols / resize_cols;
 
         int count = picked.size();
-        double pi = M_PI;
-        double pi_2 = M_PI_2;
+
         objects.resize(count);
         for (int i = 0; i < count; i++)
         {
             objects[i] = proposals[picked[i]];
 
-            float w_ = objects[i].rect.width > objects[i].rect.height ? objects[i].rect.width : objects[i].rect.height;
-            float h_ = objects[i].rect.width > objects[i].rect.height ? objects[i].rect.height : objects[i].rect.width;
-            float a_ = (float)std::fmod((objects[i].rect.width > objects[i].rect.height ? objects[i].angle : objects[i].angle + pi_2), pi);
+            // 转换关键点坐标
+            for (int l = 0; l < 5; l++)
+            {
+                auto lx = objects[i].landmark[l].x;
+                auto ly = objects[i].landmark[l].y;
+                objects[i].landmark[l] = cv::Point2f((lx - tmp_w) * ratio_x, (ly - tmp_h) * ratio_y);
+            }
 
-            float xc = (objects[i].rect.x - tmp_w) * ratio_x;
-            float yc = (objects[i].rect.y - tmp_h) * ratio_y;
-            float w = w_ * ratio_x;
-            float h = h_ * ratio_y;
+            // 添加OBB顶点坐标转换
+            for (size_t j = 0; j < 4; j++)
+            {
+                // 转换OBB顶点坐标到原始图像空间
+                float obb_x = (objects[i].obb_vertices[j].x - tmp_w) * ratio_x;
+                float obb_y = (objects[i].obb_vertices[j].y - tmp_h) * ratio_y;
 
-            // clip
-            xc = std::max(std::min(xc, (float)(src_cols - 1)), 0.f);
-            yc = std::max(std::min(yc, (float)(src_rows - 1)), 0.f);
-            w = std::max(std::min(w, (float)(src_cols - 1)), 0.f);
-            h = std::max(std::min(h, (float)(src_rows - 1)), 0.f);
+                // 裁剪到图像边界
+                obb_x = std::max(std::min(obb_x, (float)(src_cols - 1)), 0.f);
+                obb_y = std::max(std::min(obb_y, (float)(src_rows - 1)), 0.f);
 
-            objects[i].rect.x = xc;
-            objects[i].rect.y = yc;
-            objects[i].rect.width = w;
-            objects[i].rect.height = h;
-            objects[i].angle = a_;
+                objects[i].obb_vertices[j].x = obb_x;
+                objects[i].obb_vertices[j].y = obb_y;
+            }
+
         }
     }
+
 
     // Draw OBB objects on image
     static void draw_objects_obb(cv::Mat &mat, const std::vector<Object> &objects, const char *const class_names[],
