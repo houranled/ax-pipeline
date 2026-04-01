@@ -60,6 +60,8 @@ private:
         float amp_max_negative = 0;
         axdl_point_t max_positive_point_pos;
         axdl_point_t max_negative_point_pos;
+
+        std::chrono::system_clock::time_point last_sample_time; // 最后一次采样时间
     };
 
     static std::map<std::string, ChannelAmplitudeData> channel_amplitude_map;  // 通道name到振幅数据的映射

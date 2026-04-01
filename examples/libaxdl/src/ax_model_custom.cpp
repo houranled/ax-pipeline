@@ -158,7 +158,18 @@ void ax_model_custom::process_texts(axdl_results_t *results, int &chn, int d, fl
     if (cad.amp_max_negative)
         m_drawers[chn].add_point(&cad.max_negative_point_pos, {0, 127, 0, 255}, 6);
 
-    cad.amplitude_datas.push_back(distance_now); // 将距离数据存储到数组中
+    auto now = std::chrono::system_clock::now();
+    auto now_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(now);
+
+    // 检查是否需要采样（100ms = 10Hz）
+    if (cad.last_sample_time.time_since_epoch().count() == 0) {
+        cad.last_sample_time = now;
+    }
+    auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - cad.last_sample_time).count(); // 计算时间差
+    if (elapsed_ms >= 90) { // 10Hz采样
+        cad.amplitude_datas.push_back(distance_now); // 将距离数据存储到数组中
+        cad.last_sample_time = now; // 更新最后采样时间
+    }
 
     m_drawers[chn].add_text(std::string(obj.objname) + ":" + std::to_string(distance_now),
         {obj.bbox.x, obj.bbox.y},
