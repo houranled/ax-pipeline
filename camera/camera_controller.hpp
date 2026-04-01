@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 #include "../alarm/alarm.hpp"
 #include <curl/curl.h>
+#include <functional>
 
 #include "../examples/common/common_pipeline/common_pipeline.h"
 
@@ -38,6 +39,12 @@ public:
     void early_warning_process(int camera_id); // 对摄像机id为camera_id触发预警
     void setCameraPipe(int camera_id, pipeline_t *pipe);
     Camera* getCamera(int camera_id); // 根据id获取相机对象
+    void forEachCamera(std::function<void(Camera*)> func)
+    {
+        for (const auto& pair : cameras) {
+            func(pair.second);
+        }
+    }
 
 private:
     // 将构造函数设为私有
@@ -83,6 +90,8 @@ public:
         int brightness;
     };
 
+    std::string ip;  // 相机ip地址
+
     Camera();
     ~Camera();
     int start(); // 启动相机
@@ -103,12 +112,13 @@ public:
     bool start_take_a_picture(int kind); // 拍照
     std::string getName(); // 获取相机名称
     std::string get_pic_path() const; // 获取当前录制图片路径
+    std::string get_camera_Rtsp_url(); // 获取相机rtsp url
 
 private:
     int id;
     std::string name; // 相机名称
-    std::string ip;  // 相机ip地址
-    std::string ptz_ip; //云台ip地址
+    std::string camera_rtsp_url; // 相机rtsp地址
+    std::string ptz_ip; // 云台ip地址
     int web_rotation_x=0;  // 当前水平角度
     int rotation_x = 0;
 

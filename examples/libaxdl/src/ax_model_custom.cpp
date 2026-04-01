@@ -10,11 +10,6 @@
 
 
 // 初始化静态成员
-std::mutex ax_model_custom::amplitude_mutex;
-std::thread ax_model_custom::export_thread;
-std::atomic<bool> ax_model_custom::export_thread_running(false);
-std::map<std::string, ax_model_custom::ChannelAmplitudeData> ax_model_custom::channel_amplitude_map;
-
 std::string ax_model_custom::car_no = "";
 
 int ax_model_custom::preprocess(axdl_image_t *srcFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results)
@@ -90,7 +85,7 @@ void ax_model_custom::draw_custom(int chn, axdl_results_t *results, float fontsc
     auto camera =  CameraController::getInstance()->getCamera(chn/2); // 获取相机
     auto name = camera->getName();
 
-    auto& cad = channel_amplitude_map[name];
+    auto& cad = channel_amplitude_data;
 
     axdl_point_t pos = {cad.origin_x, cad.occlusion_pixel_height/m_drawers[chn].get_height()};
     m_drawers[chn].add_point(&pos, {255, 0, 0, 255}, 6);  //添加初始位置坐标
@@ -130,7 +125,7 @@ void ax_model_custom::process_texts(axdl_results_t *results, int &chn, int d, fl
     auto &obj = results->mObjects[d];
 
     auto name = CameraController::getInstance()->getCamera(chn/2)->getName();
-    auto& cad = channel_amplitude_map[name];  //cad: channel amplitude data
+    auto& cad = channel_amplitude_data;  //cad: channel amplitude data
 
     //tan(画面上沿视线与摄像头主视线的垂直夹角) 即 镜头中间水平线到画面上沿的距离长度÷焦距 是个比例值
     auto tanAngle = (m_drawers[chn].get_height()/2.0f - cad.occlusion_pixel_height) /  (cad.f/cad.size_per_pixel);
@@ -200,20 +195,19 @@ void ax_model_custom::export_amplitude()
         std::ostringstream time_stream;
         time_stream << std::put_time(&tm_now, "%Y-%m-%d %H:%M:%S");
 
-        std::lock_guard<std::mutex> lock(amplitude_mutex);
         // 收集数据并输出JSON
         // 从channel_amplitude_map获取数据
-        for (auto& [name, data] : channel_amplitude_map) {
-            if (!data.amplitude_datas.empty()) {
-                std::vector<std::string> formatted_amplitudes;
-                for (float amplitude : data.amplitude_datas) {
-                    std::ostringstream oss;
-                    oss << std::fixed << std::setprecision(5) << amplitude;
-                    formatted_amplitudes.push_back(oss.str());
-                }
-                output_json[name] = formatted_amplitudes;
-                data.amplitude_datas.clear();
+
+        auto& datas = channel_amplitude_data.amplitude_datas;
+        if (!channel_amplitude_data.amplitude_datas.empty()) {
+            std::vector<std::string> formatted_amplitudes;
+            for (float amplitude : datas) {
+                std::ostringstream oss;
+                oss << std::fixed << std::setprecision(5) << amplitude;
+                formatted_amplitudes.push_back(oss.str());
             }
+            output_json[channel_amplitude_data.name] = formatted_amplitudes;
+            datas.clear();
         }
 
         output_json["time"] = time_stream.str(); // 添加时间戳
@@ -252,16 +246,21 @@ void ax_model_custom::load_config()
                 if (one_chl_config["type"] != "Webcam")
                     continue;
 
-                std::string name = one_chl_config.value("name", "");
-                std::string Y = one_chl_config.value("calibration", "");
-                channel_amplitude_map[name].Y = std::stof(Y); // 将字符串转换为浮点数
+                channel_amplitude_data.name = one_chl_config.value("name", "");
 
-                auto point = one_chl_config["point"];
-                if (!point.empty()) {
-                    channel_amplitude_map[name].origin_x_no_uniform = point.value("x", 0.0f);
-                    //channel_amplitude_map[name].occlusion_pixel_height = point.value("y", 0.0f);
+                if (one_chl_config.contains("calibration")) {
+                    std::string Y = one_chl_config.value("calibration", "");
+                    channel_amplitude_data.Y = std::stof(Y); // 将字符串转换为浮点数
                 }
-                channel_amplitude_map[name].X = std::stof(one_chl_config.value("width", "")) / 2;
+
+                if (one_chl_config.contains("point")) {
+                    auto point = one_chl_config["point"];
+                    channel_amplitude_data.origin_x_no_uniform = point.value("x", 0.0f);
+                    channel_amplitude_data.occlusion_pixel_height = point.value("y", 0.0f);
+                }
+                if (one_chl_config.contains("width")) {
+                    channel_amplitude_data.X = one_chl_config.value("width", 0.0f) / 2;
+                }
             }
         }
 

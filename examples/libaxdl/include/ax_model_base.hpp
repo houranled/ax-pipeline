@@ -118,12 +118,14 @@ protected:
     }
 
     //
-    void draw_bbox(int chn, axdl_results_t *results, float fontscale, int thickness);    
+    void draw_bbox(int chn, axdl_results_t *results, float fontscale, int thickness);
     void draw_fps(int chn, axdl_results_t *results, float fontscale, int thickness);
     virtual void draw_custom(int chn, axdl_results_t *results, float fontscale, int thickness)
     {
         draw_bbox(chn, results, fontscale, thickness);
     }
+
+    std::string channel_name; // channel name
 
 public:
     void draw_init(int chn,int chn_width,int chn_height,int max_num_rgn){ m_drawers[chn].init(max_num_rgn, chn_width, chn_height);}
@@ -214,6 +216,9 @@ public:
         if(b_draw_fps)
             draw_fps(chn, results, fontscale, thickness);
     }
+
+    void set_channel_name(std::string name) { channel_name = name; }
+    const char* get_channel_name() {return channel_name.c_str(); }
 };
 
 class ax_model_single_base_t : public ax_model_base

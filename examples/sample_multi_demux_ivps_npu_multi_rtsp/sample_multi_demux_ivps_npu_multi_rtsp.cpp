@@ -229,6 +229,9 @@ int main(int argc, char *argv[])
     {
         return -1;
     }
+
+    bool use_camera_input = true; // 默认输入流来自配置文件
+
     optind = 0;
     gLoopExit = 0;
     g_sample.Init();
@@ -246,9 +249,6 @@ int main(int argc, char *argv[])
 
     ALOGN("sample begin\n\n");
 
-    // 从JSON文件读取RTSP URL列表
-    get_rtsp_urls_from_json(config_file, rtsp_urls);
-
     while ((ch = getopt(argc, argv, "p:f:r:h")) != -1)
     {
         switch (ch)
@@ -257,6 +257,7 @@ int main(int argc, char *argv[])
         {
             strcpy(rtsp_url, optarg);
             ALOGI("rtsp url : %s", rtsp_url);
+            use_camera_input = false;
             std::string tmp(rtsp_url);
             if (rtsp_urls.size() >= rtsp_max_count)
             {
@@ -293,6 +294,14 @@ int main(int argc, char *argv[])
     {
         PrintHelp(argv[0]);
         exit(0);
+    }
+
+    if (use_camera_input) { // 从配置摄像头实例中获取rtsp地址
+        CameraController::getInstance()->forEachCamera([&rtsp_urls](Camera* camera) {
+            // 处理每个摄像机
+            std::string rtspUrl = camera->get_camera_Rtsp_url();
+            rtsp_urls.push_back(rtspUrl);
+        });
     }
 
     if (rtsp_urls.size() == 0)
@@ -355,7 +364,7 @@ int main(int argc, char *argv[])
     for (size_t i = 0; i < rtsp_urls.size(); i++)
     {
 
-        s32Ret = axdl_parse_param_init(config_file, &g_sample.gModels[i].gModel);
+        AX_S32 s32Ret = axdl_parse_param_init(config_file, &g_sample.gModels[i].gModel, "123test");
         if (s32Ret != 0)
         {
             ALOGE("sample_parse_param_det failed,run joint skip");

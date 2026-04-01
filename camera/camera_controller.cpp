@@ -541,7 +541,9 @@ Camera *CameraController::getCamera(int camera_id)
 
 Camera::Camera()
 {
-    WTALOGI("相机被构建...");
+    WTALOGI("相机构建中...");
+    camera_rtsp_url = "rtsp://admin@" + ip + "/channel=1&stream=0.sdp?";
+
     curl_handle = curl_easy_init();
     // 设置请求基本通用选项
     curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 5L);  // 5秒超时
@@ -672,6 +674,11 @@ std::string Camera::getName()
 std::string Camera::get_pic_path() const
 {
     return this->m_pipeline->pic_filename; // 返回图片路径
+}
+
+std::string Camera::get_camera_Rtsp_url()
+{
+    return camera_rtsp_url;
 }
 
 int Camera::patrol_with_calibration_loop(bool is_calibrate) //return 0表示正常 非0表示异常
