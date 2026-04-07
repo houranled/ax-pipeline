@@ -39,6 +39,7 @@ public:
     void early_warning_process(int camera_id); // 对摄像机id为camera_id触发预警
     void setCameraPipe(int camera_id, pipeline_t *pipe);
     Camera* getCamera(int camera_id); // 根据id获取相机对象
+    std::vector<Camera*> getAllCameras(); // 获取所有摄像机实例
     void forEachCamera(std::function<void(Camera*)> func)
     {
         for (const auto& pair : cameras) {
@@ -112,7 +113,8 @@ public:
     bool start_take_a_picture(int kind); // 拍照
     std::string getName(); // 获取相机名称
     std::string get_pic_path() const; // 获取当前录制图片路径
-    std::string get_camera_Rtsp_url(); // 获取相机rtsp url
+    std::string get_camera_rtsp_url(); // 获取相机rtsp url
+    void set_camera_rtsp_url(const std::string& url); // 设置相机rtsp url
 
 private:
     int id;

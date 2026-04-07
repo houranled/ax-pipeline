@@ -14,9 +14,6 @@ public:
 
     ax_model_custom()
     {
-        // 加载配置
-        load_config();
-
         if (!export_thread_running.exchange(true)) {
             export_thread = std::thread([this]() { this->export_amplitude(); });
         }
@@ -42,11 +39,11 @@ protected:
     void process_texts(axdl_results_t *results, int &chn, int d, float fontscale) override;
     void export_amplitude();
     void load_config();
+    virtual void set_channel_name_init(std::string name) override;
 
 private:
     // 通道相关数据
     struct ChannelAmplitudeData {
-        std::string name; // 通道名称
         float origin_x_no_uniform = 167; //原始x像素坐标未归一化 单位像素
         float origin_x=0.133f; //原始x像素坐标归一化形式 范围为[0,1]
         float X = 2.3f;    //扇叶左半边真实长度 单位m

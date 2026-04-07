@@ -180,8 +180,6 @@ void ax_model_custom::process_texts(axdl_results_t *results, int &chn, int d, fl
 
 void ax_model_custom::export_amplitude()
 {
-    nlohmann::json output_json;
-
     while (export_thread_running) {
         std::this_thread::sleep_for(std::chrono::seconds(1)); // 每秒输出一次
 
@@ -199,6 +197,7 @@ void ax_model_custom::export_amplitude()
         // 从channel_amplitude_map获取数据
 
         auto& datas = channel_amplitude_data.amplitude_datas;
+        nlohmann::json output_json; // 创建一个空的JSON对象
         if (!channel_amplitude_data.amplitude_datas.empty()) {
             std::vector<std::string> formatted_amplitudes;
             for (float amplitude : datas) {
@@ -206,11 +205,10 @@ void ax_model_custom::export_amplitude()
                 oss << std::fixed << std::setprecision(5) << amplitude;
                 formatted_amplitudes.push_back(oss.str());
             }
-            output_json[channel_amplitude_data.name] = formatted_amplitudes;
+            output_json[channel_name] = formatted_amplitudes;
+            output_json["time"] = time_stream.str(); // 添加时间戳
             datas.clear();
         }
-
-        output_json["time"] = time_stream.str(); // 添加时间戳
 
         if (!output_json.empty()) {
             std::cout << output_json.dump() << std::endl;
@@ -246,7 +244,9 @@ void ax_model_custom::load_config()
                 if (one_chl_config["type"] != "Webcam")
                     continue;
 
-                channel_amplitude_data.name = one_chl_config.value("name", "");
+                auto chal_name = one_chl_config.value("name", "");
+                if (chal_name != channel_name) //只读取属于自身通道的配置
+                    continue;
 
                 if (one_chl_config.contains("calibration")) {
                     std::string Y = one_chl_config.value("calibration", "");
@@ -267,4 +267,10 @@ void ax_model_custom::load_config()
     } catch (const std::exception& e) {
         WTALOGI("Error loading config: %s", e.what());
     }
+}
+
+void ax_model_custom::set_channel_name_init(std::string name)
+{
+    ax_model_base::set_channel_name_init(name);
+    load_config(); // 加载配置
 }

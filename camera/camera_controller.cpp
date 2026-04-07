@@ -432,6 +432,8 @@ int CameraController::load_config_from_file(const std::string& config_file_path)
 
                 if (camera_config.contains("ip")) {
                     camera->ip = camera_config["ip"];
+                    std::string camera_rtsp_url = "rtsp://admin@" + camera->ip + "/channel=1&stream=0.sdp?";
+                    camera->set_camera_rtsp_url(camera_rtsp_url);
                 }
 
                 // 设置 PTZ IP
@@ -537,12 +539,20 @@ Camera *CameraController::getCamera(int camera_id)
     return nullptr;
 }
 
+std::vector<Camera*> CameraController::getAllCameras()
+{
+    std::vector<Camera*> camera_list;
+    for (const auto& pair : cameras) {
+        camera_list.push_back(pair.second);
+    }
+    return camera_list;
+}
+
 /* ================================== */
 
 Camera::Camera()
 {
     WTALOGI("相机构建中...");
-    camera_rtsp_url = "rtsp://admin@" + ip + "/channel=1&stream=0.sdp?";
 
     curl_handle = curl_easy_init();
     // 设置请求基本通用选项
@@ -676,9 +686,14 @@ std::string Camera::get_pic_path() const
     return this->m_pipeline->pic_filename; // 返回图片路径
 }
 
-std::string Camera::get_camera_Rtsp_url()
+std::string Camera::get_camera_rtsp_url()
 {
     return camera_rtsp_url;
+}
+
+void Camera::set_camera_rtsp_url(const std::string& url)
+{
+    camera_rtsp_url = url;
 }
 
 int Camera::patrol_with_calibration_loop(bool is_calibrate) //return 0表示正常 非0表示异常

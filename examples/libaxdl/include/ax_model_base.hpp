@@ -217,7 +217,9 @@ public:
             draw_fps(chn, results, fontscale, thickness);
     }
 
-    void set_channel_name(std::string name) { channel_name = name; }
+    virtual void set_channel_name_init(std::string name) {
+        channel_name = name;
+    }
     const char* get_channel_name() {return channel_name.c_str(); }
 };
 
