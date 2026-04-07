@@ -230,7 +230,6 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    bool use_camera_input = true; // 默认输入流来自配置文件
 
     optind = 0;
     gLoopExit = 0;
@@ -240,7 +239,7 @@ int main(int argc, char *argv[])
     AX_S32 s32Ret = 0;
     COMMON_SYS_ARGS_T tCommonArgs = {0};
     char rtsp_url[512];
-    std::vector<std::string> rtsp_urls;
+
     std::vector<std::vector<pipeline_t>> vpipelines;
 
     signal(SIGPIPE, SIG_IGN);
@@ -249,6 +248,8 @@ int main(int argc, char *argv[])
 
     ALOGN("sample begin\n\n");
 
+    bool first_f  = true;
+    int debug_camera_id = 1;
     while ((ch = getopt(argc, argv, "p:f:r:h")) != -1)
     {
         switch (ch)
@@ -257,16 +258,15 @@ int main(int argc, char *argv[])
         {
             strcpy(rtsp_url, optarg);
             ALOGI("rtsp url : %s", rtsp_url);
-            use_camera_input = false;
             std::string tmp(rtsp_url);
-            if (rtsp_urls.size() >= rtsp_max_count)
-            {
-                ALOGE("support only %d rtsp inputs", rtsp_max_count);
+
+            if (first_f) {
+                CameraController::getInstance()->remove_all_cameras();
+                first_f = false;
             }
-            else
-            {
-                rtsp_urls.push_back(tmp);
-            }
+
+            CameraController::getInstance()->addCamera(debug_camera_id, std::to_string(debug_camera_id),tmp); //添加相机
+            debug_camera_id++;
         }
         break;
         case 'p':
@@ -288,6 +288,11 @@ int main(int argc, char *argv[])
             isExit = 1;
             break;
         }
+    }
+
+    if (CameraController::getInstance()->getAllCameras().size() >= rtsp_max_count)
+    {
+        ALOGE("support only %d rtsp inputs", rtsp_max_count);
     }
 
     if (isExit)
@@ -357,6 +362,12 @@ int main(int argc, char *argv[])
     int i = 0;
     for (auto const &camera : CameraController::getInstance()->getAllCameras())
     {
+        if (camera->getName() == "tc") {
+            strcpy(config_file, "/wt_tech/app/ax-pipeline/config/wt_rtsp_tc.json"); // 扇叶尖专用模型
+        } else {
+            strcpy(config_file, "/wt_tech/app/ax-pipeline/config/wt_rtsp.json"); // 默认json配置文件
+        }
+
         AX_S32 s32Ret = axdl_parse_param_init(config_file, &g_sample.gModels[i].gModel, camera->getName().c_str());
         if (s32Ret != 0)
         {
@@ -457,15 +468,14 @@ int main(int argc, char *argv[])
             pipe2.output_func = h265_save_func;
             */
 
-            CameraController::getInstance()->setCameraPipe(pipe0.pipeid/2, &pipe0);
+            CameraController::getInstance()->setCameraPipe(camera->get_id(), &pipe0);
         }
         i++;
     }
 
     CameraController::getInstance()->start(); // 启动摄像头控制器
 
-    i = 0;
-    for (auto const &camera : CameraController::getInstance()->getAllCameras())
+    for (size_t i = 0; i < vpipelines.size(); i++)
     {
         auto &pipelines = vpipelines[i];
         for (size_t j = 0; j < pipelines.size(); j++) //次数j共两次: j = 0和1
@@ -489,11 +499,11 @@ int main(int argc, char *argv[])
             // g_sample.osd_target_map[pipelines[1].pipeid] = g_sample.gModels[i].pipes_need_osd[0]->pipeid;
             g_sample.osd_target_map[pipelines[1].pipeid] = &g_sample.gModels[i];
         }
-        i++;
     }
 
     {
         std::vector<VideoDemux *> video_demuxes;
+        i = 0;
         for (auto const &camera : CameraController::getInstance()->getAllCameras())
         {
             auto &pipelines = vpipelines[i];
@@ -502,6 +512,7 @@ int main(int argc, char *argv[])
             {
                 video_demuxes.push_back(demux);
             }
+            i++;
         }
 
         while (!gLoopExit)
@@ -518,20 +529,17 @@ int main(int argc, char *argv[])
         gLoopExit = 1;
         sleep(1);
         pipeline_buffer_t end_buf = {0};
-        i = 0;
-        for (auto const &camera : CameraController::getInstance()->getAllCameras())
+        for (size_t i = 0; i < vpipelines.size(); i++)
         {
             auto &pipelines = vpipelines[i];
             user_input(pipelines.data(), 1, &end_buf);
-            i++;
         }
     }
 
     // 销毁pipeline
     {
         gLoopExit = 1;
-        i = 0;
-        for (auto const &camera : CameraController::getInstance()->getAllCameras())
+        for (size_t i = 0; i < vpipelines.size(); i++)
         {
             if (g_sample.gModels[i].pipes_need_osd.size() && g_sample.gModels[i].bRunJoint)
             {
@@ -543,17 +551,15 @@ int main(int argc, char *argv[])
                 //     ALOGE(" osd_tid exit failed,s32Ret:0x%x\n", s32Ret);
                 // }
             }
-            i ++;
         }
 
-        for (auto const &camera : CameraController::getInstance()->getAllCameras())
+        for (size_t i = 0; i < vpipelines.size(); i++)
         {
             auto &pipelines = vpipelines[i];
             for (size_t j = 0; j < pipelines.size(); j++)
             {
                 destory_pipeline(&pipelines[j]);
             }
-            i++;
         }
     }
 
@@ -564,11 +570,9 @@ EXIT_5:
 EXIT_4:
 
 EXIT_3:
-    i = 0;
-    for (auto const &camera : CameraController::getInstance()->getAllCameras())
+	for (size_t i = 0; i < vpipelines.size(); i++)
     {
         axdl_deinit(&g_sample.gModels[i].gModel);
-        i ++;
     }
 
 EXIT_2:

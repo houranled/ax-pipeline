@@ -47,6 +47,9 @@ public:
         }
     }
 
+    void addCamera(int id, std::string channel_name, std::string rtsp_url); // 添加相机
+    void remove_all_cameras(); // 移除所有相机对象
+
 private:
     // 将构造函数设为私有
     CameraController();

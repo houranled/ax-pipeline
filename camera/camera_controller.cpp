@@ -10,6 +10,15 @@
 
 std::string Camera::capture_path ="/wt_tech/conf/img/"; // 图像保存路径初始化
 
+void CameraController::addCamera(int id, std::string channel_name, std::string rtsp_url)
+{
+    auto camera = new Camera; // 添加一个默认相机
+    camera->id = id;
+    camera->name = channel_name;
+    camera->set_camera_rtsp_url(rtsp_url);
+    cameras[id] = camera; // 添加到相机列表
+}
+
 CameraController::CameraController()
 {
     WTALOGI("创建摄像头控制器实例.");
@@ -251,7 +260,8 @@ int CameraController::receive_input_loop() {
             std::thread patrol_thread([this, currentReqId, currentCameraId]() { // 值捕获方式
                 // 如果指定了有效的摄像机ID，则只巡检该摄像机；否则巡检所有摄像机
                 if (currentCameraId > 0 && cameras.find(currentCameraId) != cameras.end()) {
-                    Camera* camera = cameras[currentCameraId];
+
+                    Camera* camera = getCamera(currentCameraId);
                     camera->patrol_with_calibration_loop(false);
                     auto warnstr = alarm_manager.output_alarms(currentCameraId); //
 
@@ -383,7 +393,7 @@ int CameraController::calibrate(int camera_id) //return 0正常  非0异常
     int res = 0;
     // 如果指定了有效的摄像机ID，则只标定该摄像机；否则标定所有摄像机
     if (camera_id > 0 && cameras.find(camera_id) != cameras.end()) {
-        Camera* camera = cameras[camera_id];
+        Camera* camera = getCamera(camera_id);
         res =  camera->patrol_with_calibration_loop(true);
     } else {
         // 遍历所有摄像机，设置标定模式并启动标定
@@ -473,6 +483,14 @@ int CameraController::load_config_from_file(const std::string& config_file_path)
     }
 }
 
+void CameraController::remove_all_cameras()
+{
+    for (auto& camera : cameras) {
+        delete camera.second;
+    }
+    cameras.clear();
+}
+
 int CameraController::start()
 {
     WTALOGI("启动相机控制器...");
@@ -517,14 +535,14 @@ int CameraController::stop()
 
 void CameraController::early_warning_process(int camera_id)
 {
-    auto &camera = this->cameras[camera_id];
+    auto camera = getCamera(camera_id);
     alarm_manager.generateAlarm(AlarmType::LINE_CROSSING, "", 1, camera);
 
 }
 
 void CameraController::setCameraPipe(int camera_id, pipeline_t *pipe)
 {
-    auto &camera = cameras[camera_id];
+    auto camera = getCamera(camera_id);
     if (camera != nullptr) {
         camera->setPipe(pipe);
     }
