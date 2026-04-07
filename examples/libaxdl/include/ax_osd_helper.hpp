@@ -198,7 +198,7 @@ private:
                 {
                     if (true)
                     {
-                        axdl_native_osd_draw_results(gModels, osd_pipe->pipeid, &mResults, 0.6, 2);
+                        axdl_native_osd_draw_results(gModels, osd_pipe->pipeid, &mResults, 0.6, 4);
 
                         AX_IVPS_RGN_DISP_GROUP_T *rgn_disp_grp = (AX_IVPS_RGN_DISP_GROUP_T *)axdl_native_osd_get_handle(gModels, osd_pipe->pipeid);
                         if (rgn_disp_grp)

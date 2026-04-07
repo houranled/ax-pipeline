@@ -260,7 +260,9 @@ void ax_model_custom::load_config()
                 if (one_chl_config.contains("point")) {
                     auto point = one_chl_config["point"];
                     channel_amplitude_data.origin_x_no_uniform = point.value("x", 0.0f);
-                    channel_amplitude_data.occlusion_pixel_height = point.value("y", 0.0f);
+
+                    // tc通道的occlusion_pixel_height设置为390; 其它通道的设置为190
+                    //channel_amplitude_data.occlusion_pixel_height = point.value("y", 0.0f); // 这个不能通过标定来生成
                 }
                 if (one_chl_config.contains("width")) {
                     channel_amplitude_data.X = one_chl_config.value("width", 0.0f) / 2;
@@ -273,8 +275,13 @@ void ax_model_custom::load_config()
     }
 }
 
-void ax_model_custom::set_channel_name_init(std::string name)
+void ax_model_custom::set_channel_name_init(const std::string name)
 {
     ax_model_base::set_channel_name_init(name);
     load_config(); // 加载配置
+    if (channel_name == "tc") {
+        channel_amplitude_data.occlusion_pixel_height = 390.0f;
+    } else {
+        channel_amplitude_data.occlusion_pixel_height = 190.0f;
+    }
 }
