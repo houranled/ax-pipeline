@@ -87,7 +87,7 @@ void ax_model_custom::draw_custom(int chn, axdl_results_t *results, float fontsc
 
     auto& cad = channel_amplitude_data;
 
-    axdl_point_t pos = {cad.origin_x, cad.occlusion_pixel_height/m_drawers[chn].get_height()};
+    axdl_point_t pos = {cad.origin_x_no_uniform/m_drawers[chn].get_width(), cad.occlusion_pixel_height/m_drawers[chn].get_height()};
     m_drawers[chn].add_point(&pos, {255, 0, 0, 255}, 6);  //添加初始位置坐标
 
     //视频左上角绘制车牌号水印 carNo 与时间戳
