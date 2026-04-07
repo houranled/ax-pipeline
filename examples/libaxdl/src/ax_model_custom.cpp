@@ -75,6 +75,7 @@ void ax_model_custom::draw_custom(cv::Mat &image, axdl_results_t *results, float
 
 void ax_model_custom::draw_custom(int chn, axdl_results_t *results, float fontscale, int thickness)
 {
+
     /*
      * 用户可以在这里，对后处理结果进行绘制。此处使用的是原生的api进行绘制，效率会比opencv快，但是具有一定的限制性
      * 注意：
@@ -82,8 +83,7 @@ void ax_model_custom::draw_custom(int chn, axdl_results_t *results, float fontsc
      * 2、详情可以参考 examples/libaxdl/include/ax_osd_drawer.hpp 定义的结构体
      */
 
-    auto camera =  CameraController::getInstance()->getCamera(chn/2); // 获取相机
-    auto name = camera->getName();
+    //auto camera =  CameraController::getInstance()->getCamera(chn/2); // 获取相机
 
     auto& cad = channel_amplitude_data;
 
@@ -107,6 +107,10 @@ void ax_model_custom::draw_custom(int chn, axdl_results_t *results, float fontsc
     // 在车牌号下方显示时间戳
     m_drawers[chn].add_text(time_stream.str(), {0, 0.05}, {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
 
+    // 绘制遮罩
+    axdl_bbox_t mask = {0, 0, 1, cad.occlusion_pixel_height/m_drawers[chn].get_height()};
+    m_drawers[chn].add_rect(&mask, {0, 0, 0, 255}, 1);
+
     draw_bbox(chn, results, fontscale, thickness);
 }
 
@@ -124,7 +128,6 @@ void ax_model_custom::process_texts(axdl_results_t *results, int &chn, int d, fl
     auto image_width = m_drawers[chn].get_width();   //用来反归一化，即像平面的像素宽度， 单位为像素
     auto &obj = results->mObjects[d];
 
-    auto name = CameraController::getInstance()->getCamera(chn/2)->getName();
     auto& cad = channel_amplitude_data;  //cad: channel amplitude data
 
     //tan(画面上沿视线与摄像头主视线的垂直夹角) 即 镜头中间水平线到画面上沿的距离长度÷焦距 是个比例值
@@ -166,16 +169,17 @@ void ax_model_custom::process_texts(axdl_results_t *results, int &chn, int d, fl
         cad.last_sample_time = now; // 更新最后采样时间
     }
 
+    float actual_fontscale = 1;
     m_drawers[chn].add_text(std::string(obj.objname) + ":" + std::to_string(distance_now),
         {obj.bbox.x, obj.bbox.y},
         {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
 
     m_drawers[chn].add_text(std::string("positive max") + ":" + std::to_string(cad.amp_max_positive),
         {0.3, 0},
-        {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
+        {UCHAR_MAX, 0, 0, 0}, actual_fontscale, 2);
     m_drawers[chn].add_text(std::string("negative max") + ":" + std::to_string(cad.amp_max_negative),
         {0.5, 0},
-        {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
+        {UCHAR_MAX, 0, 0, 0}, actual_fontscale, 2);
 }
 
 void ax_model_custom::export_amplitude()

@@ -61,7 +61,7 @@ int CameraController::receive_input_loop() {
             // 解析JSON字符串(处理JSON命令)
             json_request = nlohmann::json::parse(json_str);
         } catch (const nlohmann::json::parse_error& e) {
-            ALOGE("%s json parse error%s",json_str.c_str(),e.what());
+            WTALOGI("%s json parse error%s",json_str.c_str(),e.what());
             continue;
         }
 

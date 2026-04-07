@@ -68,7 +68,6 @@ int axdl_parse_param_init(char *json_file_path, void **pModels, const char* chan
     }
 
     model->set_channel_name_init(channel_name);
-    WTALOGI("test show channel_name=%s", model->get_channel_name());
 
     ((ax_model_handle_t *)(*pModels))->model.reset(model);
     int ret = ((ax_model_handle_t *)(*pModels))->model->init(&jsondata);

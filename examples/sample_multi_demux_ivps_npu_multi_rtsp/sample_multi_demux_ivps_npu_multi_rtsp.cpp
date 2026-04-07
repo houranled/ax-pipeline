@@ -258,14 +258,18 @@ int main(int argc, char *argv[])
         {
             strcpy(rtsp_url, optarg);
             ALOGI("rtsp url : %s", rtsp_url);
-            std::string tmp(rtsp_url);
+            std::string tmp_url(rtsp_url);
 
+            std::string channel_name; // 通道名称
             if (first_f) {
                 CameraController::getInstance()->remove_all_cameras();
+                channel_name = "tc"; // 第一个通道名称是tc
                 first_f = false;
+            } else {
+                channel_name = "channel-" + std::to_string(debug_camera_id);
             }
 
-            CameraController::getInstance()->addCamera(debug_camera_id, std::to_string(debug_camera_id),tmp); //添加相机
+            CameraController::getInstance()->addCamera(debug_camera_id, channel_name, tmp_url); //添加相机
             debug_camera_id++;
         }
         break;
