@@ -592,6 +592,7 @@ int wt_ax_model_multi_base_t::init(void *json_obj)
     case WT_DAMAGE_MULTI_MODEL_RECOGNIZE:
     {
         m_models.push_back(std::make_shared<ax_model_damage>());
+        m_models.back()->init(json_obj);
     }
     break;
     default:

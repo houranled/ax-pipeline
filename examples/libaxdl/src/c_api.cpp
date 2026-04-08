@@ -145,6 +145,7 @@ int axdl_get_ivps_width_height(void *pModels, char *json_file_path, int *width_i
         case MT_MLM_HAND_POSE:
         case MT_MLM_FACE_RECOGNITION:
         case MT_MLM_VEHICLE_LICENSE_RECOGNITION:
+        case WT_DAMAGE_MULTI_MODEL_RECOGNIZE:
             *width_ivps = 960;
             *height_ivps = 540;
             ((ax_model_handle_t *)pModels)->model->set_det_restore_resolution(*width_ivps, *height_ivps);

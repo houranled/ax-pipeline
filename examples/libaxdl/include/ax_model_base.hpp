@@ -288,7 +288,7 @@ public:
 class wt_ax_model_multi_base_t : public ax_model_base
 {
 protected:
-    std::vector<std::shared_ptr<ax_model_base>> m_models;
+    std::vector<std::shared_ptr<ax_model_base>> m_models; // TODO:考虑换成map快速检索，如果有条件查询的需要
 
 public:
     wt_ax_model_multi_base_t()

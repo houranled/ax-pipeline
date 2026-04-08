@@ -147,8 +147,23 @@ int wt_damage_multi_model_recognize::inference(axdl_image_t *pstFrame, axdl_bbox
 {
     // 推理时根据当前摄像头是哪个点位来选用模型进行推理
     WTALOGI("推理时根据当前摄像头是哪个点位来选用模型进行推理");
-    //CameraController::getInstance()->getCamera()
-    m_models[0].get()->inference(pstFrame, crop_resize_box, results); // todo: 根据当前摄像头是哪个点位来选用模型进行推理
+
+    auto camera = CameraController::getInstance()->getCamera(1); // 获取当前摄像头信息
+    camera->now_point_id;
+
+    std::string camera_name("");
+
+    // 根据摄像头xxx选择模型
+    int model_index;
+    if (camera->now_point_id == 1) {
+        model_index = 1;  // 特殊摄像头使用专用模型
+    } else {
+        model_index = 0;  // 其他摄像头使用通用模型
+    }
+
+    // 使用选定的模型进行推理
+    m_models[model_index].get()->inference(pstFrame, crop_resize_box, results);
+
 
     return 0;
 }

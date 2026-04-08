@@ -97,6 +97,7 @@ public:
     };
 
     std::string ip;  // 相机ip地址
+    int now_point_id; // 当前所在点位id
 
     Camera();
     ~Camera();
@@ -141,7 +142,7 @@ private:
 
     bool running;
     bool patrolling = false;  // 是否在巡逻中
-    int now_point_id; // 当前所在点位id
+
     std::vector<PresetPosition> preset_positions; // 点位信息集
 
     // 图像拍摄相关成员

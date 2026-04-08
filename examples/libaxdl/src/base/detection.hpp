@@ -2156,7 +2156,6 @@ namespace detection
                     !std::isfinite(x2) || !std::isfinite(y2) ||
                     !std::isfinite(x3) || !std::isfinite(y3) ||
                     !std::isfinite(x4) || !std::isfinite(y4)) {
-                    WTALOGI("Invalid coordinates at point %d", i);
                     feat_ptr += (cls_num + 1 + 8);
                     continue;
                 }
