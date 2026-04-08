@@ -750,11 +750,11 @@ int user_input(pipeline_t *pipe, int pipe_cnt, pipeline_buffer_t *buf)
         {
             if (!contain(tmp_, pipe[i].m_vdec_attr.n_vdec_grp))
             {
-                ret = AX_VDEC_SendStream(pipe[i].m_vdec_attr.n_vdec_grp, &stream, 1000);
+                ret = AX_VDEC_SendStream(pipe[i].m_vdec_attr.n_vdec_grp, &stream, 2000);
                 if (ret != 0)
                 {
                     ALOGE("AX_VDEC_SendStream 0x%x,data=0x%x len=%d", ret, stream.pu8Addr, stream.u32StreamPackLen);
-                    //::gLoopExit = 1;
+                    ::gLoopExit = 1;
                 }
                 tmp_.push_back(pipe[i].m_vdec_attr.n_vdec_grp);
             }

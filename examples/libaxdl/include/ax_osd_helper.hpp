@@ -214,7 +214,8 @@ private:
                                         if (cnt++ % 100 == 0)
                                         {
                                             ALOGE("AX_IVPS_RGN_Update fail, ret=0x%x, hChnRgn=%d", ret, osd_pipe->m_ivps_attr.n_osd_rgn_chn[0]);
-                                            //::gLoopExit = 1;
+                                        } else if (cnt % 100 == 99) {
+                                            ::gLoopExit = 1;
                                         }
                                         usleep(30 * 1000);
                                     }
