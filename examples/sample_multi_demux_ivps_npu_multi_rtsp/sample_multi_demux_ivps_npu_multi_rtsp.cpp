@@ -245,6 +245,7 @@ int main(int argc, char *argv[])
     signal(SIGPIPE, SIG_IGN);
     signal(SIGINT, __sigExit);
     char config_file[256] = "/wt_tech/app/ax-pipeline/config/wt_rtsp.json"; //默认json配置文件
+    char config_file_test[128];
 
     ALOGN("sample begin\n\n");
 
@@ -275,7 +276,7 @@ int main(int argc, char *argv[])
         break;
         case 'p':
         {
-            strcpy(config_file, optarg);
+            strcpy(config_file_test, optarg);
             break;
         }
         case 'r':
@@ -369,7 +370,10 @@ int main(int argc, char *argv[])
         if (camera->getName() == "tc") {
             strcpy(config_file, "/wt_tech/app/ax-pipeline/config/wt_rtsp_tc.json"); // 扇叶尖专用模型
         } else {
-            strcpy(config_file, "/wt_tech/app/ax-pipeline/config/wt_rtsp.json"); // 默认json配置文件
+            if (strlen(config_file_test))
+                strcpy(config_file, config_file_test); // -f参数指定的json配置文件
+            else
+                strcpy(config_file, "/wt_tech/app/ax-pipeline/config/wt_rtsp.json"); // 默认json配置文件
         }
 
         AX_S32 s32Ret = axdl_parse_param_init(config_file, &g_sample.gModels[i].gModel, camera->getName().c_str());
