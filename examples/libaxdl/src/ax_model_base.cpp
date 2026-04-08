@@ -581,7 +581,7 @@ void ax_model_multi_base_t::deinit()
 
 int wt_ax_model_multi_base_t::init(void *json_obj)
 {
-    WTALOGI("初始化weiti多模型基类实例...");
+    WTALOGI("初始化weiti多模型基类实例成员...");
     auto jsondata = *(nlohmann::json *)json_obj;
 
     std::string strModelType;
@@ -591,9 +591,7 @@ int wt_ax_model_multi_base_t::init(void *json_obj)
     {
     case WT_DAMAGE_MULTI_MODEL_RECOGNIZE:
     {
-        for( auto model : m_models) {
-            model.reset(new ax_model_damage);
-        }
+        m_models.push_back(std::make_shared<ax_model_damage>());
     }
     break;
     default:
