@@ -245,7 +245,7 @@ int main(int argc, char *argv[])
     signal(SIGPIPE, SIG_IGN);
     signal(SIGINT, __sigExit);
     char config_file[256] = "/wt_tech/app/ax-pipeline/config/wt_rtsp.json"; //默认json配置文件
-    char config_file_test[128];
+    char config_file_test[128]={0};
 
     ALOGN("sample begin\n\n");
 

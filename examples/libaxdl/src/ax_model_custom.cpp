@@ -20,7 +20,7 @@ int ax_model_custom::preprocess(axdl_image_t *srcFrame, axdl_bbox_t *crop_resize
         if (srcFrame->eDtype == axdl_color_space_nv12) {
             // NV12格式直接操作YUV分量
             int width = srcFrame->nWidth;
-            int height = 190; // 遮罩高度
+            int height = channel_amplitude_data.occlusion_pixel_height; // 遮罩高度
 
             // 直接操作Y分量，设置为暗色
             unsigned char* y_plane = (unsigned char*)srcFrame->pVir;
@@ -43,7 +43,7 @@ int ax_model_custom::preprocess(axdl_image_t *srcFrame, axdl_bbox_t *crop_resize
             cv::Mat image(srcFrame->nHeight, srcFrame->nWidth, CV_8UC3, srcFrame->pVir);
 
             // 绘制红色遮罩框
-            cv::Rect red_mask(0, 0, image.cols, 190);
+            cv::Rect red_mask(0, 0, image.cols, channel_amplitude_data.occlusion_pixel_height);
 
             // 直接在image上绘制，避免创建ROI
             if (srcFrame->eDtype == axdl_color_space_rgb) {
@@ -75,7 +75,6 @@ void ax_model_custom::draw_custom(cv::Mat &image, axdl_results_t *results, float
 
 void ax_model_custom::draw_custom(int chn, axdl_results_t *results, float fontscale, int thickness)
 {
-
     /*
      * 用户可以在这里，对后处理结果进行绘制。此处使用的是原生的api进行绘制，效率会比opencv快，但是具有一定的限制性
      * 注意：
@@ -107,7 +106,7 @@ void ax_model_custom::draw_custom(int chn, axdl_results_t *results, float fontsc
     // 在车牌号下方显示时间戳
     m_drawers[chn].add_text(time_stream.str(), {0, 0.05}, {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
 
-    // 绘制遮罩
+    // 绘制遮罩(矩形)
     axdl_bbox_t mask = {0, 0, 1, cad.occlusion_pixel_height/m_drawers[chn].get_height()};
     m_drawers[chn].add_rect(&mask, {0, 0, 0, 255}, 1);
 
@@ -261,11 +260,11 @@ void ax_model_custom::load_config()
                     auto point = one_chl_config["point"];
                     channel_amplitude_data.origin_x_no_uniform = point.value("x", 0.0f);
 
-                    // tc通道的occlusion_pixel_height设置为390; 其它通道的设置为190
-                    //channel_amplitude_data.occlusion_pixel_height = point.value("y", 0.0f); // 这个不能通过标定来生成
+                    channel_amplitude_data.occlusion_pixel_height = point.value("y", 0.0f); // 这个能通过标定来生成
                 }
+
                 if (one_chl_config.contains("width")) {
-                    channel_amplitude_data.X = one_chl_config.value("width", 0.0f) / 2;
+                    channel_amplitude_data.X = std::stof(one_chl_config["width"].get<std::string>()) / 2;
                 }
             }
         }
@@ -279,9 +278,13 @@ void ax_model_custom::set_channel_name_init(const std::string name)
 {
     ax_model_base::set_channel_name_init(name);
     load_config(); // 加载配置
-    if (channel_name == "tc") {
-        channel_amplitude_data.occlusion_pixel_height = 390.0f;
-    } else {
-        channel_amplitude_data.occlusion_pixel_height = 190.0f;
+
+    if (channel_amplitude_data.occlusion_pixel_height == 0) {
+        // tc通道的occlusion_pixel_heigh默认值置为390; 其它通道的设置为190
+        if (channel_name == "tc") {
+            channel_amplitude_data.occlusion_pixel_height = 390.0f;
+        } else {
+            channel_amplitude_data.occlusion_pixel_height = 190.0f;
+        }
     }
 }
