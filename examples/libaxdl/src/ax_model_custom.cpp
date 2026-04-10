@@ -143,7 +143,8 @@ void ax_model_custom::process_texts(axdl_results_t *results, int &chn, int d, fl
                 * tanAngle /*tan仰角*/;
     }
 
-    auto distance_now = std::round((cad.amplitude_now+cad.Y) * 100000) / 100000; //保留小数点后5位并加上初始距离形成绝对距离
+    cad.amplitude_now = std::round(cad.amplitude_now * 100000) / 100000; // 保留小数点后5位并加上初始距离形成绝对距离
+    auto distance_now = cad.amplitude_now + cad.Y; // 距离 = 振幅 + 初始距离
 
     if (cad.amplitude_now > 0 && cad.amplitude_now > cad.amp_max_positive) {
         cad.amp_max_positive = cad.amplitude_now;
