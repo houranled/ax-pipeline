@@ -43,7 +43,8 @@ int ax_model_custom::preprocess(axdl_image_t *srcFrame, axdl_bbox_t *crop_resize
             cv::Mat image(srcFrame->nHeight, srcFrame->nWidth, CV_8UC3, srcFrame->pVir);
 
             // 绘制红色遮罩框
-            cv::Rect red_mask(0, 0, image.cols, channel_amplitude_data.occlusion_pixel_height);
+            auto real_pixel = srcFrame->nHeight - 140*2; //上下有各140像素的黑色填充:lettingbox
+            cv::Rect red_mask(0, 0, image.cols, channel_amplitude_data.occlusion_pixel_height/1080*real_pixel + 140); // 遮罩高度
 
             // 直接在image上绘制，避免创建ROI
             if (srcFrame->eDtype == axdl_color_space_rgb) {
@@ -56,6 +57,8 @@ int ax_model_custom::preprocess(axdl_image_t *srcFrame, axdl_bbox_t *crop_resize
             if (srcFrame->eDtype == axdl_color_space_rgb) {
                 cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
             }
+
+//            cv::imwrite("/wt_tech/app/mask.png", image); // test:保存图像
         }
     }
     auto ret = this->ax_model_single_base_t::preprocess(srcFrame, crop_resize_box, results); // 保留原有逻辑
