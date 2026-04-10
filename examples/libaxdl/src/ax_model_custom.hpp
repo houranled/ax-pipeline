@@ -14,18 +14,15 @@ public:
 
     ax_model_custom()
     {
-        if (!export_thread_running.exchange(true)) {
-            export_thread = std::thread([this]() { this->export_amplitude(); });
-        }
+        // 为每个实例创建自己的线程
+        export_thread = std::thread([this]() { this->export_amplitude(); });
     }
 
     ~ax_model_custom()
     {
-        // 只有最后一个实例销毁时才停止线程
-        if (export_thread_running.exchange(false)) {
-            if (export_thread.joinable()) {
-                export_thread.join();
-            }
+        // 每个实例销毁时停止自己的线程
+        if (export_thread.joinable()) {
+            export_thread.join();
         }
     }
 
@@ -64,7 +61,6 @@ private:
     } channel_amplitude_data;
 
     std::thread export_thread;
-    std::atomic<bool> export_thread_running;
 
     // 添加静态成员变量存储carNo
     static std::string car_no;

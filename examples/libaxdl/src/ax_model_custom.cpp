@@ -183,7 +183,7 @@ void ax_model_custom::process_texts(axdl_results_t *results, int &chn, int d, fl
 
 void ax_model_custom::export_amplitude()
 {
-    while (export_thread_running) {
+    while (true) {
         std::this_thread::sleep_for(std::chrono::seconds(1)); // 每秒输出一次
 
         // 写入时间戳
