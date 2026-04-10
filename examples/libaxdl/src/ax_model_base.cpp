@@ -579,7 +579,7 @@ void ax_model_multi_base_t::deinit()
     model_0->deinit();
 }
 
-int wt_ax_model_multi_base_t::init(void *json_obj)
+int wt_model_multi_base_t::init(void *json_obj)
 {
     WTALOGI("初始化weiti多模型基类实例成员...");
     auto jsondata = *(nlohmann::json *)json_obj;

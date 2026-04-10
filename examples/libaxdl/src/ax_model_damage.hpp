@@ -12,7 +12,10 @@ class ax_model_damage : public ax_model_yolov8_native
 {
 public:
 
-    ax_model_damage() {}
+    ax_model_damage()
+    {
+        WTALOGI("实例化一个ax_model_damage对象");
+    }
 
     //virtual int inference(axdl_image_t *pstFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results) override;
 
@@ -29,7 +32,7 @@ private:
 };
 
 
-class wt_damage_multi_model_recognize : public wt_ax_model_multi_base_t {
+class wt_damage_multi_model_recognize : public wt_model_multi_base_t {
 public:
     // 推理
     virtual int inference(axdl_image_t *pstFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results) override;

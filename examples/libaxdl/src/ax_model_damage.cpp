@@ -153,12 +153,12 @@ int wt_damage_multi_model_recognize::inference(axdl_image_t *pstFrame, axdl_bbox
 
     std::string camera_name("");
 
-    // 根据摄像头xxx选择模型
+    // 根据摄像头xxx选择模型 (根据点位选择模型)
     int model_index;
     if (camera->now_point_id == 1) {
-        model_index = 1;  // 特殊摄像头使用专用模型
+        model_index = 1;
     } else {
-        model_index = 0;  // 其他摄像头使用通用模型
+        model_index = 0;
     }
 
     // 使用选定的模型进行推理

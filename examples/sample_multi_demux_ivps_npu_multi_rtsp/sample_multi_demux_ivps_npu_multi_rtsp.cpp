@@ -505,7 +505,7 @@ int main(int argc, char *argv[])
             g_sample.gModels[i].osd_helper.Start(g_sample.gModels[i].gModel, g_sample.gModels[i].pipes_need_osd);  // 绘制过程线程
             // pthread_create(&g_sample.osd_tid[i], NULL, osd_funcs[i], NULL);
             // g_sample.osd_target_map[pipelines[1].pipeid] = g_sample.gModels[i].pipes_need_osd[0]->pipeid;
-            g_sample.osd_target_map[pipelines[1].pipeid] = &g_sample.gModels[i]; //TODO： 改为不同点位映射模型
+            g_sample.osd_target_map[pipelines[1].pipeid] = &g_sample.gModels[i];
         }
     }
 
