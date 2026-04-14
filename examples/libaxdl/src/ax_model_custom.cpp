@@ -44,7 +44,7 @@ int ax_model_custom::preprocess(axdl_image_t *srcFrame, axdl_bbox_t *crop_resize
 
             // 绘制红色遮罩框
             auto real_pixel = srcFrame->nHeight - 140*2; //上下有各140像素的黑色填充:lettingbox
-            cv::Rect red_mask(0, 0, image.cols, channel_amplitude_data.occlusion_pixel_height/1080*real_pixel + 140); // 遮罩高度
+            cv::Rect red_mask(0, 0, image.cols, channel_amplitude_data.occlusion_pixel_height/720*real_pixel + 140); // 遮罩高度
 
             // 直接在image上绘制，避免创建ROI
             if (srcFrame->eDtype == axdl_color_space_rgb) {
