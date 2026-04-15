@@ -442,7 +442,7 @@ int CameraController::load_config_from_file(const std::string& config_file_path)
 
                 if (camera_config.contains("ip")) {
                     camera->ip = camera_config["ip"];
-                    std::string camera_rtsp_url = "rtsp://admin@" + camera->ip + "/channel=1&stream=0.sdp?";
+                    std::string camera_rtsp_url = "rtsp://admin@" + camera->ip + ":8554/onvif1";
                     camera->set_camera_rtsp_url(camera_rtsp_url);
                 }
 
