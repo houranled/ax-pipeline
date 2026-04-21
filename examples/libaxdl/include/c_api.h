@@ -66,6 +66,7 @@ extern "C"
         MT_CUSTOM_MODEL = 0x50000,
         MT_CLIP,
         MT_OWLVIT,
+        MT_DAMAGE_MODEL,
         WT_DAMAGE_MULTI_MODEL_RECOGNIZE,
         MT_END,
     } MODEL_TYPE_E;

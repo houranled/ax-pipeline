@@ -584,22 +584,41 @@ int wt_model_multi_base_t::init(void *json_obj)
     WTALOGI("初始化weiti多模型基类实例成员...");
     auto jsondata = *(nlohmann::json *)json_obj;
 
-    std::string strModelType;
-    m_model_type = (MODEL_TYPE_E)get_model_type(&jsondata, strModelType);
+   // 解析json数据，获取模型类型
+    if (jsondata.contains("MODEL_LIST") ) {
+        nlohmann::json json_model_list = jsondata["MODEL_LIST"];
 
-    switch (m_model_type)
-    {
-    case WT_DAMAGE_MULTI_MODEL_RECOGNIZE:
-    {
-        m_models.push_back(std::make_shared<ax_model_damage>());
-        m_models.back()->init(json_obj);
+        for (auto& model_json : json_model_list) {
+            std::string strModelType;
+            int mt = get_model_type(&model_json, strModelType);
+
+            // 创建模型实例
+            std::shared_ptr<ax_model_base> model((ax_model_base *)OBJFactory::getInstance().getObjectByID(mt));
+
+            if (!model) {
+                return -1;
+            }
+
+            // 初始化单体具体模型
+            int ret = model->init((void *)&model_json);
+            if (ret != 0) {
+                ALOGE("Failed to initialize model, ret=%d", ret);
+                return ret;
+            }
+
+            // 将具体模型添加到模型列表
+            m_models.push_back(model);
+            WTALOGI("创建模型之一...");
+        }
+
     }
-    break;
-    default:
-        ALOGE("not wt multi model type %d", (int)m_model_type);
-        return -1;
-    }
-   // 解析逻辑
 
     return 0;
+}
+
+void wt_model_multi_base_t::deinit()
+{
+    for (auto& model : m_models) {
+        model->deinit();
+    }
 }

@@ -295,7 +295,7 @@ int main(int argc, char *argv[])
         }
     }
 
-    if (CameraController::getInstance()->getAllCameras().size() >= rtsp_max_count)
+    if (CameraController::getInstance()->getAllCameras().size() > rtsp_max_count)
     {
         ALOGE("support only %d rtsp inputs", rtsp_max_count);
     }

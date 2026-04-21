@@ -6,7 +6,10 @@
 #include <vector>
 #include <cmath>
 #include <opencv2/opencv.hpp>
+#include <map>
+#include <string>
 #include "base/detection.hpp"
+#include "../include/ax_model_base.hpp"
 
 class ax_model_damage : public ax_model_yolov8_native
 {
@@ -15,9 +18,16 @@ public:
     ax_model_damage()
     {
         WTALOGI("实例化一个ax_model_damage对象");
+        model_type = "default";
     }
 
     //virtual int inference(axdl_image_t *pstFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results) override;
+
+    // Override sub_init to extract model type from filename (called after base init)
+    int sub_init(void *json_obj) override;
+
+    // Get model type
+    std::string get_model_type() const { return model_type; }
 
 protected:
     // 在这里添加自定义属性
@@ -28,13 +38,48 @@ protected:
 
 private:
     //AlarmGenerator m_alarm_generator; //告警检测器
+    std::string model_type; // 模型类型（A、B、C等）
+
+    // Helper method to extract type from filename
+    std::string extract_type_from_filename(const std::string& model_path);
 
 };
-
+REGISTER(MT_DAMAGE_MODEL, ax_model_damage)
 
 class wt_damage_multi_model_recognize : public wt_model_multi_base_t {
 public:
-    // 推理
-    virtual int inference(axdl_image_t *pstFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results) override;
-};
+    wt_damage_multi_model_recognize();
+
+    // Add model type to point prefix mapping
+    int add_model_type_mapping(const std::string& point_prefix, const std::string& model_type);
+
+    // Override inference to select models based on point name prefix type
+    int inference(axdl_image_t *pstFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results) override;
+
+    // Override init to parse model type mappings
+    int init(void *json_obj) override;
+
+private:
+    // Structure to hold model type information
+    struct ModelTypeInfo {
+        std::string type_name;
+        std::vector<std::shared_ptr<ax_model_base>> models;
+    };
+
+    // Map from model type to model info
+    std::map<std::string, ModelTypeInfo> m_model_types;
+
+    // Map from point name prefix to model type
+    std::map<std::string, std::string> m_point_prefix_to_model_type;
+
+    // Helper method to get current point name prefix
+    std::string get_current_point_prefix();
+
+    // Helper method to find matching model type for point prefix
+    std::string find_model_type_for_point(const std::string& point_name);
+
+    // Helper method to get all models of a specific type
+    std::vector<std::shared_ptr<ax_model_base>> get_models_by_type(const std::string& model_type);
+
+    };
 REGISTER(WT_DAMAGE_MULTI_MODEL_RECOGNIZE, wt_damage_multi_model_recognize)

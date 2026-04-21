@@ -122,6 +122,10 @@ public:
     std::string get_camera_rtsp_url(); // 获取相机rtsp url
     void set_camera_rtsp_url(const std::string& url); // 设置相机rtsp url
 
+    const std::vector<PresetPosition>& getPresetPositions() const {
+        return preset_positions;
+    }
+
 private:
     int id;
     std::string name; // 相机名称
