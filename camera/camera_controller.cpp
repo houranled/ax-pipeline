@@ -888,8 +888,11 @@ int Camera::set_brighten(int brightness)
 
     // 写入保持寄存器
     int rc = modbus_write_registers(modbus_ctx, 0x44A5, 2, brightness_reg);
-    if (rc == -1) {
-        WTALOGI("Failed to write brighten register: %s", modbus_strerror(errno));
+
+    int rc2 = modbus_write_register(modbus_ctx, 0x4469,brightness_reg[0]);
+
+    if (rc == -1 || rc2 == -1)  {
+        WTALOGI("Failed to write brighten register(%d)|(%d): %s", rc, rc2, modbus_strerror(errno));
         return -1;
     }
 
