@@ -4,6 +4,7 @@
 #include <numeric>  // 添加此行以使用 std::accumulate
 #include <algorithm>
 #include "../../camera/camera_controller.hpp"
+#include "../../utilities/json.hpp"
 
 //int ax_model_damage::inference(axdl_image_t *pstFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results)
 //{
@@ -239,7 +240,6 @@ int wt_damage_multi_model_recognize::init(void *json_obj)
             std::shared_ptr<ax_model_base> model((ax_model_base *)OBJFactory::getInstance().getObjectByID(mt));
 
             if (!model) {
-                WTALOGE("Failed to create model instance for type '%s'", model_type.c_str());
                 return -1;
             }
 

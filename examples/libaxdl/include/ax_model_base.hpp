@@ -216,7 +216,7 @@ public:
         if(b_draw_fps)
             draw_fps(chn, results, fontscale, thickness);
     }
-
+	virtual void *GetRunnerHandle()  = 0;
     virtual void set_channel_name_init(const std::string name) {
         channel_name = name;
     }
@@ -254,6 +254,7 @@ public:
     int get_algo_height() override { return m_runner->get_algo_height(); }
 
     virtual int inference(axdl_image_t *pstFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results) override;
+	void *GetRunnerHandle() override;
 };
 
 class ax_model_multi_base_t : public ax_model_base
@@ -282,6 +283,7 @@ public:
     axdl_color_space_e get_color_space() override { return model_0->get_color_space(); }
     int get_algo_width() override { return model_0->get_algo_width(); }
     int get_algo_height() override { return model_0->get_algo_height(); }
+	void *GetRunnerHandle() override;
 };
 
 // weiti 多模型基类

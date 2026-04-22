@@ -105,6 +105,12 @@ void get_rtsp_urls_from_json(char *json_file_path, std::vector<std::string> &rts
     f.close();
 }
 
+void *axdl_GetModelHandle(void *pModels)
+{
+	void * p_handle = ((ax_model_handle_t *)(pModels))->model->GetRunnerHandle();
+	return p_handle;
+}
+
 void axdl_deinit(void **pModels)
 {
     if (pModels && (ax_model_handle_t *)(*pModels) && ((ax_model_handle_t *)(*pModels))->model.get())

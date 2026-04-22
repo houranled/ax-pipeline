@@ -21,6 +21,7 @@ public:
     axdl_color_space_e get_color_space() override;
 
     int inference(axdl_image_t *pstFrame, const axdl_bbox_t *crop_resize_box) override;
+	void *GetRunnerHandle() override;
 };
 REGISTER(RUNNER_AX650,ax_runner_ax650)
 typedef ax_runner_ax650 ax_runner_ax620e;

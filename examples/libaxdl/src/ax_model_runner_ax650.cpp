@@ -12,7 +12,6 @@
 #include "../../utilities/sample_log.h"
 
 #include "../../../custom_config.h"
-
 #define AX_CMM_ALIGN_SIZE 128
 
 const char *AX_CMM_SESSION_NAME = "ax-pipeline-npu";
@@ -337,5 +336,10 @@ int ax_runner_ax650::inference(axdl_image_t *pstFrame, const axdl_bbox_t *crop_r
     count++;
 #endif
     return AX_ENGINE_RunSync(m_handle->handle, &m_handle->io_data);
+}
+
+void * ax_runner_ax650::GetRunnerHandle()
+{
+	return (void*)m_handle;
 }
 #endif

@@ -26,7 +26,6 @@
 #endif
 
 #include <stdio.h>
-
 #if __cplusplus
 extern "C"
 {

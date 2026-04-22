@@ -15,8 +15,6 @@
 
 #include "opencv2/opencv.hpp"
 
-extern volatile AX_S32 gLoopExit;
-
 class ax_osd_helper
 {
 private:
@@ -198,8 +196,7 @@ private:
                 {
                     if (true)
                     {
-                        axdl_native_osd_draw_results(gModels, osd_pipe->pipeid, &mResults, 0.6, 4);
-
+                        axdl_native_osd_draw_results(gModels, osd_pipe->pipeid, &mResults, 0.6, 2);
                         AX_IVPS_RGN_DISP_GROUP_T *rgn_disp_grp = (AX_IVPS_RGN_DISP_GROUP_T *)axdl_native_osd_get_handle(gModels, osd_pipe->pipeid);
                         if (rgn_disp_grp)
                         {
@@ -207,15 +204,13 @@ private:
                             {
                                 if (rgn_disp_grp[d].nNum > 0 && rgn_disp_grp[d].nNum <= AX_IVPS_REGION_MAX_DISP_NUM)
                                 {
-                                    int ret = AX_IVPS_RGN_Update(osd_pipe->m_ivps_attr.n_osd_rgn_chn[d], &rgn_disp_grp[d]);//通知IVPS硬件，更新显示区域完成，就会自动转发到VENC中
+                                    int ret = AX_IVPS_RGN_Update(osd_pipe->m_ivps_attr.n_osd_rgn_chn[d], &rgn_disp_grp[d]);
                                     if (0 != ret)
                                     {
                                         static int cnt = 0;
                                         if (cnt++ % 100 == 0)
                                         {
                                             ALOGE("AX_IVPS_RGN_Update fail, ret=0x%x, hChnRgn=%d", ret, osd_pipe->m_ivps_attr.n_osd_rgn_chn[0]);
-                                        } else if (cnt % 100 == 99) {
-                                            ::gLoopExit = 1;
                                         }
                                         usleep(30 * 1000);
                                     }

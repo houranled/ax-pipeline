@@ -34,11 +34,6 @@
 #include "string.h"
 #include "map"
 #include "unistd.h"
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <ctime>
-
-extern volatile AX_S32 gLoopExit;
 
 #define RTSP_PORT 8554
 
@@ -750,11 +745,10 @@ int user_input(pipeline_t *pipe, int pipe_cnt, pipeline_buffer_t *buf)
         {
             if (!contain(tmp_, pipe[i].m_vdec_attr.n_vdec_grp))
             {
-                ret = AX_VDEC_SendStream(pipe[i].m_vdec_attr.n_vdec_grp, &stream, 2000);
+                ret = AX_VDEC_SendStream(pipe[i].m_vdec_attr.n_vdec_grp, &stream, 20);
                 if (ret != 0)
                 {
                     ALOGE("AX_VDEC_SendStream 0x%x,data=0x%x len=%d", ret, stream.pu8Addr, stream.u32StreamPackLen);
-                    ::gLoopExit = 1;
                 }
                 tmp_.push_back(pipe[i].m_vdec_attr.n_vdec_grp);
             }

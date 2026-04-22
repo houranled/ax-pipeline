@@ -148,12 +148,12 @@ void ax_model_base::disbale_track()
     b_track = false;
 }
 
-
 void ax_model_base::draw_bbox(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y)
 {
     int x, y;
     cv::Size label_size;
     int baseLine = 0;
+
     for (int i = 0; i < results->nObjSize; i++)
     {
         cv::Rect rect(results->mObjects[i].bbox.x * image.cols + offset_x,
@@ -329,6 +329,11 @@ int ax_model_single_base_t::init(void *json_obj)
     }
 
     return 0;
+}
+void * ax_model_single_base_t:: GetRunnerHandle()
+{
+	void * p_handle = m_runner->GetRunnerHandle();
+	return p_handle;
 }
 
 void ax_model_single_base_t::deinit()
@@ -577,6 +582,12 @@ void ax_model_multi_base_t::deinit()
 {
     model_1->deinit();
     model_0->deinit();
+}
+
+void * ax_model_multi_base_t:: GetRunnerHandle()
+{
+	//void * p_handle = m_runner->GetRunnerHandle();
+	return NULL;
 }
 
 int wt_model_multi_base_t::init(void *json_obj)

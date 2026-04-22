@@ -28,6 +28,11 @@
 #include "unistd.h"
 #include "string.h"
 #include "pthread.h"
+#include <stdio.h>
+#include <stdarg.h>
+#include <time.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 #include <opencv2/opencv.hpp>
 
@@ -37,11 +42,31 @@
 
 int _sent_frame_vo(pipeline_t *pipe, AX_VIDEO_FRAME_T *tVideoFrame);
 
+static void _pipe_log(int grp, const char *fmt, ...)
+{
+    mkdir("/wt_tech/logs", 0755);
+    mkdir("/wt_tech/logs/node", 0755);
+    FILE *fp = fopen("/wt_tech/logs/node/pipe.log", "a");
+    if (!fp) return;
+    time_t now = time(NULL);
+    struct tm t;
+    localtime_r(&now, &t);
+    fprintf(fp, "[%04d-%02d-%02d %02d:%02d:%02d] [Grp%d] ",
+            t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
+            t.tm_hour, t.tm_min, t.tm_sec, grp);
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(fp, fmt, ap);
+    va_end(ap);
+    fclose(fp);
+}
+
 void *_ivps_get_frame_thread(void *arg)
 {
     pipeline_t *pipe = (pipeline_t *)arg;
 
-    AX_S32 nMilliSec = 1000;
+    AX_S32 nMilliSec = 200;
+    int fail_count = 0;
 
     // prctl(PR_SET_NAME, "SAMPLE_IVPS_GET");
 
@@ -51,46 +76,28 @@ void *_ivps_get_frame_thread(void *arg)
     {
         AX_VIDEO_FRAME_T tVideoFrame = {0};
 
-        AX_S32 ret = AX_IVPS_GetChnFrame(pipe->m_ivps_attr.n_ivps_grp, 0, &tVideoFrame, nMilliSec);//拿到每一帧
+        AX_S32 ret = AX_IVPS_GetChnFrame(pipe->m_ivps_attr.n_ivps_grp, 0, &tVideoFrame, nMilliSec);
 
         if (0 != ret)
         {
-            ALOGE("IvpsGrp %d: AX_IVPS_GetChnFrame failed!s32Ret:0x%x\n", pipe->m_ivps_attr.n_ivps_grp, ret);
-            usleep(200 * 1000);
+            fail_count++;
+            if (fail_count == 1 || fail_count % 100 == 0)
+            {
+                ALOGE("IvpsGrp %d: AX_IVPS_GetChnFrame failed!s32Ret:0x%x count:%d\n", pipe->m_ivps_attr.n_ivps_grp, ret, fail_count);
+                _pipe_log(pipe->m_ivps_attr.n_ivps_grp, "GetChnFrame failed ret:0x%x fail_count:%d\n", ret, fail_count);
+            }
+            usleep(10 * 1000);
             continue;
         }
-        // printf("%d %d\n",tVideoFrame.u64VirAddr[0],tVideoFrame.u64PhyAddr[0]);
-        unsigned char *img_data = (unsigned char *)AX_SYS_Mmap(tVideoFrame.u64PhyAddr[0], tVideoFrame.u32FrameSize);
-
-#if 0
-        static int count = 0;
-        cv::Mat src;
-        if (tVideoFrame.enImgFormat == AX_FORMAT_RGB888 || tVideoFrame.enImgFormat == AX_FORMAT_BGR888)
+        if (fail_count > 0)
         {
-            src = cv::Mat(tVideoFrame.u32Height, tVideoFrame.u32Width, CV_8UC3, img_data);
-        }
-        else if (tVideoFrame.enImgFormat == AX_FORMAT_YUV420_SEMIPLANAR)
-        {
-            cv::Mat nv12_mat(tVideoFrame.u32Height * 3 / 2, tVideoFrame.u32Width, CV_8UC1, img_data);
-            cv::cvtColor(nv12_mat, src, cv::COLOR_YUV2BGR_NV12);
-        }
-        else
-        {
-            ALOGE("unknown color space %d", tVideoFrame.enImgFormat);
-            // return -1;
+            ALOGI("IvpsGrp %d: recovered after %d failures\n", pipe->m_ivps_attr.n_ivps_grp, fail_count);
+            _pipe_log(pipe->m_ivps_attr.n_ivps_grp, "recovered after %d failures\n", fail_count);
+            fail_count = 0;
         }
 
-        // print pstFrame
-        // ALOGI("pstFrame: %dx%d, size:%d, stride:%d, fmt:%d, phy:0x%x", pstFrame->nWidth, pstFrame->nHeight, pstFrame->nSize, pstFrame->tStride_W, pstFrame->eDtype, pstFrame->pPhy);
-        if (count % 10 == 0 && count < 105)
-        {
-            cv::imwrite("debug_" + std::to_string(count) + ".jpg", src);
-            ALOGI("write debug_%d.jpg", count);
-        }
-
-        count++;
-#endif
-
+        tVideoFrame.u64VirAddr[0] = (AX_U64)AX_POOL_GetBlockVirAddr(tVideoFrame.u32BlkId[0]);
+        tVideoFrame.u64PhyAddr[0] = AX_POOL_Handle2PhysAddr(tVideoFrame.u32BlkId[0]);
         if (pipe->m_output_type == po_vo_hdmi)
         {
             ret = _sent_frame_vo(pipe, &tVideoFrame);
@@ -128,10 +135,10 @@ void *_ivps_get_frame_thread(void *arg)
                 buf.d_type = po_none;
                 break;
             }
-            buf.p_vir = img_data;
+            buf.p_vir = (AX_U8 *)tVideoFrame.u64VirAddr[0];
             buf.p_phy = tVideoFrame.u64PhyAddr[0];
             buf.p_pipe = pipe;
-            pipe->output_func(&buf); //对每一帧进行推理等处理
+            pipe->output_func(&buf);
         }
 
         ret = AX_IVPS_ReleaseChnFrame(pipe->m_ivps_attr.n_ivps_grp, 0, &tVideoFrame);

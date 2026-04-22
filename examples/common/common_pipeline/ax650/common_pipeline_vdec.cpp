@@ -30,7 +30,6 @@
 #include "pthread.h"
 
 #include "../../../../custom_config.h"
-
 extern "C"
 {
     // #include "common_vdec_utils.h"
@@ -123,7 +122,7 @@ AX_S32 FramePoolInit(AX_VDEC_GRP VdGrp, AX_U32 FrameSize, AX_POOL *PoolId)
 
     memset(&stPoolConfig, 0, sizeof(AX_POOL_CONFIG_T));
     stPoolConfig.MetaSize = 512;
-    stPoolConfig.BlkCnt = 10;
+    stPoolConfig.BlkCnt = 25;
     stPoolConfig.BlkSize = FrameSize;
     stPoolConfig.CacheMode = POOL_CACHE_MODE_NONCACHE;
     memset(stPoolConfig.PartitionName, 0, sizeof(stPoolConfig.PartitionName));
@@ -192,7 +191,7 @@ int _create_vdec_grp(pipeline_t *pipe)
             stVdChnAttr.enOutputMode = AX_VDEC_OUTPUT_ORIGINAL;
             stVdChnAttr.u32PicWidth = 1920;
             stVdChnAttr.u32PicHeight = 1080;
-            stVdChnAttr.u32FrameBufCnt = 5;
+            stVdChnAttr.u32FrameBufCnt = 8;
             AX_U32 uPixBits = 8;
 #define AX_SHIFT_LEFT_ALIGN(a) (1 << (a))
 #define AX_VDEC_WIDTH_ALIGN AX_SHIFT_LEFT_ALIGN(8)
@@ -206,7 +205,7 @@ int _create_vdec_grp(pipeline_t *pipe)
             stVdChnAttr.u32ScaleRatioX = 1;
             stVdChnAttr.u32ScaleRatioY = 1;
 
-            stVdChnAttr.u32OutputFifoDepth = 0;
+            stVdChnAttr.u32OutputFifoDepth = 3;
 
             ret = AX_VDEC_SetChnAttr(pipe->m_vdec_attr.n_vdec_grp, 0, &stVdChnAttr);
             if (ret != AX_SUCCESS)

@@ -8,7 +8,7 @@ extern "C"
 {
 #endif
 
-#define SAMPLE_MAX_BBOX_COUNT 10
+#define SAMPLE_MAX_BBOX_COUNT 64
 #define SAMPLE_MAX_MASK_OBJ_COUNT 8
 #define SAMPLE_OBJ_NAME_MAX_LEN 20
 #define SAMPLE_RINGBUFFER_CACHE_COUNT 8
@@ -202,6 +202,7 @@ extern "C"
     void axdl_native_osd_init(void *pModels, int chn, int chn_width, int chn_height, int max_num_rgn);
     void *axdl_native_osd_get_handle(void *pModels, int chn);
     int axdl_native_osd_draw_results(void *pModels, int chn, axdl_results_t *pResults, float fontscale, int thickness);
+	void *axdl_GetModelHandle(void *pModels);
 #ifdef __cplusplus
 }
 #endif

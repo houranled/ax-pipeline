@@ -59,6 +59,8 @@ public:
     // Override init to parse model type mappings
     int init(void *json_obj) override;
 
+    void *GetRunnerHandle() override {return NULL;}
+
 private:
     // Structure to hold model type information
     struct ModelTypeInfo {
