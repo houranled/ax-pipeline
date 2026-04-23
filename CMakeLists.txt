@@ -95,6 +95,33 @@ endif()
 # check toolchain about
 message(STATUS "CMAKE_TOOLCHAIN_FILE = ${CMAKE_TOOLCHAIN_FILE}")
 
+# 获取最新提交的短哈希值
+execute_process(
+    COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE GIT_COMMIT_HASH
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+
+# 获取最新提交的日期
+execute_process(
+    COMMAND ${GIT_EXECUTABLE} log -1 --format=%cd --date=short
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE GIT_COMMIT_DATE
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+
+message(STATUS "Git commit hash: ${GIT_COMMIT_HASH}")
+message(STATUS "Git commit date: ${GIT_COMMIT_DATE}")
+message(STATUS "Git branch: ${GIT_BRANCH}")
+
+# 将Git信息作为编译定义传递给源代码
+add_definitions(-DGIT_COMMIT_HASH="${GIT_COMMIT_HASH}")
+add_definitions(-DGIT_COMMIT_DATE="${GIT_COMMIT_DATE}")
+
+
 project(ax_pipeline)
 set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -Ofast -Wall -g -fPIC -Wno-unused-function -Wno-unused-label")
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Ofast -Wall -g -fPIC -Wno-unused-function -Wno-unused-label")

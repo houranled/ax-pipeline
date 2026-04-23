@@ -213,6 +213,8 @@ extern "C" AX_VOID __sigExit(int iSigNo)
 
 static AX_VOID PrintHelp(char *testApp)
 {
+    printf("version:%s\n", GIT_COMMIT_HASH);
+    printf("date:   %s\n", GIT_COMMIT_DATE);
     printf("Usage:%s -h for help\n\n", testApp);
     printf("\t-p: model config file path\n");
 
@@ -295,15 +297,16 @@ int main(int argc, char *argv[])
         }
     }
 
-    if (CameraController::getInstance()->getAllCameras().size() > rtsp_max_count)
-    {
-        ALOGE("support only %d rtsp inputs", rtsp_max_count);
-    }
 
     if (isExit)
     {
         PrintHelp(argv[0]);
         exit(0);
+    }
+
+    if (CameraController::getInstance()->getAllCameras().size() > rtsp_max_count)
+    {
+        ALOGE("support only %d rtsp inputs", rtsp_max_count);
     }
 
 
