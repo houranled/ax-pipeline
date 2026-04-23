@@ -194,7 +194,7 @@ private:
                 auto &osd_pipe = pipes_need_osd[i];
                 if (osd_pipe && osd_pipe->m_ivps_attr.n_osd_rgn)
                 {
-                    if (true)
+                    if (false)
                     {
                         axdl_native_osd_draw_results(gModels, osd_pipe->pipeid, &mResults, 0.6, 2);
                         AX_IVPS_RGN_DISP_GROUP_T *rgn_disp_grp = (AX_IVPS_RGN_DISP_GROUP_T *)axdl_native_osd_get_handle(gModels, osd_pipe->pipeid);
