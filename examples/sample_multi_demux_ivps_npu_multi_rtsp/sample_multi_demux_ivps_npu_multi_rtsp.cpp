@@ -79,7 +79,7 @@ static struct _g_sample_
     struct _model
     {
         int bRunJoint;
-        void *gModel;
+        std::vector<void *> gModels;  // 改为支持多个模型
         ax_osd_helper osd_helper;
         std::vector<pipeline_t *> pipes_need_osd;
     } gModels[rtsp_max_count];
@@ -96,7 +96,6 @@ static struct _g_sample_
         {
             gModels[i].osd_helper.Stop();
             gModels[i].pipes_need_osd.clear();
-            gModels[i].gModel = nullptr;
             gModels[i].bRunJoint = 0;
             // pthread_mutex_init(&g_result_mutexs[i], NULL);
         }
@@ -112,7 +111,6 @@ static struct _g_sample_
         {
             gModels[i].osd_helper.Stop();
             gModels[i].pipes_need_osd.clear();
-            gModels[i].gModel = nullptr;
             gModels[i].bRunJoint = 0;
             // pthread_mutex_init(&g_result_mutexs[i], NULL);
         }
@@ -149,7 +147,28 @@ void ai_inference_func(pipeline_buffer_t *buff)
         tSrcFrame.tStride_W = buff->n_stride;
         tSrcFrame.nSize = buff->n_size;
 
-        axdl_inference(g_sample.osd_target_map[pipe->pipeid]->gModel, &tSrcFrame, &mResults[pipe->pipeid]);
+        // 初始化合并后的结果
+        //memset(&mResults[pipe->pipeid], 0, sizeof(axdl_results_t));
+        mResults[pipe->pipeid].nObjSize = 0;
+
+        // 使用所有模型对同一帧图像进行推理，并合并结果
+        for (auto each_model : g_sample.osd_target_map[pipe->pipeid]->gModels)
+        {
+            axdl_results_t model_result;
+            memset(&model_result, 0, sizeof(axdl_results_t));
+
+            axdl_inference(each_model, &tSrcFrame, &model_result);
+
+            // 合并模型结果到统一结果中
+            for (int i = 0; i < model_result.nObjSize; i++)
+            {
+                if (mResults[pipe->pipeid].nObjSize < SAMPLE_MAX_BBOX_COUNT)
+                {
+                    mResults[pipe->pipeid].mObjects[mResults[pipe->pipeid].nObjSize] = model_result.mObjects[i];
+                    mResults[pipe->pipeid].nObjSize++;
+                }
+            }
+        }
         // ALOGI("pipe=%d detect%d", pipe->pipeid, mResults[pipe->pipeid].nObjSize);
         g_sample.osd_target_map[pipe->pipeid]->osd_helper.Update(&mResults[pipe->pipeid]);
     }
@@ -560,20 +579,27 @@ int main(int argc, char *argv[])
                 strcpy(config_file, "/wt_tech/app/ax-pipeline/config/wt_rtsp.json"); // 默认json配置文件
         }
 
-        AX_S32 s32Ret = axdl_parse_param_init(config_file, &g_sample.gModels[i].gModel,
-            camera->getName().c_str(), camera->get_id());
-
-        if (s32Ret != 0)
-        {
+        void *model1 = nullptr;
+        AX_S32 s32Ret = axdl_parse_param_init(config_file, &model1, camera->getName().c_str());
+        if (s32Ret != 0) {
             ALOGE("sample_parse_param_det failed,run joint skip");
             g_sample.gModels[i].bRunJoint = 0;
         }
-        else
-        {
-            s32Ret = axdl_get_ivps_width_height(g_sample.gModels[i].gModel, config_file, &SAMPLE_IVPS_ALGO_WIDTH[i], &SAMPLE_IVPS_ALGO_HEIGHT[i]);
-            ALOGI("IVPS AI channel width=%d height=%d", SAMPLE_IVPS_ALGO_WIDTH[i], SAMPLE_IVPS_ALGO_HEIGHT[i]);
-            g_sample.gModels[i].bRunJoint = 1;
+        else {
+            g_sample.gModels[i].gModels.push_back(model1);
         }
+
+        // 加载第二个模型（例如人脸识别模型）
+        char config_file_people[256] = "/wt_tech/app/ax-pipeline/config/wt_rtsp_people.json"; //人体识别
+
+        void *model2 = nullptr;
+        s32Ret = axdl_parse_param_init(config_file_people, &model2, camera->getName().c_str());
+        if (s32Ret == 0) {
+            g_sample.gModels[i].gModels.push_back(model2);
+        }
+        // 如果至少有一个模型加载成功，则启用联合推理
+        g_sample.gModels[i].bRunJoint = !g_sample.gModels[i].gModels.empty();
+
         auto &pipelines = vpipelines[i];
         pipelines.resize(pipe_count);
         memset(pipelines.data(), 0, pipe_count * sizeof(pipeline_t));
@@ -587,15 +613,15 @@ int main(int argc, char *argv[])
                 config1.n_ivps_fps = 60;
                 config1.n_ivps_width = SAMPLE_IVPS_ALGO_WIDTH[i];
                 config1.n_ivps_height = SAMPLE_IVPS_ALGO_HEIGHT[i];
-                config1.b_letterbox = axdl_get_letterbox_enable(g_sample.gModels[i].gModel);
+                config1.b_letterbox = axdl_get_letterbox_enable(g_sample.gModels[i].gModels[0]);
                 config1.n_fifo_count = 1; // 如果想要拿到数据并输出到回调 就设为1~4
             }
             pipe1.enable = g_sample.gModels[i].bRunJoint;
             pipe1.pipeid = pipe_count * i + 1;
             pipe1.m_input_type = pi_vdec_h264;
-            if (g_sample.gModels[i].gModel && g_sample.gModels[i].bRunJoint)
+            if (g_sample.gModels[i].gModels[0] && g_sample.gModels[i].bRunJoint)
             {
-                switch (axdl_get_color_space(g_sample.gModels[i].gModel))
+                switch (axdl_get_color_space(g_sample.gModels[i].gModels[0]))
                 {
                 case axdl_color_space_rgb:
                     pipe1.m_output_type = po_buff_rgb;
@@ -697,7 +723,7 @@ int main(int argc, char *argv[])
 
         if (g_sample.gModels[i].pipes_need_osd.size() && g_sample.gModels[i].bRunJoint)
         {
-            g_sample.gModels[i].osd_helper.Start(g_sample.gModels[i].gModel, g_sample.gModels[i].pipes_need_osd);  // 绘制过程线程
+            g_sample.gModels[i].osd_helper.Start(g_sample.gModels[i].gModels[0], g_sample.gModels[i].pipes_need_osd);  // 绘制过程线程
             // pthread_create(&g_sample.osd_tid[i], NULL, osd_funcs[i], NULL);
             // g_sample.osd_target_map[pipelines[1].pipeid] = g_sample.gModels[i].pipes_need_osd[0]->pipeid;
             g_sample.osd_target_map[pipelines[1].pipeid] = &g_sample.gModels[i];
@@ -787,7 +813,8 @@ EXIT_4:
 EXIT_3:
 	for (size_t i = 0; i < vpipelines.size(); i++)
     {
-        axdl_deinit(&g_sample.gModels[i].gModel);
+        axdl_deinit(&g_sample.gModels[i].gModels[0]);
+        axdl_deinit(&g_sample.gModels[i].gModels[1]);
     }
 
 EXIT_2:
