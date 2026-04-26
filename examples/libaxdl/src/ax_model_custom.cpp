@@ -114,7 +114,7 @@ void ax_model_custom::draw_custom(cv::Mat &image, axdl_results_t *results, float
     if (cad.amp_max_negative) {
         cv::Point neg_pt(static_cast<int>(cad.max_negative_point_pos.x * image_width),
                         static_cast<int>(cad.max_negative_point_pos.y * image_height));
-        cv::circle(image, neg_pt, 2, cv::Scalar(255, 0, 255, 255), 2);
+        cv::circle(image, neg_pt, 2, cv::Scalar(255, 127, 0, 255), 2);
     }
 
     // 时间采样逻辑
@@ -148,14 +148,18 @@ void ax_model_custom::draw_custom(cv::Mat &image, axdl_results_t *results, float
                cv::Scalar(255, 0, 0, UCHAR_MAX), 2);
 
 
-    // 添加初始位置坐标 (绿色)
+    // 添加初始位置坐标 (橙色点)
     int point_x = static_cast<int>(cad.origin_x_no_uniform);
     int point_y = static_cast<int>(cad.occlusion_pixel_height);
-    cv::circle(image, cv::Point(point_x, point_y), 4, cv::Scalar(255, 127, 0, 255), -1);
+    cv::circle(image, cv::Point(point_x, point_y), 2, cv::Scalar(255, 0, 255, 255), -1);
 
     // 视频左上角绘制车牌号水印 carNo 与时间戳
     int text_y = 30;  // 起始Y位置
     if (car_no != "") {
+       cv::putText(image, car_no, cv::Point(10, text_y),
+                   cv::FONT_HERSHEY_SIMPLEX, fontscale * 2,
+                   cv::Scalar(255, 0, 0, 255), thickness * 2);
+       text_y += 40;
        cv::putText(image, car_no, cv::Point(10, text_y),
                    cv::FONT_HERSHEY_SIMPLEX, fontscale * 2,
                    cv::Scalar(255, 0, 0, 255), thickness * 2);
@@ -174,12 +178,15 @@ void ax_model_custom::draw_custom(cv::Mat &image, axdl_results_t *results, float
     // 在车牌号下方显示时间戳
     cv::putText(image, time_stream.str(), cv::Point(10, text_y),
                cv::FONT_HERSHEY_SIMPLEX, fontscale * 2, cv::Scalar(255, 255, 255, 255), thickness * 2);
+               cv::FONT_HERSHEY_SIMPLEX, fontscale * 2, cv::Scalar(255, 255, 255, 255), thickness * 2);
 
     // 绘制遮罩框
     int mask_height = static_cast<int>(cad.occlusion_pixel_height);
     cv::Rect mask_rect(0, 0, image_width, mask_height);
+    cv::Rect mask_rect(0, 0, image_width, mask_height);
     cv::rectangle(image, mask_rect, cv::Scalar(255, 0, 0, 255), 1);
 
+    //draw_bbox(image, results, fontscale, thickness, offset_x, offset_y);
     //draw_bbox(image, results, fontscale, thickness, offset_x, offset_y);
 }
 
