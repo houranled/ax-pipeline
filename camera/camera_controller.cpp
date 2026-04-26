@@ -440,15 +440,18 @@ int CameraController::load_config_from_file(const std::string& config_file_path)
 
                 camera->name = camera_config["name"];
 
-                if (camera_config.contains("ip")) {
-                    camera->ip = camera_config["ip"];
-                    std::string camera_rtsp_url = "rtsp://admin@" + camera->ip + ":8554/onvif1";
-                    camera->set_camera_rtsp_url(camera_rtsp_url);
-                }
-
                 // 设置 PTZ IP
                 if (camera_config.contains("ptz_ip")) {
                     camera->ptz_ip = camera_config["ptz_ip"];
+                }
+
+                if (camera_config.contains("ip")) {
+                    camera->ip = camera_config["ip"];
+                    std::string camera_rtsp_url = "rtsp://admin@" + camera->ip + ":8554/onvif1";
+                    if (camera->ptz_ip.empty()) {
+                        camera_rtsp_url = "rtsp://admin@" + camera->ip + "/channel=1&stream=0.sdp?";
+                    }
+                    camera->set_camera_rtsp_url(camera_rtsp_url);
                 }
 
                 // 从配置文件中读取并加载点位列表
