@@ -379,7 +379,9 @@ int main(int argc, char *argv[])
                 strcpy(config_file, "/wt_tech/app/ax-pipeline/config/wt_rtsp.json"); // 默认json配置文件
         }
 
-        AX_S32 s32Ret = axdl_parse_param_init(config_file, &g_sample.gModels[i].gModel, camera->getName().c_str());
+        AX_S32 s32Ret = axdl_parse_param_init(config_file, &g_sample.gModels[i].gModel,
+            camera->getName().c_str(), camera->get_id());
+
         if (s32Ret != 0)
         {
             ALOGE("sample_parse_param_det failed,run joint skip");

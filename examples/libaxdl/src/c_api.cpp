@@ -41,7 +41,7 @@ struct ax_model_handle_t
     }, ts2{0};
 };
 
-int axdl_parse_param_init(char *json_file_path, void **pModels, const char* channel_name)
+int axdl_parse_param_init(char *json_file_path, void **pModels, const char* channel_name, const int camera_id)
 {
     std::ifstream f(json_file_path);
     if (f.fail())
@@ -69,7 +69,7 @@ int axdl_parse_param_init(char *json_file_path, void **pModels, const char* chan
 
     ((ax_model_handle_t *)(*pModels))->model.reset(model);
 
-    ((ax_model_handle_t *)(*pModels))->model->set_channel_name_init(channel_name);
+    ((ax_model_handle_t *)(*pModels))->model->set_channel_init_info(channel_name, camera_id);
 
     int ret = ((ax_model_handle_t *)(*pModels))->model->init(&jsondata);
     bool track_enable = ax_model_base::get_track_enable(&jsondata);

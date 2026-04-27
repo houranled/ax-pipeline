@@ -385,9 +385,9 @@ void ax_model_custom::load_config()
     }
 }
 
-void ax_model_custom::set_channel_name_init(const std::string name)
+void ax_model_custom::set_channel_init_info(const std::string name, const int id)
 {
-    ax_model_base::set_channel_name_init(name);
+    ax_model_base::set_channel_init_info(name, id);
     load_config(); // 加载配置
 
     if (channel_amplitude_data.occlusion_pixel_height == 0) {

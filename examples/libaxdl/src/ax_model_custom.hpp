@@ -36,7 +36,7 @@ protected:
     void process_texts(axdl_results_t *results, int &chn, int d, float fontscale) override;
     void export_amplitude();
     void load_config();
-    virtual void set_channel_name_init(std::string name) override;
+    void set_channel_init_info(std::string name, const int id) override;
 
 private:
     // 通道相关数据

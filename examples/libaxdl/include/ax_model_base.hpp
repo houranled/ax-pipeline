@@ -126,6 +126,7 @@ protected:
     }
 
     std::string channel_name; // channel name
+    int camera_id;
 
 public:
     void draw_init(int chn,int chn_width,int chn_height,int max_num_rgn){ m_drawers[chn].init(max_num_rgn, chn_width, chn_height);}
@@ -217,10 +218,12 @@ public:
             draw_fps(chn, results, fontscale, thickness);
     }
 	virtual void *GetRunnerHandle()  = 0;
-    virtual void set_channel_name_init(const std::string name) {
+
+    virtual void set_channel_init_info(const std::string name, const int id)
+    {
         channel_name = name;
+        camera_id = id;
     }
-    const char* get_channel_name() {return channel_name.c_str(); }
 };
 
 class ax_model_single_base_t : public ax_model_base

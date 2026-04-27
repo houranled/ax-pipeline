@@ -175,7 +175,7 @@ extern "C"
         };
     } axdl_image_t;
 
-    int axdl_parse_param_init(char *json_file_path, void **pModels, const char* channel_name);
+    int axdl_parse_param_init(char *json_file_path, void **pModels, const char* channel_name, const int camera_id);
     void get_rtsp_urls_from_json(char *json_file_path, std::vector<std::string> &rtsp_urls);
     void axdl_deinit(void **pModels);
 
