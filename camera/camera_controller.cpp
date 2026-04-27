@@ -910,7 +910,7 @@ int Camera::getPhotosensitive()
     }
     photosensitive = regs[0]; // 更新内部状态
 
-    regs[1] = 0;
+    regs[0] = 0;
     rc = modbus_read_registers(modbus_ctx, MODBUSPTHRESHOLD, 1, regs);
     if (rc == -1) {
         WTALOGI("Failed to read photosensitivet register");
