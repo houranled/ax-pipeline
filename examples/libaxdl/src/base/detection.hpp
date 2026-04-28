@@ -2346,7 +2346,7 @@ namespace detection
         std::vector<int> picked;
         nms_sorted_bboxes(proposals, picked, nms_threshold);
 
-        // Calculate scaling parameters
+        /* yolov5 draw the result */
         float scale_letterbox;
         int resize_rows, resize_cols;
         if ((letterbox_rows * 1.0 / src_rows) < (letterbox_cols * 1.0 / src_cols)) {
@@ -2357,43 +2357,40 @@ namespace detection
         }
         resize_cols = int(scale_letterbox * src_cols);
         resize_rows = int(scale_letterbox * src_rows);
-
         int tmp_h = (letterbox_rows - resize_rows) / 2;
         int tmp_w = (letterbox_cols - resize_cols) / 2;
-
         float ratio_x = (float)src_rows / resize_rows;
         float ratio_y = (float)src_cols / resize_cols;
-
         int count = picked.size();
-
+        double pi = M_PI;
+        double pi_2 = M_PI_2;
         objects.resize(count);
         for (int i = 0; i < count; i++)
         {
             objects[i] = proposals[picked[i]];
+            float w_ = objects[i].rect.width > objects[i].rect.height ? objects[i].rect.width : objects[i].rect.height;
+            float h_ = objects[i].rect.width > objects[i].rect.height ? objects[i].rect.height : objects[i].rect.width;
+            float a_ = (float)std::fmod((objects[i].rect.width > objects[i].rect.height ? objects[i].angle : objects[i].angle + pi_2), pi);
+            float xc = (objects[i].rect.x - tmp_w) * ratio_x;
+            float yc = (objects[i].rect.y - tmp_h) * ratio_y;
+            float w = w_ * ratio_x;
+            float h = h_ * ratio_y;
+            // clip
+            xc = std::max(std::min(xc, (float)(src_cols - 1)), 0.f);
+            yc = std::max(std::min(yc, (float)(src_rows - 1)), 0.f);
+            w = std::max(std::min(w, (float)(src_cols - 1)), 0.f);
+            h = std::max(std::min(h, (float)(src_rows - 1)), 0.f);
 
-            // 转换关键点坐标
-            for (int l = 0; l < 5; l++)
-            {
-                auto lx = objects[i].landmark[l].x;
-                auto ly = objects[i].landmark[l].y;
-                objects[i].landmark[l] = cv::Point2f((lx - tmp_w) * ratio_x, (ly - tmp_h) * ratio_y);
-            }
+            float wx = w / 2 * std::cos(a_);
+            float wy = w / 2 * std::sin(a_);
+            float hx = -h / 2 * std::sin(a_);
+            float hy = h / 2 * std::cos(a_);
 
-            // 添加OBB顶点坐标转换
-            for (size_t j = 0; j < 4; j++)
-            {
-                // 转换OBB顶点坐标到原始图像空间
-                float obb_x = (objects[i].obb_vertices[j].x - tmp_w) * ratio_x;
-                float obb_y = (objects[i].obb_vertices[j].y - tmp_h) * ratio_y;
-
-                // 裁剪到图像边界
-                obb_x = std::max(std::min(obb_x, (float)(src_cols - 1)), 0.f);
-                obb_y = std::max(std::min(obb_y, (float)(src_rows - 1)), 0.f);
-
-                objects[i].obb_vertices[j].x = obb_x;
-                objects[i].obb_vertices[j].y = obb_y;
-            }
-
+            auto &obj = objects[i];
+            obj.obb_vertices[0] = cv::Point2f(xc - wx - hx, yc - wy - hy);
+            obj.obb_vertices[1] = cv::Point2f(xc + wx - hx, yc + wy - hy);
+            obj.obb_vertices[2] = cv::Point2f(xc + wx + hx, yc + wy + hy);
+            obj.obb_vertices[3] = cv::Point2f(xc - wx + hx, yc - wy + hy);
         }
     }
 
