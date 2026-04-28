@@ -2091,9 +2091,6 @@ namespace detection
                 float w = pred_ltrb[2] + pred_ltrb[0]; // w: 边界框的宽度，通过左右边界点相加得到
                 float h = pred_ltrb[3] + pred_ltrb[1]; // h: 边界框的高度，通过上下边界点相加得到
 
-                // 添加调试信息
-                WTALOGI("pred_ltrb: l=%.2f, t=%.2f, r=%.2f, b=%.2f, angle=%.4f", pred_ltrb[0], pred_ltrb[1], pred_ltrb[2], pred_ltrb[3], angle);
-
                 Object obj;
                 obj.rect.x = xc; // center x
                 obj.rect.y = yc; // center y

@@ -77,33 +77,33 @@ int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resi
 }
 
 
-void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y)
-{
-    // Draw OBB polygons for each detected object
-    for (int i = 0; i < results->nObjSize; i++) {
-        if (results->mObjects[i].bHasBoxVertices) {
-            cv::Point pts[4];
-            for (int j = 0; j < 4; j++) {
-                pts[j] = cv::Point(
-                    results->mObjects[i].bbox_vertices[j].x * image.cols + offset_x,
-                    results->mObjects[i].bbox_vertices[j].y * image.rows + offset_y
-                );
-            }
+//void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y)
+//{
+//    // Draw OBB polygons for each detected object
+//    for (int i = 0; i < results->nObjSize; i++) {
+//        if (results->mObjects[i].bHasBoxVertices) {
+//            cv::Point pts[4];
+//            for (int j = 0; j < 4; j++) {
+//                pts[j] = cv::Point(
+//                    results->mObjects[i].bbox_vertices[j].x * image.cols + offset_x,
+//                    results->mObjects[i].bbox_vertices[j].y * image.rows + offset_y
+//                );
+//            }
 
-            // Draw rotated rectangle/polygon
-            for (int j = 0; j < 4; j++) {
-                cv::line(image, pts[j], pts[(j + 1) % 4],
-                        cv::Scalar(0, 255, 0), thickness, 8, 0);
-            }
+//            // Draw rotated rectangle/polygon
+//            for (int j = 0; j < 4; j++) {
+//                cv::line(image, pts[j], pts[(j + 1) % 4],
+//                        cv::Scalar(0, 255, 0), thickness, 8, 0);
+//            }
 
-            // Draw label with class name and confidence
-            std::string label_str = std::string(results->mObjects[i].objname) + " " +
-                                   std::to_string(static_cast<int>(results->mObjects[i].prob * 100)) + "%";
-            cv::putText(image, label_str, pts[0], cv::FONT_HERSHEY_SIMPLEX,
-                       fontscale, cv::Scalar(0, 255, 0), thickness);
-        }
-    }
-}
+//            // Draw label with class name and confidence
+//            std::string label_str = std::string(results->mObjects[i].objname) + " " +
+//                                   std::to_string(static_cast<int>(results->mObjects[i].prob * 100)) + "%";
+//            cv::putText(image, label_str, pts[0], cv::FONT_HERSHEY_SIMPLEX,
+//                       fontscale, cv::Scalar(0, 255, 0), thickness);
+//        }
+//    }
+//}
 
 //void ax_model_damage::draw_custom(int chn, axdl_results_t *results, float fontscale, int thickness)
 //{
