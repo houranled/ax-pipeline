@@ -350,6 +350,12 @@ int ax_model_single_base_t::preprocess(axdl_image_t *srcFrame, axdl_bbox_t *crop
 {
     memcpy(&dstFrame, srcFrame, sizeof(axdl_image_t));
     bMalloc = false;
+
+#if 1
+    cv::Mat image(srcFrame->nHeight, srcFrame->nWidth, CV_8UC3, srcFrame->pVir);
+    cv::imwrite("/wt_tech/app/preprocess.png", image); // test:保存图像
+#endif
+
     return 0;
 }
 

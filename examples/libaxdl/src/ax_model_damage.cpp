@@ -27,6 +27,7 @@ int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resi
         // YOLOv8 OBB format: [batch=1, channels=5+classes, anchors=8400]
         num_anchors = (int)pOutputsInfo[0].vShape[2];  // 8400
         int channels = (int)pOutputsInfo[0].vShape[1];  // 5 + num_classes
+        //num_classes = channels - 5;
     } else {
         ALOGE("YOLOv8 OBB requires 3D output [batch, channels, anchors]");
         return -1;
@@ -44,12 +45,12 @@ int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resi
 
     // Generate OBB proposals using AXERA-style approach
     std::vector<detection::Object> proposals;
-    detection::generate_proposals_yolov8_obb_xyxyxyxy(grid_strides, output_ptr, PROB_THRESHOLD, proposals,
+    detection::generate_proposals_yolov8_obb_native(grid_strides, output_ptr, PROB_THRESHOLD, proposals,
         get_algo_width(), get_algo_height(), num_classes);
 
     // Apply NMS and coordinate transformation
     std::vector<detection::Object> objects;
-    detection::get_out_obb_bbox(proposals, objects, NMS_THRESHOLD, get_algo_width(), get_algo_height(),
+    detection::get_out_obb_bbox(proposals, objects, NMS_THRESHOLD, get_algo_height(), get_algo_width(),
                                 pstFrame->nHeight, pstFrame->nWidth);
 
     // Convert to axdl_results_t format
