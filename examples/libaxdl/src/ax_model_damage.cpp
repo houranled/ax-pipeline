@@ -116,6 +116,7 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
     if (results->nObjSize > 0) {
         //生成告警 调用camera_Controller
         CameraController::getInstance()->early_warning_process(camera_id);
+        CameraController::getInstance()->getCamera(camera_id)->start_take_a_picture(2);
     }
 }
 
