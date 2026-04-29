@@ -149,36 +149,27 @@ void h265_save_func(pipeline_buffer_t *buff) //buff->p_vir 包含一帧编码后
 {
     pipeline_t *pipe = (pipeline_t *)buff->p_pipe;
 
-    if (!pipe->IsRecordVideo&& !pipe->ffmpeg_pipe_file)
+    // 如果不在录像状态且没有正在处理的ffmpeg管道，直接返回
+    if (!pipe->IsRecordVideo && !pipe->ffmpeg_pipe_file)
         return ;
 
+    // 巡检模式：持续录像，直接写入ffmpeg管道
+    if (pipe->IsRecordVideo) {
+        // 如果ffmpeg管道未创建，先创建
+        if (NULL == pipe->ffmpeg_pipe_file) {
+            init_ffmpeg_pipe_video_recorder(pipe);
+        }
+        // 直接写入当前帧到ffmpeg管道
+        if (pipe->ffmpeg_pipe_file) {
+            fwrite(buff->p_vir, 1, buff->n_size, pipe->ffmpeg_pipe_file);
+            fflush(pipe->ffmpeg_pipe_file);
+        }
 
-    if(pipe->h26data[0].p_h26data == NULL) {
-        pipe->h26data[0].p_h26data  = (unsigned char *)calloc(1 , 60*1024*1024);
-        pipe->h26data[1].p_h26data  = (unsigned char *)calloc(1 , 60*1024*1024);
-        pipe->h26data[0].IsWrite = 1;
-    }
-
-    int num = 0;
-    if(pipe->h26data[num].IsWrite==0) {
-        num =1;
-    }  // else  noop num=0;
-
-    // 帧数据缓存到pipe->h26data[num].p_h26data中
-    if(pipe->h26data[num].IsWrite==1) {
-        memcpy(pipe->h26data[num].p_h26data + pipe->h26data[num].DataSize, buff->p_vir, buff->n_size);
-        pipe->h26data[num].frameNum++;
-        pipe->h26data[num].DataSize+=buff->n_size;
-    }
-
-    int frameMax = 15 * 25 ; //录制一次视频总帧数 相当于记录时长(15秒)*帧率
-    if(pipe->h26data[num].frameNum >= frameMax) { //完成录制
-        record_ffmpeg_pipe_video(pipe);
-
-        pipe->h26data[num].IsWrite = 0;
-        pipe->h26data[1-num].IsWrite =1;
-        pipe->h26data[1-num].DataSize = 0;
-        pipe->h26data[1-num].frameNum = 0;
+    } else if (pipe->ffmpeg_pipe_file) {
+        // 停止录像，关闭ffmpeg管道
+        pclose(pipe->ffmpeg_pipe_file);
+        pipe->ffmpeg_pipe_file = NULL;
+        WTALOGI("录制视频完成，关闭文件[%s]", pipe->video_filename);
     }
 
     if (pipe->whatPicture) {

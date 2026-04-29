@@ -239,7 +239,7 @@ extern "C"
 
     // FFmpeg相关函数
     //bool init_ffmpeg_pipe(pipeline_t *pipe);
-    bool record_ffmpeg_pipe_video(pipeline_t *pipe); // 录制视频
+    bool init_ffmpeg_pipe_video_recorder(pipeline_t *pipe); // 录制视频
     bool record_ffmpeg_pipe_jpg(pipeline_t *pipe, void *p_hevc , int pLen);
 
 #if __cplusplus
