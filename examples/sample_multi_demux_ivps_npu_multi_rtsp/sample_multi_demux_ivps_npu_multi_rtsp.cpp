@@ -173,7 +173,7 @@ void h265_save_func(pipeline_buffer_t *buff) //buff->p_vir 包含一帧编码后
     }
 
     if (pipe->whatPicture) {
-        record_ffmpeg_pipe_jpg(pipe, buff->p_vir, buff->n_size); //保存图片
+        //record_ffmpeg_pipe_jpg(pipe, buff->p_vir, buff->n_size); //保存图片
     }
 
 }
@@ -447,7 +447,7 @@ int main(int argc, char *argv[])
             sprintf(pipe0.m_venc_attr.end_point, "%s%d", "axstream", (int)i+1); // 重复的会创建失败
             pipe0.m_venc_attr.n_venc_chn = i;                                 // 重复的会创建失败
             pipe0.m_vdec_attr.n_vdec_grp = i;
-            pipe0.output_func = h265_save_func;
+            //pipe0.output_func = h265_save_func;
 
             /*
             pipeline_t &pipe2 = pipelines[2]; //输出到本地文件存储
