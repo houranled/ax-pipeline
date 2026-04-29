@@ -158,7 +158,7 @@ private:
     bool posture_completed = false; // 是否到达指定位置
 
     int patrol_with_calibration_loop(bool is_calibrate);  // 摄像机巡检(可伴随标定)
-    bool is_posture_completed(); // 判断是否到达指定位置
+    bool is_posture_completed(int x, int y); // 判断是否到达指定位置
     void setPipe(pipeline_t * pipe); // 绑定pipeline
     bool connect_modbus(); // 重连modbus
 
