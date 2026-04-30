@@ -111,6 +111,7 @@ protected:
 
     char fps_info[128];
     void draw_bbox(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y);
+    void wt_amp_draw_face_bbox(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y);
     void draw_fps(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y);
     virtual void draw_custom(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y)
     {

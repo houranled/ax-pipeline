@@ -79,115 +79,101 @@ void ax_model_custom::draw_custom(cv::Mat &image, axdl_results_t *results, float
     int image_height = image.rows;
 
     // 只处理第一个检测结果
+    if (results->nObjSize <= 0) {
+        return ;
+    }
+
+    auto now = std::chrono::system_clock::now();
     auto &obj = results->mObjects[0];
     auto& cad = channel_amplitude_data;  //cad: channel amplitude data
+    if (strcmp(obj.objname, "fan") == 0) {
 
-    //tan(画面上沿视线与摄像头主视线的垂直夹角) 即 镜头中间水平线到画面上沿的距离长度÷焦距 是个比例值
-    auto tanAngle = (image_height/2.0f - cad.occlusion_pixel_height) / (cad.f/cad.size_per_pixel);
+        //tan(画面上沿视线与摄像头主视线的垂直夹角) 即 镜头中间水平线到画面上沿的距离长度÷焦距 是个比例值
+        auto tanAngle = (image_height/2.0f - cad.occlusion_pixel_height) / (cad.f/cad.size_per_pixel);
 
-    if (0.5f == obj.bbox.x || 0.5f == cad.origin_x_no_uniform/image_width) {
-        cad.amplitude_now = 0;
-    } else {
-        cad.amplitude_now/*振幅*/= cad.f * cad.X /(image_width * cad.size_per_pixel) *
-            (1/(0.5f - obj.bbox.x) - 1/(0.5f - cad.origin_x_no_uniform/image_width)) /*△Z*/
-            * tanAngle /*tan仰角*/;
+        if (0.5f == obj.bbox.x || 0.5f == cad.origin_x_no_uniform/image_width) {
+            cad.amplitude_now = 0;
+        } else {
+            cad.amplitude_now/*振幅*/= cad.f * cad.X /(image_width * cad.size_per_pixel) *
+                (1/(0.5f - obj.bbox.x) - 1/(0.5f - cad.origin_x_no_uniform/image_width)) /*△Z*/
+                * tanAngle /*tan仰角*/;
+        }
+
+        cad.amplitude_now = std::round(cad.amplitude_now * 100000) / 100000; // 保留小数点后5位并加上初始距离形成绝对距离
+        auto distance_now = cad.amplitude_now + cad.Y; // 距离 = 振幅 + 初始距离
+
+        if (cad.amplitude_now > 0 && cad.amplitude_now > cad.amp_max_positive) {
+            cad.amp_max_positive = cad.amplitude_now;
+            cad.max_positive_point_pos = {obj.bbox.x, obj.bbox.y};
+        } else if (cad.amplitude_now < 0 && cad.amplitude_now < cad.amp_max_negative) {
+            cad.amp_max_negative = cad.amplitude_now;
+            cad.max_negative_point_pos = {obj.bbox.x, obj.bbox.y};
+        }
+
+
+        // 时间采样逻辑
+        if (cad.last_sample_time.time_since_epoch().count() == 0) {
+            cad.last_sample_time = now;
+        }
+
+        auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - cad.last_sample_time).count();
+        if (elapsed_ms >= 90) { // 10Hz采样
+            cad.amplitude_datas.push_back(distance_now);
+            cad.last_sample_time = now;
+        }
+
+        // 使用OpenCV绘制文本
+        cv::Point obj_pt(static_cast<int>(obj.bbox.x * image_width),
+                        static_cast<int>(obj.bbox.y * image_height + 3));
+        std::string obj_text = std::to_string(distance_now);
+        cv::circle(image, obj_pt, 2, cv::Scalar(255, 0, 0, 0), 2);
+        cv::putText(image, obj_text, obj_pt, cv::FONT_HERSHEY_SIMPLEX, fontscale,
+                   cv::Scalar(255, 255, 255, UCHAR_MAX), 2);
     }
 
-    cad.amplitude_now = std::round(cad.amplitude_now * 100000) / 100000; // 保留小数点后5位并加上初始距离形成绝对距离
-    auto distance_now = cad.amplitude_now + cad.Y; // 距离 = 振幅 + 初始距离
+        cv::Point pos_text_pt(static_cast<int>(0.3 * image_width), 20);
+        std::string pos_text = "positive max:" + std::to_string(cad.amp_max_positive);
+        cv::putText(image, pos_text, pos_text_pt, cv::FONT_HERSHEY_SIMPLEX, 1.0,
+                   cv::Scalar(255, 0, 0, UCHAR_MAX), 2);
 
-    if (cad.amplitude_now > 0 && cad.amplitude_now > cad.amp_max_positive) {
-        cad.amp_max_positive = cad.amplitude_now;
-        cad.max_positive_point_pos = {obj.bbox.x, obj.bbox.y};
-    } else if (cad.amplitude_now < 0 && cad.amplitude_now < cad.amp_max_negative) {
-        cad.amp_max_negative = cad.amplitude_now;
-        cad.max_negative_point_pos = {obj.bbox.x, obj.bbox.y};
-    }
-
-    // 使用OpenCV绘制点
-    if (cad.amp_max_positive) {
-        cv::Point pos_pt(static_cast<int>(cad.max_positive_point_pos.x * image_width),
-                        static_cast<int>(cad.max_positive_point_pos.y * image_height));
-        cv::circle(image, pos_pt, 2, cv::Scalar(255, 127, 255, 0), 2);
-    }
-
-    if (cad.amp_max_negative) {
-        cv::Point neg_pt(static_cast<int>(cad.max_negative_point_pos.x * image_width),
-                        static_cast<int>(cad.max_negative_point_pos.y * image_height));
-        cv::circle(image, neg_pt, 2, cv::Scalar(255, 127, 0, 255), 2);
-    }
-
-    // 时间采样逻辑
-    auto now = std::chrono::system_clock::now();
-    if (cad.last_sample_time.time_since_epoch().count() == 0) {
-        cad.last_sample_time = now;
-    }
-
-    auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - cad.last_sample_time).count();
-    if (elapsed_ms >= 90) { // 10Hz采样
-        cad.amplitude_datas.push_back(distance_now);
-        cad.last_sample_time = now;
-    }
-
-    // 使用OpenCV绘制文本
-    cv::Point obj_pt(static_cast<int>(obj.bbox.x * image_width),
-                    static_cast<int>(obj.bbox.y * image_height + 3));
-    std::string obj_text = std::to_string(distance_now);
-    cv::circle(image, obj_pt, 2, cv::Scalar(255, 0, 0, 0), 2);
-    cv::putText(image, obj_text, obj_pt, cv::FONT_HERSHEY_SIMPLEX, fontscale,
-               cv::Scalar(255, 255, 255, UCHAR_MAX), 2);
-
-    cv::Point pos_text_pt(static_cast<int>(0.3 * image_width), 20);
-    std::string pos_text = "positive max:" + std::to_string(cad.amp_max_positive);
-    cv::putText(image, pos_text, pos_text_pt, cv::FONT_HERSHEY_SIMPLEX, 1.0,
-               cv::Scalar(255, 0, 0, UCHAR_MAX), 2);
-
-    cv::Point neg_text_pt(static_cast<int>(0.5 * image_width), 20);
-    std::string neg_text = "negative max:" + std::to_string(cad.amp_max_negative);
-    cv::putText(image, neg_text, neg_text_pt, cv::FONT_HERSHEY_SIMPLEX, 1.0,
-               cv::Scalar(255, 0, 0, UCHAR_MAX), 2);
+        cv::Point neg_text_pt(static_cast<int>(0.5 * image_width), 20);
+        std::string neg_text = "negative max:" + std::to_string(cad.amp_max_negative);
+        cv::putText(image, neg_text, neg_text_pt, cv::FONT_HERSHEY_SIMPLEX, 1.0,
+                   cv::Scalar(255, 0, 0, UCHAR_MAX), 2);
 
 
-    // 添加初始位置坐标 (橙色点)
-    int point_x = static_cast<int>(cad.origin_x_no_uniform);
-    int point_y = static_cast<int>(cad.occlusion_pixel_height);
-    cv::circle(image, cv::Point(point_x, point_y), 2, cv::Scalar(255, 0, 255, 255), -1);
+        // 添加初始位置坐标 (橙色点)
+        int point_x = static_cast<int>(cad.origin_x_no_uniform);
+        int point_y = static_cast<int>(cad.occlusion_pixel_height);
+        cv::circle(image, cv::Point(point_x, point_y), 2, cv::Scalar(255, 0, 255, 255), -1);
 
-    // 视频左上角绘制车牌号水印 carNo 与时间戳
-    int text_y = 30;  // 起始Y位置
-    if (car_no != "") {
-       cv::putText(image, car_no, cv::Point(10, text_y),
-                   cv::FONT_HERSHEY_SIMPLEX, fontscale * 2,
-                   cv::Scalar(255, 0, 0, 255), thickness * 2);
-       text_y += 40;
-       cv::putText(image, car_no, cv::Point(10, text_y),
-                   cv::FONT_HERSHEY_SIMPLEX, fontscale * 2,
-                   cv::Scalar(255, 0, 0, 255), thickness * 2);
-       text_y += 40;
-    }
+        // 视频左上角绘制车牌号水印 carNo 与时间戳
+        int text_y = 30;  // 起始Y位置
+        if (car_no != "") {
+           cv::putText(image, car_no, cv::Point(10, text_y),
+                       cv::FONT_HERSHEY_SIMPLEX, fontscale * 2,
+                       cv::Scalar(255, 0, 0, 255), thickness * 2);
+           text_y += 40;
+        }
 
-    // 获取当前时间
-    auto now_time = std::chrono::system_clock::to_time_t(now);
+        // 获取当前时间
+        auto now_time = std::chrono::system_clock::to_time_t(now);
+        std::tm tm_now;
+        localtime_r(&now_time, &tm_now);
 
-    std::tm tm_now;
-    localtime_r(&now_time, &tm_now);
+        std::ostringstream time_stream;
+        time_stream << std::put_time(&tm_now, "%Y-%m-%d %H:%M:%S");
 
-    std::ostringstream time_stream;
-    time_stream << std::put_time(&tm_now, "%Y-%m-%d %H:%M:%S");
+        // 在车牌号下方显示时间戳
+        cv::putText(image, time_stream.str(), cv::Point(10, text_y),
+                   cv::FONT_HERSHEY_SIMPLEX, fontscale * 2, cv::Scalar(255, 255, 255, 255), thickness * 2);
 
-    // 在车牌号下方显示时间戳
-    cv::putText(image, time_stream.str(), cv::Point(10, text_y),
-               cv::FONT_HERSHEY_SIMPLEX, fontscale * 2, cv::Scalar(255, 255, 255, 255), thickness * 2);
-               cv::FONT_HERSHEY_SIMPLEX, fontscale * 2, cv::Scalar(255, 255, 255, 255), thickness * 2);
+        // 绘制遮罩框
+        int mask_height = static_cast<int>(cad.occlusion_pixel_height);
+        cv::Rect mask_rect(0, 0, image_width, mask_height);
+        cv::rectangle(image, mask_rect, cv::Scalar(255, 0, 0, 255), 1);
 
-    // 绘制遮罩框
-    int mask_height = static_cast<int>(cad.occlusion_pixel_height);
-    cv::Rect mask_rect(0, 0, image_width, mask_height);
-    cv::Rect mask_rect(0, 0, image_width, mask_height);
-    cv::rectangle(image, mask_rect, cv::Scalar(255, 0, 0, 255), 1);
-
-    //draw_bbox(image, results, fontscale, thickness, offset_x, offset_y);
-    //draw_bbox(image, results, fontscale, thickness, offset_x, offset_y);
+    wt_amp_draw_face_bbox(image, results, fontscale, thickness, offset_x, offset_y);
 }
 
 void ax_model_custom::draw_custom(int chn, axdl_results_t *results, float fontscale, int thickness)
