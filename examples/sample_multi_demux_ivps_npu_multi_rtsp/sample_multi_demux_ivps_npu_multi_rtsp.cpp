@@ -571,7 +571,7 @@ int main(int argc, char *argv[])
     for (auto const &camera : CameraController::getInstance()->getAllCameras())
     {
         if (camera->getName() == "tc") {
-            strcpy(config_file, "/wt_tech/app/ax-pipeline/config/wt_rtsp_tc.json"); // 扇叶尖专用模型
+            strcpy(config_file, "/wt_tech/app/ax-pipeline/config/wt_rtsp_tc.json"); // 叶片尖专用模型
         } else {
             if (strlen(config_file_test))
                 strcpy(config_file, config_file_test); // -f参数指定的json配置文件
@@ -587,6 +587,9 @@ int main(int argc, char *argv[])
         }
         else {
             g_sample.gModels[i].gModels.push_back(model1);
+            s32Ret = axdl_get_ivps_width_height(g_sample.gModels[i].gModels[0], config_file, &SAMPLE_IVPS_ALGO_WIDTH[i],
+                &SAMPLE_IVPS_ALGO_HEIGHT[i]);
+            WTALOGI("IVPS AI channel width=%d height=%d", SAMPLE_IVPS_ALGO_WIDTH[i], SAMPLE_IVPS_ALGO_HEIGHT[i]);
         }
 
         // 加载第二个模型（例如人脸识别模型）
@@ -596,7 +599,14 @@ int main(int argc, char *argv[])
         s32Ret = axdl_parse_param_init(config_file_people, &model2, camera->getName().c_str());
         if (s32Ret == 0) {
             g_sample.gModels[i].gModels.push_back(model2);
+            int width, heigh;
+            s32Ret = axdl_get_ivps_width_height(g_sample.gModels[i].gModels[1], config_file_people, &width, &heigh);
+            if (width != SAMPLE_IVPS_ALGO_WIDTH[i] || heigh != SAMPLE_IVPS_ALGO_HEIGHT[i]) {
+                WTALOGI("model2和model1的尺寸大小要求不一致! width2=%d height2=%d",
+                    SAMPLE_IVPS_ALGO_WIDTH[i], SAMPLE_IVPS_ALGO_HEIGHT[i]);
+            }
         }
+
         // 如果至少有一个模型加载成功，则启用联合推理
         g_sample.gModels[i].bRunJoint = !g_sample.gModels[i].gModels.empty();
 
@@ -813,8 +823,10 @@ EXIT_4:
 EXIT_3:
 	for (size_t i = 0; i < vpipelines.size(); i++)
     {
-        axdl_deinit(&g_sample.gModels[i].gModels[0]);
-        axdl_deinit(&g_sample.gModels[i].gModels[1]);
+        for (size_t j = 0; j < g_sample.gModels[i].gModels.size(); j++)
+        {
+            axdl_deinit(&g_sample.gModels[i].gModels[j]);
+        }
     }
 
 EXIT_2:
