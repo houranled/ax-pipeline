@@ -122,6 +122,7 @@ public:
     std::string get_pic_path() const; // 获取当前录制图片路径
     std::string get_camera_rtsp_url(); // 获取相机rtsp url
     void set_camera_rtsp_url(const std::string& url); // 设置相机rtsp url
+    pipeline_t* get_pipeline() const; // 获取绑定的pipeline
 
     const std::vector<PresetPosition>& getPresetPositions() const {
         return preset_positions;

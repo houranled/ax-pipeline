@@ -716,6 +716,11 @@ std::string Camera::get_pic_path() const
     return this->m_pipeline->pic_filename; // 返回图片路径
 }
 
+pipeline_t* Camera::get_pipeline() const
+{
+    return this->m_pipeline; // 返回pipeline指针
+}
+
 std::string Camera::get_camera_rtsp_url()
 {
     return camera_rtsp_url;

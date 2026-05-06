@@ -7,6 +7,9 @@
 #include <atomic>
 #include <thread>
 #include <mutex>
+#include <chrono>
+#include <iomanip>
+#include <sstream>
 
 class ax_model_custom : public ax_model_yolov8_native
 {
@@ -65,6 +68,24 @@ private:
     // 添加静态成员变量存储carNo
     static std::string car_no;
 
+    // ========== 人脸检测录像相关成员 ==========
+    struct FaceRecordData {
+        bool is_recording = false;           // 是否正在录制
+        std::chrono::system_clock::time_point last_face_detect_time;  // 最后一次检测到人脸的时间
+        std::chrono::system_clock::time_point record_start_time;      // 录制开始时间
+        int face_detect_count = 0;           // 当前录制周期内检测到人脸的帧数
+    } face_record_data;
+
+    // 录制参数配置
+    static constexpr int FACE_DETECT_THRESHOLD = 3;           // 连续检测到3帧人脸才开始录制（防抖）
+    static constexpr int RECORD_MAX_DURATION_SECONDS = 60;      // 最大录制时长60秒
+    static constexpr int RECORD_POST_FACE_SECONDS = 5;        // 人脸消失后继续录制5秒
+    static constexpr int RECORD_MIN_DURATION_SECONDS = 10;    // 最小录制时长10秒
+
+    void check_and_trigger_face_recording(axdl_results_t *results);
+    void stop_face_recording();
+    std::string generate_face_record_filename();
+    void trigger_camera_record(bool start);
 
 };
 REGISTER(MT_CUSTOM_MODEL, ax_model_custom)

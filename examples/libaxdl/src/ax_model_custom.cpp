@@ -7,6 +7,7 @@
 
 #include "../../camera/camera_controller.hpp"
 #include <time.h>
+#include <sys/stat.h>
 
 
 // 初始化静态成员
@@ -73,6 +74,9 @@ void ax_model_custom::draw_custom(cv::Mat &image, axdl_results_t *results, float
      * 1、cv::Mat &image 是一个BGRA的四通道图像
      * 2、请不要对 cv::Mat &image 进行除了绘制图案之外的其他修改，如 resize、cvtColor 等
      */
+
+    // 检查人脸检测并触发录像
+    check_and_trigger_face_recording(results);
 
      // 获取图像尺寸
     int image_width = image.cols;
@@ -389,6 +393,143 @@ void ax_model_custom::set_channel_init_info(const std::string name, const int id
             channel_amplitude_data.occlusion_pixel_height = 390.0f;
         } else {
             channel_amplitude_data.occlusion_pixel_height = 190.0f;
+        }
+    }
+}
+
+void ax_model_custom::check_and_trigger_face_recording(axdl_results_t *results)
+{
+    bool face_detected = false;
+
+    // 检查检测结果中是否包含人脸(face类别)
+    for (int i = 0; i < results->nObjSize; i++) {
+        auto &obj = results->mObjects[i];
+        // person 通过 objname 判断
+        if (std::string(obj.objname).find("face") != std::string::npos) {
+            face_detected = true;
+            break;
+        }
+    }
+
+    auto now = std::chrono::system_clock::now();
+
+    if (face_detected) {
+        face_record_data.last_face_detect_time = now;
+        face_record_data.face_detect_count++;
+
+        // 如果未在录制状态，且连续检测到足够次数的人脸，开始录制
+        if (!face_record_data.is_recording && face_record_data.face_detect_count >= FACE_DETECT_THRESHOLD)
+        {
+            face_record_data.is_recording = true;
+            face_record_data.record_start_time = now;
+            face_record_data.face_detect_count = 0;
+
+            // 触发录制
+            trigger_camera_record(true);
+        }
+    } else {
+        // 未检测到人脸，重置连续检测计数
+        face_record_data.face_detect_count = 0;
+    }
+
+    // 检查是否需要停止录制
+    if (face_record_data.is_recording) {
+        auto record_duration = std::chrono::duration_cast<std::chrono::seconds>(
+            now - face_record_data.record_start_time).count();
+
+        auto time_since_last_face = std::chrono::duration_cast<std::chrono::seconds>(
+            now - face_record_data.last_face_detect_time).count();
+
+        bool should_stop = false;
+        std::string stop_reason;
+
+        // 停止条件1：超过最大录制时长
+        if (record_duration >= RECORD_MAX_DURATION_SECONDS) {
+            should_stop = true;
+            stop_reason = "达到最大录制时长(" + std::to_string(RECORD_MAX_DURATION_SECONDS) + "秒)";
+        }
+        // 停止条件2：人脸消失超过指定时间，且已录制超过最小时长
+        else if (time_since_last_face >= RECORD_POST_FACE_SECONDS &&
+                 record_duration >= RECORD_MIN_DURATION_SECONDS) {
+            should_stop = true;
+            stop_reason = "人脸消失超过" + std::to_string(RECORD_POST_FACE_SECONDS) + "秒";
+        }
+
+        if (should_stop) {
+            stop_face_recording();
+            WTALOGI("[FaceRecord] 通道[%s] 停止录制，原因: %s，录制时长: %ld秒",
+                    channel_name.c_str(),
+                    stop_reason.c_str(), record_duration);
+        }
+    }
+}
+
+void ax_model_custom::stop_face_recording()
+{
+    if (face_record_data.is_recording) {
+        face_record_data.is_recording = false;
+        face_record_data.face_detect_count = 0;
+        trigger_camera_record(false);
+    }
+}
+
+std::string ax_model_custom::generate_face_record_filename()
+{
+    auto now = std::chrono::system_clock::now();
+    auto time_t = std::chrono::system_clock::to_time_t(now);
+    std::tm tm_now;
+    localtime_r(&time_t, &tm_now);
+
+    std::ostringstream filename;
+    // 格式: 通道名_年_月_日_时_分_秒.mp4
+    filename << channel_name << "_"
+              << std::put_time(&tm_now, "%Y_%m_%d_%H_%M_%S") << ".mp4";
+
+    return filename.str();
+}
+
+void ax_model_custom::trigger_camera_record(bool start)
+{
+    // 通过 CameraController 获取对应通道的 Camera 对象
+    CameraController* controller = CameraController::getInstance();
+    if (!controller) {
+        WTALOGI("[FaceRecord] CameraController 实例为空");
+        return;
+    }
+
+    auto camera = controller->getCamera(camera_id);
+    if (camera) {
+        pipeline_t* pipeline = camera->get_pipeline();
+        if (!pipeline) {
+            WTALOGI("[FaceRecord] 通道[%s] pipeline 为空", channel_name.c_str());
+            return;
+        }
+
+        if (start) {
+            // 生成文件名并设置路径
+            std::string filename = generate_face_record_filename();
+            std::string base_path = "/wt_tech/data/video2/person";
+            std::string full_path = base_path + "/" + filename;
+
+            // 确保目录存在
+            struct stat st = {0};
+            if (stat(base_path.c_str(), &st) == -1) {
+                std::string cmd = "mkdir -p " + base_path;
+                system(cmd.c_str());
+            }
+
+            // 设置录制文件名（供 h265_save_func 使用）
+            strncpy(pipeline->video_filename, full_path.c_str(), sizeof(pipeline->video_filename) - 1);
+            pipeline->video_filename[sizeof(pipeline->video_filename) - 1] = '\0';
+
+            // 开始录制
+            camera->start_record_video();
+            WTALOGI("[FaceRecord] 通道[%s] 开始录制，路径: %s",
+                    channel_name.c_str(), full_path.c_str());
+        } else {
+            // 停止录制 - 直接设置 IsRecordVideo = false
+            // h265_save_func 会检测到变化并关闭 ffmpeg 管道
+            pipeline->IsRecordVideo = false;
         }
     }
 }

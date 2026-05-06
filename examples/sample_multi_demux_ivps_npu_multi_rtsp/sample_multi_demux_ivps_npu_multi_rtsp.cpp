@@ -42,6 +42,7 @@
 #include "../../../camera/camera_controller.hpp"
 #include <list>
 #include <cstdint>
+#include "path_manager.hpp"
 
 #define pipe_count 2
 
@@ -151,6 +152,7 @@ void ai_inference_func(pipeline_buffer_t *buff)
         //memset(&mResults[pipe->pipeid], 0, sizeof(axdl_results_t));
         mResults[pipe->pipeid].nObjSize = 0;
 
+        int count = 0;
         // 使用所有模型对同一帧图像进行推理，并合并结果
         for (auto each_model : g_sample.osd_target_map[pipe->pipeid]->gModels)
         {
@@ -168,6 +170,7 @@ void ai_inference_func(pipeline_buffer_t *buff)
                     mResults[pipe->pipeid].nObjSize++;
                 }
             }
+            count++; // 记录模型数量
         }
         // ALOGI("pipe=%d detect%d", pipe->pipeid, mResults[pipe->pipeid].nObjSize);
         g_sample.osd_target_map[pipe->pipeid]->osd_helper.Update(&mResults[pipe->pipeid]);
@@ -244,14 +247,14 @@ void h265_save_func(pipeline_buffer_t *buff)
         time_t timeReal;
         time(&timeReal);
         timeReal = timeReal + 8 * 3600;
+        
+        // 使用PathManager生成路径
+        PathManager& pathManager = PathManager::getInstance();
+        std::string dirname = pathManager.generatePath("video", pipe->channel_name, timeReal);
+        
         tm *t = gmtime(&timeReal);
-        char dirname[128] = {0};
-        char dateStr[16] = {0};
-        sprintf(dateStr, "%04d%02d%02d", t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
-        sprintf(dirname, "/wt_tech/data/%s/%s/%s_%d/video", "F02", dateStr, dateStr, t->tm_hour);
-
         char filename[256] = {0};
-        sprintf(filename, "%s/%d-%02d-%02d_%02d_%s.mp4", dirname, t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,t->tm_hour,
+        sprintf(filename, "%s/%d-%02d-%02d_%02d_%s.mp4", dirname.c_str(), t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour,
             pipe->channel_name);
         strncpy(pipe->video_filename, filename, sizeof(pipe->video_filename) - 1);
         pipe->video_filename[sizeof(pipe->video_filename) - 1] = '\0';
@@ -267,9 +270,9 @@ void h265_save_func(pipeline_buffer_t *buff)
         WTALOGI("录制结束，启动后台线程写入 %zu 帧(%.2f MB)到 %s", total_frames, total_size / (1024.0*1024.0), filename);
 
         // 创建目录
-        if (access(dirname, 0) != 0) {
+        if (access(dirname.c_str(), 0) != 0) {
             char cmd[256] = {0};
-            sprintf(cmd, "mkdir -p %s", dirname);
+            sprintf(cmd, "mkdir -p %s", dirname.c_str());
             system(cmd);
         }
 
@@ -446,7 +449,11 @@ int main(int argc, char *argv[])
 
     signal(SIGPIPE, SIG_IGN);
     signal(SIGINT, __sigExit);
-    char config_file[256] = "/wt_tech/app/ax-pipeline/config/wt_rtsp.json"; //默认json配置文件
+    // 使用PathManager获取模型配置文件路径
+    PathManager& pathManager = PathManager::getInstance();
+    std::string config_file_path = pathManager.generatePath("model", "", 0) + "/wt_rtsp.json";
+    char config_file[256] = {0};
+    strncpy(config_file, config_file_path.c_str(), sizeof(config_file) - 1);
     char config_file_test[128]={0};
 
     ALOGN("sample begin\n\n");
@@ -571,19 +578,21 @@ int main(int argc, char *argv[])
     for (auto const &camera : CameraController::getInstance()->getAllCameras())
     {
         if (camera->getName() == "tc") {
-            strcpy(config_file, "/wt_tech/app/ax-pipeline/config/wt_rtsp_tc.json"); // 叶片尖专用模型
+            std::string config_file_path = pathManager.generatePath("model", "", 0) + "/wt_rtsp_tc.json";
+            strncpy(config_file, config_file_path.c_str(), sizeof(config_file) - 1);
         } else {
             if (strlen(config_file_test))
                 strcpy(config_file, config_file_test); // -f参数指定的json配置文件
-            else
-                strcpy(config_file, "/wt_tech/app/ax-pipeline/config/wt_rtsp.json"); // 默认json配置文件
+            else {
+                std::string config_file_path = pathManager.generatePath("model", "", 0) + "/wt_rtsp.json";
+                strncpy(config_file, config_file_path.c_str(), sizeof(config_file) - 1);
+            }
         }
 
         void *model1 = nullptr;
-        AX_S32 s32Ret = axdl_parse_param_init(config_file, &model1, camera->getName().c_str());
+        AX_S32 s32Ret = axdl_parse_param_init(config_file, &model1, camera->getName().c_str(), camera->get_id());
         if (s32Ret != 0) {
-            ALOGE("sample_parse_param_det failed,run joint skip");
-            g_sample.gModels[i].bRunJoint = 0;
+            WTALOGI("sample_parse_param_det failed,run joint skip");
         }
         else {
             g_sample.gModels[i].gModels.push_back(model1);
@@ -593,18 +602,19 @@ int main(int argc, char *argv[])
         }
 
         // 加载第二个模型（例如人脸识别模型）
-        char config_file_people[256] = "/wt_tech/app/ax-pipeline/config/wt_rtsp_people.json"; //人体识别
+        std::string config_file_people_path = pathManager.generatePath("model", "", 0) + "/wt_rtsp_people.json";
+        char config_file_people[256] = {0};
+        strncpy(config_file_people, config_file_people_path.c_str(), sizeof(config_file_people) - 1);
 
         void *model2 = nullptr;
-        s32Ret = axdl_parse_param_init(config_file_people, &model2, camera->getName().c_str());
+        s32Ret = axdl_parse_param_init(config_file_people, &model2, camera->getName().c_str(), camera->get_id());
         if (s32Ret == 0) {
             g_sample.gModels[i].gModels.push_back(model2);
-            int width, heigh;
-            s32Ret = axdl_get_ivps_width_height(g_sample.gModels[i].gModels[1], config_file_people, &width, &heigh);
-            if (width != SAMPLE_IVPS_ALGO_WIDTH[i] || heigh != SAMPLE_IVPS_ALGO_HEIGHT[i]) {
-                WTALOGI("model2和model1的尺寸大小要求不一致! width2=%d height2=%d",
-                    SAMPLE_IVPS_ALGO_WIDTH[i], SAMPLE_IVPS_ALGO_HEIGHT[i]);
-            }
+            int width, height;
+            s32Ret = axdl_get_ivps_width_height(g_sample.gModels[i].gModels[1], config_file_people, &width, &height);
+            WTALOGI("IVPS AI channel width=%d height=%d", width, height);
+        } else {
+            WTALOGI("sample_parse_param_det failed,run joint skip");
         }
 
         // 如果至少有一个模型加载成功，则启用联合推理

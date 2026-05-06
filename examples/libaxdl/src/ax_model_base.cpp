@@ -216,7 +216,7 @@ void ax_model_base::wt_amp_draw_face_bbox(cv::Mat &image, axdl_results_t *result
     int baseLine = 0;
 
     //跳过第一个目标（叶片） 剩余结果的目标都是人脸--用框标出。
-    for (int i = 1; i < results->nObjSize; i++)
+    for (int i = 0; i < results->nObjSize; i++)
     {
         if (strcmp(results->mObjects[i].objname, "face") != 0)
             continue;
