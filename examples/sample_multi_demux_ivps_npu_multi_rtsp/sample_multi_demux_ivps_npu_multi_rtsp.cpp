@@ -143,40 +143,181 @@ void ai_inference_func(pipeline_buffer_t *buff)
     }
 }
 
-
 // h265保存函数
-void h265_save_func(pipeline_buffer_t *buff) //buff->p_vir 包含一帧编码后的数据
+void h265_save_func(pipeline_buffer_t *buff)
 {
     pipeline_t *pipe = (pipeline_t *)buff->p_pipe;
 
     // 如果不在录像状态且没有正在处理的ffmpeg管道，直接返回
     if (!pipe->IsRecordVideo && !pipe->ffmpeg_pipe_file)
-        return ;
+        return;
 
-    // 巡检模式：持续录像，直接写入ffmpeg管道
+    // 检查buff指针有效性
+    if (buff == NULL || pipe == NULL) {
+        WTALOGI("无效的缓冲区或管道指针");
+        return;
+    }
+
+    // 加锁保护对buff的访问
+    if (pthread_mutex_lock(&pipe->buffer_mutex) != 0) {
+        WTALOGI("获取互斥锁失败");
+        return;
+    }
+
+    // 本地复制buff->n_size，防止在操作过程中被修改
+    size_t frame_size = buff->n_size;
+    void *frame_data = buff->p_vir; // 同时复制指针
+
+    // 释放互斥锁
+    pthread_mutex_unlock(&pipe->buffer_mutex);
+
+    // 巡检模式：持续录像，使用缓存批量写入
     if (pipe->IsRecordVideo) {
         // 如果ffmpeg管道未创建，先创建
         if (NULL == pipe->ffmpeg_pipe_file) {
+            // 加锁保护对frame_buffer的访问
+            if (pthread_mutex_lock(&pipe->buffer_mutex) != 0) {
+                ALOGE("获取互斥锁失败");
+                return;
+            }
+
             init_ffmpeg_pipe_video_recorder(pipe);
-        }
-        // 直接写入当前帧到ffmpeg管道
-        if (pipe->ffmpeg_pipe_file) {
-            fwrite(buff->p_vir, 1, buff->n_size, pipe->ffmpeg_pipe_file);
-            fflush(pipe->ffmpeg_pipe_file);
+
+            // 初始化缓存区（首次）
+            if (pipe->frame_buffer == NULL) {
+                pipe->buffer_count = 10;  // 缓冲10帧
+                pipe->buffer_size = frame_size * pipe->buffer_count;
+                pipe->frame_buffer = (unsigned char*)malloc(pipe->buffer_size);
+                pipe->buffer_index = 0;
+                pipe->is_buffering = false;
+
+                WTALOGI("初始化帧缓存区，大小: %d字节", pipe->buffer_size);
+            }
+
+            // 释放互斥锁
+            pthread_mutex_unlock(&pipe->buffer_mutex);
         }
 
+        // 加锁保护对frame_buffer的访问
+        if (pthread_mutex_lock(&pipe->buffer_mutex) != 0) {
+            WTALOGI("获取互斥锁失败");
+            return;
+        }
+
+        // 将帧数据缓存到缓冲区
+        if (pipe->frame_buffer != NULL && pipe->buffer_index < pipe->buffer_count) {
+            // 检查帧大小是否超出缓冲区大小
+            if (frame_size > pipe->buffer_size / pipe->buffer_count) {
+                WTALOGI("帧大小 %d 超出缓冲区单帧容量 %d", frame_size, pipe->buffer_size / pipe->buffer_count);
+                pthread_mutex_unlock(&pipe->buffer_mutex);
+                return;
+            }
+
+            int offset = pipe->buffer_index * frame_size;
+
+            // 检查offset是否会导致越界
+            if (offset + frame_size > pipe->buffer_size) {
+                WTALOGI("缓冲区溢出风险，offset: %d, 帧大小: %d, 缓冲区大小: %d",
+                      offset, frame_size, pipe->buffer_size);
+                pthread_mutex_unlock(&pipe->buffer_mutex);
+                return;
+            }
+
+            memcpy(pipe->frame_buffer + offset, frame_data, frame_size);
+            pipe->buffer_index++;
+
+            // 当缓冲区满或达到一定数量时，批量写入
+            if (pipe->buffer_index >= pipe->buffer_count) {
+                size_t total_size = pipe->buffer_index * frame_size;
+                size_t written = fwrite(pipe->frame_buffer, 1, total_size, pipe->ffmpeg_pipe_file);
+
+                if (written != total_size) {
+                    WTALOGI("批量写入失败，期望写入%d字节，实际写入%d字节",
+                           total_size, written);
+                }
+
+                fflush(pipe->ffmpeg_pipe_file);
+                pipe->buffer_index = 0;
+
+                WTALOGI("批量写入%d帧，总大小: %d字节", pipe->buffer_count, total_size);
+            }
+        }
+
+        // 释放互斥锁
+        pthread_mutex_unlock(&pipe->buffer_mutex);
     } else if (pipe->ffmpeg_pipe_file) {
-        // 停止录像，关闭ffmpeg管道
+        // 加锁保护对frame_buffer的访问
+        if (pthread_mutex_lock(&pipe->buffer_mutex) != 0) {
+            ALOGE("获取互斥锁失败");
+            return;
+        }
+
+        // 停止录像时，先写入剩余缓冲区数据
+        if (pipe->frame_buffer != NULL && pipe->buffer_index > 0) {
+            size_t total_size = pipe->buffer_index * frame_size;
+            fwrite(pipe->frame_buffer, 1, total_size, pipe->ffmpeg_pipe_file);
+            fflush(pipe->ffmpeg_pipe_file);
+            ALOGI("停止录制，写入剩余%d帧，总大小: %d字节",
+                   pipe->buffer_index, total_size);
+        }
+
+        // 释放缓存区
+        if (pipe->frame_buffer != NULL) {
+            free(pipe->frame_buffer);
+            pipe->frame_buffer = NULL;
+        }
+
+        // 关闭FFmpeg管道
         pclose(pipe->ffmpeg_pipe_file);
         pipe->ffmpeg_pipe_file = NULL;
         WTALOGI("录制视频完成，关闭文件[%s]", pipe->video_filename);
+        pipe->video_filename[0] = '\0';
+
+        // 释放互斥锁
+        pthread_mutex_unlock(&pipe->buffer_mutex);
     }
 
     if (pipe->whatPicture) {
-        //record_ffmpeg_pipe_jpg(pipe, buff->p_vir, buff->n_size); //保存图片
+        record_ffmpeg_pipe_jpg(pipe, frame_data, frame_size);
+    }
+}
+
+void cleanup_frame_buffer(pipeline_t *pipe)
+{
+    if (pipe == NULL) {
+        ALOGE("无效的管道指针");
+        return;
     }
 
+    // 加锁保护对frame_buffer的访问
+    if (pthread_mutex_lock(&pipe->buffer_mutex) != 0) {
+        ALOGE("获取互斥锁失败");
+        return;
+    }
+
+    if (pipe->frame_buffer != NULL) {
+        // 写入剩余数据
+        if (pipe->buffer_index > 0) {
+            // 使用单帧大小计算总大小，而不是整个缓冲区大小
+            size_t frame_size = pipe->buffer_size / pipe->buffer_count;
+            size_t total_size = pipe->buffer_index * frame_size;
+            fwrite(pipe->frame_buffer, 1, total_size, pipe->ffmpeg_pipe_file);
+            fflush(pipe->ffmpeg_pipe_file);
+            ALOGI("清理缓存，写入剩余%d帧，总大小: %d字节",
+                   pipe->buffer_index, total_size);
+        }
+
+        // 释放缓存区
+        free(pipe->frame_buffer);
+        pipe->frame_buffer = NULL;
+        pipe->buffer_index = 0;
+    }
+
+    // 释放互斥锁
+    pthread_mutex_unlock(&pipe->buffer_mutex);
 }
+
+
 
 void _demux_frame_callback(const void *buff, int len, void *reserve)
 {
@@ -428,6 +569,11 @@ int main(int argc, char *argv[])
             pipe1.output_func = ai_inference_func; // 图像输出的回调函数
 
             pipeline_t &pipe0 = pipelines[0];
+            // 初始化互斥锁
+            if (pthread_mutex_init(&pipe0.buffer_mutex, NULL) != 0) {
+                WTALOGI("初始化互斥锁失败");
+                return -1;
+            }
             {
                 pipeline_ivps_config_t &config0 = pipe0.m_ivps_attr;
                 config0.n_ivps_grp = pipe_count * i + 2; // 重复的会创建失败
@@ -447,7 +593,7 @@ int main(int argc, char *argv[])
             sprintf(pipe0.m_venc_attr.end_point, "%s%d", "axstream", (int)i+1); // 重复的会创建失败
             pipe0.m_venc_attr.n_venc_chn = i;                                 // 重复的会创建失败
             pipe0.m_vdec_attr.n_vdec_grp = i;
-            //pipe0.output_func = h265_save_func;
+            pipe0.output_func = h265_save_func;
 
             /*
             pipeline_t &pipe2 = pipelines[2]; //输出到本地文件存储
@@ -543,6 +689,18 @@ int main(int argc, char *argv[])
     // 销毁pipeline
     {
         gLoopExit = 1;
+
+        // 先清理所有帧缓存
+        for (size_t i = 0; i < vpipelines.size(); i++)
+        {
+            auto &pipelines = vpipelines[i];
+            for (size_t j = 0; j < pipelines.size(); j++)
+            {
+                cleanup_frame_buffer(&pipelines[j]);
+                pthread_mutex_destroy(&pipelines[j].buffer_mutex);// 销毁互斥锁
+            }
+        }
+
         for (size_t i = 0; i < vpipelines.size(); i++)
         {
             if (g_sample.gModels[i].pipes_need_osd.size() && g_sample.gModels[i].bRunJoint)

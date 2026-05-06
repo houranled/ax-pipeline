@@ -26,6 +26,8 @@
 #endif
 
 #include <stdio.h>
+#include <pthread.h>
+
 #if __cplusplus
 extern "C"
 {
@@ -229,6 +231,14 @@ extern "C"
 
         char channel_name[64]={0};
         int point_id=0;
+
+        // 添加缓存相关字段
+        unsigned char* frame_buffer;      // 帧缓存区
+        int buffer_size;               // 缓冲区大小
+        int buffer_index;              // 当前缓冲区索引
+        int buffer_count;              // 缓冲的帧数量
+        bool is_buffering;            // 是否正在缓冲
+        pthread_mutex_t buffer_mutex;  // 缓冲区互斥锁
     } pipeline_t;
 
     int create_pipeline(pipeline_t *pipe);
