@@ -814,39 +814,6 @@ int user_input(pipeline_t *pipe, int pipe_cnt, pipeline_buffer_t *buf)
 //    return pipeline->ffmpeg_pipe_file != nullptr;
 //}
 
-// 初始化FFmpeg管道用于记录
-bool init_ffmpeg_pipe_video_recorder(pipeline_t *pipe)
-{
-    char filename[256]={0};
-    if(NULL == pipe->ffmpeg_pipe_file) {
-        time_t timeReal;
-        time(&timeReal);
-        timeReal = timeReal + 8 * 3600;
-        tm *t = gmtime(&timeReal);
-        char dirname[128] ={0};
-        // /wt_tech/data/F02/20260101/20260101_01/video/
-        char dateStr[16] = {0};
-        sprintf(dateStr, "%04d%02d%02d", t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
-        sprintf(dirname, "/wt_tech/data/%s/%s/%s_%d/video", "F02", dateStr,dateStr, t->tm_hour);
-
-        if(access(dirname,0)!=0) {
-            char cmd[256] = {0};
-            sprintf(cmd, "mkdir -p %s", dirname);
-            system(cmd);
-        }
-        sprintf(filename, "%s/%d-%02d-%02d_%02d_%s.mp4",dirname ,t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, pipe->channel_name);
-
-        strcpy(pipe->video_filename, filename); // 将文件路径保存到pipeline_t结构体中
-
-        char cmd[512]={0};
-        sprintf(cmd , "ffmpeg -y -loglevel quiet -f hevc -i - -c:v copy -f mp4 %s 2>/dev/null", filename);
-        // 使用 popen 创建管道
-        pipe->ffmpeg_pipe_file = popen(cmd, "w");
-        WTALOGI("开始录制视频到文件[%s]", pipe->video_filename);
-    }
-
-    return pipe->ffmpeg_pipe_file != NULL;
-}
 
 // 初始化FFmpeg管道保存图像
 bool record_ffmpeg_pipe_jpg(pipeline_t *pipe, void *p_hevc , int pLen)
@@ -871,11 +838,7 @@ bool record_ffmpeg_pipe_jpg(pipeline_t *pipe, void *p_hevc , int pLen)
     }
 
     char filename[128] = {0};
-    snprintf(filename, sizeof(filename), "%s_%02d_%s_%d.jpg",
-         ymd,
-         t->tm_hour,
-         pipe->channel_name,
-         pipe->point_id);
+    snprintf(filename, sizeof(filename), "%s_%02d_%s_%d.jpg", ymd, t->tm_hour, pipe->channel_name, pipe->point_id);
 
     char filePath[256]={0};
     sprintf(filePath, "%s/%s" ,dirname, filename);

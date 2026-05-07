@@ -41,8 +41,20 @@
 #include "opencv2/opencv.hpp"
 #include "../../../camera/camera_controller.hpp"
 #include <list>
+#include <cstdint>
 
 #define pipe_count 2
+
+// 后台批量写入线程函数
+typedef struct {
+    pipeline_t *pipe;
+    std::vector<std::vector<uint8_t>> frames;  // 移动过来的帧数据
+    char filename[256];
+    char ffmpeg_cmd[512];
+} writer_thread_args_t;
+
+void* batch_write_thread(void* arg);
+void cleanup_frame_buffer(pipeline_t *pipe);
 
 #ifdef AXERA_TARGET_CHIP_AX620
 #define rtsp_max_count 2
@@ -145,11 +157,14 @@ void ai_inference_func(pipeline_buffer_t *buff)
 
 void h265_save_func(pipeline_buffer_t *buff)
 {
+    static uint frame_num = 0;
+    frame_num++;
+
     pipeline_t *pipe = (pipeline_t *)buff->p_pipe;
 
-    // 如果不在录像状态且没有正在处理的ffmpeg管道，直接返回
-    if (!pipe->IsRecordVideo && !pipe->ffmpeg_pipe_file)
+    if (!pipe->IsRecordVideo && pipe->writer_running) { //结束录制，且已经在执行存储写入过程了
         return;
+    }
 
     // 检查buff指针有效性
     if (buff == NULL || pipe == NULL) {
@@ -157,145 +172,166 @@ void h265_save_func(pipeline_buffer_t *buff)
         return;
     }
 
-    // 本地复制buff->n_size，防止在操作过程中被修改
-    size_t frame_size = buff->n_size;
-    void *frame_data = buff->p_vir;
+    size_t one_frame_size = buff->n_size;
+    void *one_frame_data = buff->p_vir;
 
-    // 巡检模式：持续录像，使用缓存批量写入
+    // 录制期间：只缓存到内存，不写入 ffmpeg
     if (pipe->IsRecordVideo) {
-        // 如果ffmpeg管道未创建，先创建
-        if (NULL == pipe->ffmpeg_pipe_file) {
-            // 加锁保护对frame_buffer的访问
-            if (pthread_mutex_lock(&pipe->buffer_mutex) != 0) {
-                WTALOGI("获取互斥锁失败");
-                return;
-            }
-
-            init_ffmpeg_pipe_video_recorder(pipe);
-
-            // 初始化缓存区（首次）
-            if (pipe->frame_buffer == NULL) {
-                pipe->buffer_count = 10;  // 缓冲10帧
-                pipe->buffer_size = frame_size * pipe->buffer_count;
-                pipe->frame_buffer = (unsigned char*)malloc(pipe->buffer_size);
-                pipe->buffer_index = 0;
-                pipe->is_buffering = false;
-
-                WTALOGI("初始化帧缓存区，大小: %d字节", pipe->buffer_size);
-            }
-
-            // 释放互斥锁
-            pthread_mutex_unlock(&pipe->buffer_mutex);
+        // 首次初始化：设置内存限制并准备录制
+        if (pipe->frame_list.empty() && pipe->max_memory_limit == 0) {
+            pipe->max_memory_limit = 100 * 1024 * 1024;  // 默认100MB限制
+            WTALOGI("开始录制，内存缓存限制: %zu MB", pipe->max_memory_limit / (1024*1024));
         }
 
-        // 加锁保护对frame_buffer的访问
+        // 加锁保护 frame_list
         if (pthread_mutex_lock(&pipe->buffer_mutex) != 0) {
             WTALOGI("获取互斥锁失败");
             return;
         }
 
-        // 将帧数据缓存到缓冲区
-        if (pipe->frame_buffer != NULL && pipe->buffer_index < pipe->buffer_count) {
-            // 检查帧大小是否超出缓冲区大小
-            if (frame_size > pipe->buffer_size / pipe->buffer_count) {
-                WTALOGI("帧大小 %d 超出缓冲区单帧容量 %d", frame_size, pipe->buffer_size / pipe->buffer_count);
-                pthread_mutex_unlock(&pipe->buffer_mutex);
-                return;
+        // 检查内存限制
+        if (pipe->total_cached_size + one_frame_size > pipe->max_memory_limit) {
+            WTALOGI("内存缓存将达到上限(%zu/%zu)，丢弃旧帧!!", pipe->total_cached_size, pipe->max_memory_limit);
+            // 移除最早的帧直到有足够空间
+            while (!pipe->frame_list.empty() && pipe->total_cached_size + one_frame_size > pipe->max_memory_limit) {
+                pipe->total_cached_size -= pipe->frame_list.front().size();
+                pipe->frame_list.erase(pipe->frame_list.begin());
             }
-
-            int offset = pipe->buffer_index * frame_size;
-
-            // 检查offset是否会导致越界
-            if (offset + frame_size > pipe->buffer_size) {
-                WTALOGI("缓冲区溢出风险，offset: %d, 帧大小: %d, 缓冲区大小: %d",
-                      offset, frame_size, pipe->buffer_size);
-                pthread_mutex_unlock(&pipe->buffer_mutex);
-                return;
-            }
-
-            memcpy(pipe->frame_buffer + offset, frame_data, frame_size);
-            pipe->buffer_index++;
-
-            // 当缓冲区满或达到一定数量时，批量写入
-            if (pipe->buffer_index >= pipe->buffer_count) {
-                size_t total_size = pipe->buffer_index * frame_size;
-
-                // 释放锁，避免在写入文件时持有锁
-                pthread_mutex_unlock(&pipe->buffer_mutex);
-
-                size_t written = fwrite(pipe->frame_buffer, 1, total_size, pipe->ffmpeg_pipe_file);
-
-                if (written != total_size) {
-                    WTALOGI("批量写入失败，期望写入%d字节，实际写入%d字节",
-                           total_size, written);
-                }
-
-                fflush(pipe->ffmpeg_pipe_file);
-
-                // 重新加锁更新buffer_index
-                if (pthread_mutex_lock(&pipe->buffer_mutex) != 0) {
-                    WTALOGI("获取互斥锁失败");
-                    return;
-                }
-
-                pipe->buffer_index = 0;
-                pthread_mutex_unlock(&pipe->buffer_mutex);
-
-                WTALOGI("批量写入%d帧，总大小: %d字节", pipe->buffer_count, total_size);
-            } else {
-                // 释放锁
-                pthread_mutex_unlock(&pipe->buffer_mutex);
-            }
-        } else {
-            // 释放锁
-            pthread_mutex_unlock(&pipe->buffer_mutex);
-        }
-    } else if (pipe->ffmpeg_pipe_file) {
-        // 加锁保护对frame_buffer的访问
-        if (pthread_mutex_lock(&pipe->buffer_mutex) != 0) {
-            ALOGE("获取互斥锁失败");
-            return;
         }
 
-        // 停止录像时，先写入剩余缓冲区数据
-        if (pipe->frame_buffer != NULL && pipe->buffer_index > 0) {
-            size_t total_size = pipe->buffer_index * frame_size;
+        // 将帧数据复制到 vector 并添加到列表
+        std::vector<uint8_t> frame_vec((uint8_t*)one_frame_data, (uint8_t*)one_frame_data + one_frame_size);
+        pipe->frame_list.push_back(std::move(frame_vec));
+        pipe->total_cached_size += one_frame_size;
 
-            // 释放锁，避免在写入文件时持有锁
-            pthread_mutex_unlock(&pipe->buffer_mutex);
+        size_t cached_frames = pipe->frame_list.size();
+        pthread_mutex_unlock(&pipe->buffer_mutex);
 
-            fwrite(pipe->frame_buffer, 1, total_size, pipe->ffmpeg_pipe_file);
-            fflush(pipe->ffmpeg_pipe_file);
-            ALOGI("停止录制，写入剩余%d帧，总大小: %d字节",
-                   pipe->buffer_index, total_size);
+        // 每300帧打印一次日志
+        if (cached_frames % 300 == 0)
+            WTALOGI("已缓存 %zu 帧，总大小: %zu KB", cached_frames, pipe->total_cached_size / 1024);
 
-            // 重新加锁释放frame_buffer
-            if (pthread_mutex_lock(&pipe->buffer_mutex) != 0) {
-                ALOGE("获取互斥锁失败");
-                return;
-            }
+    } else if (!pipe->frame_list.empty() && !pipe->writer_running) { // 录制结束：启动后台线程批量写入
+        pthread_mutex_lock(&pipe->buffer_mutex);
+        // 准备线程参数
+        writer_thread_args_t* args = new writer_thread_args_t;
+        args->pipe = pipe;
+        args->frames = std::move(pipe->frame_list);  // 移动所有权
+        pipe->frame_list.clear();
+        strncpy(args->filename, pipe->video_filename, sizeof(args->filename) - 1);
+        args->filename[sizeof(args->filename) - 1] = '\0';
 
-            // 释放缓存区
-            free(pipe->frame_buffer);
-            pipe->frame_buffer = NULL;
-            pthread_mutex_unlock(&pipe->buffer_mutex);
-        } else {
-            // 释放锁
-            pthread_mutex_unlock(&pipe->buffer_mutex);
+        // 保存 ffmpeg 命令
+        time_t timeReal;
+        time(&timeReal);
+        timeReal = timeReal + 8 * 3600;
+        tm *t = gmtime(&timeReal);
+        char dirname[128] = {0};
+        char dateStr[16] = {0};
+        sprintf(dateStr, "%04d%02d%02d", t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
+        sprintf(dirname, "/wt_tech/data/%s/%s/%s_%d/video", "F02", dateStr, dateStr, t->tm_hour);
+
+        char filename[256] = {0};
+        sprintf(filename, "%s/%d-%02d-%02d_%02d_%s.mp4", dirname, t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,t->tm_hour,
+            pipe->channel_name);
+        strncpy(pipe->video_filename, filename, sizeof(pipe->video_filename) - 1);
+        pipe->video_filename[sizeof(pipe->video_filename) - 1] = '\0';
+
+        sprintf(args->ffmpeg_cmd, "ffmpeg -y -loglevel quiet -f hevc -i - -c:v copy -f mp4 %s 2>/dev/null", filename);
+
+        size_t total_frames = args->frames.size();
+        size_t total_size = pipe->total_cached_size;
+        pipe->total_cached_size = 0;  // 重置计数
+
+        pthread_mutex_unlock(&pipe->buffer_mutex);
+
+        WTALOGI("录制结束，启动后台线程写入 %zu 帧(%.2f MB)到 %s", total_frames, total_size / (1024.0*1024.0), filename);
+
+        // 创建目录
+        if (access(dirname, 0) != 0) {
+            char cmd[256] = {0};
+            sprintf(cmd, "mkdir -p %s", dirname);
+            system(cmd);
         }
 
-        // 关闭FFmpeg管道
-        pclose(pipe->ffmpeg_pipe_file);
-        pipe->ffmpeg_pipe_file = NULL;
-        WTALOGI("录制视频完成，关闭文件[%s]", pipe->video_filename);
-        pipe->video_filename[0] = '\0';
+        // 启动后台写入线程
+        pipe->writer_running = true;
+        if (pthread_create(&pipe->writer_thread, NULL, batch_write_thread, args) != 0) {
+            WTALOGI("创建后台写入线程失败");
+            pipe->writer_running = false;
+            delete args;
+        }
     }
 
+    // 处理截图请求
     if (pipe->whatPicture) {
-        record_ffmpeg_pipe_jpg(pipe, frame_data, frame_size);
+        //record_ffmpeg_pipe_jpg(pipe, frame_data, frame_size);
     }
 }
 
+/**
+ * @brief 后台批量写入线程函数
+ * 将缓存的所有帧数据一次性写入 ffmpeg 管道生成 mp4 文件
+ */
+void* batch_write_thread(void* arg)
+{
+    writer_thread_args_t* args = (writer_thread_args_t*)arg;
+    std::vector<std::vector<uint8_t>>& frames = args->frames;
+    pipeline_t* pipe = args->pipe;
+
+    // 创建 ffmpeg 管道
+    FILE* ffmpeg_pipe = popen(args->ffmpeg_cmd, "w");
+    if (!ffmpeg_pipe) {
+        WTALOGI("创建 ffmpeg 管道失败: %s", args->ffmpeg_cmd);
+        delete args;
+        pipe->writer_running = false;
+        return NULL;
+    }
+
+    // 批量写入所有帧
+    size_t total_written = 0;
+    size_t frame_count = frames.size();
+
+    for (size_t i = 0; i < frame_count; i++) {
+        const std::vector<uint8_t>& frame = frames[i];
+        size_t frame_size = frame.size();
+
+        // 写入一帧
+        size_t written = fwrite(frame.data(), 1, frame_size, ffmpeg_pipe);
+        if (written != frame_size) {
+            WTALOGI("写入帧 %zu/%zu 失败: 期望 %zu, 实际 %zu", i + 1, frame_count, frame_size, written);
+        }
+
+        total_written += written;
+    }
+
+    // 最终刷新确保所有数据写入
+    fflush(ffmpeg_pipe);
+
+    // 关闭管道
+    int ret = pclose(ffmpeg_pipe);
+    if (ret == -1) {
+        WTALOGI("关闭 ffmpeg 管道失败");
+    }
+
+    WTALOGI("后台写入完成，总计 %zu 帧，%zu 字节写入文件.", frame_count, total_written);
+
+    // 清理线程参数
+    delete args;
+
+    // 更新管道状态
+    pthread_mutex_lock(&pipe->buffer_mutex);
+    pipe->writer_running = false;
+    pipe->video_filename[0] = '\0';  // 清空文件名
+    pthread_mutex_unlock(&pipe->buffer_mutex);
+
+    return NULL;
+}
+
+/**
+ * @brief 清理帧缓存区
+ * 如果有正在运行的后台写入线程，等待其完成
+ */
 void cleanup_frame_buffer(pipeline_t *pipe)
 {
     if (pipe == NULL) {
@@ -303,31 +339,30 @@ void cleanup_frame_buffer(pipeline_t *pipe)
         return;
     }
 
-    // 加锁保护对frame_buffer的访问
+    // 等待后台写入线程完成
+    if (pipe->writer_running) {
+        ALOGI("等待后台写入线程完成...");
+        pthread_join(pipe->writer_thread, NULL);
+        ALOGI("后台写入线程已退出");
+    }
+
+    // 加锁保护 frame_list
     if (pthread_mutex_lock(&pipe->buffer_mutex) != 0) {
         ALOGE("获取互斥锁失败");
         return;
     }
 
-    if (pipe->frame_buffer != NULL) {
-        // 写入剩余数据
-        if (pipe->buffer_index > 0) {
-            // 使用单帧大小计算总大小，而不是整个缓冲区大小
-            size_t frame_size = pipe->buffer_size / pipe->buffer_count;
-            size_t total_size = pipe->buffer_index * frame_size;
-            fwrite(pipe->frame_buffer, 1, total_size, pipe->ffmpeg_pipe_file);
-            fflush(pipe->ffmpeg_pipe_file);
-            ALOGI("清理缓存，写入剩余%d帧，总大小: %d字节",
-                   pipe->buffer_index, total_size);
-        }
-
-        // 释放缓存区
-        free(pipe->frame_buffer);
-        pipe->frame_buffer = NULL;
-        pipe->buffer_index = 0;
+    // 清空帧列表并释放内存
+    if (!pipe->frame_list.empty()) {
+        ALOGI("清理未写入的 %zu 帧缓存", pipe->frame_list.size());
+        pipe->frame_list.clear();
+        pipe->frame_list.shrink_to_fit();  // 释放 vector 占用的内存
     }
 
-    // 释放互斥锁
+    pipe->total_cached_size = 0;
+    pipe->max_memory_limit = 0;
+    pipe->writer_running = false;
+
     pthread_mutex_unlock(&pipe->buffer_mutex);
 }
 
@@ -583,11 +618,15 @@ int main(int argc, char *argv[])
             pipe1.output_func = ai_inference_func; // 图像输出的回调函数
 
             pipeline_t &pipe0 = pipelines[0];
-            // 初始化互斥锁
+            // 初始化互斥锁和新字段
             if (pthread_mutex_init(&pipe0.buffer_mutex, NULL) != 0) {
                 WTALOGI("初始化互斥锁失败");
                 return -1;
             }
+            pipe0.total_cached_size = 0;
+            pipe0.max_memory_limit = 0;
+            pipe0.writer_running = false;
+            pipe0.ffmpeg_cmd[0] = '\0';
             {
                 pipeline_ivps_config_t &config0 = pipe0.m_ivps_attr;
                 config0.n_ivps_grp = pipe_count * i + 2; // 重复的会创建失败

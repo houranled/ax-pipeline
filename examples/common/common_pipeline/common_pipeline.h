@@ -27,6 +27,8 @@
 
 #include <stdio.h>
 #include <pthread.h>
+#include <vector>
+#include <stdint.h>
 
 #if __cplusplus
 extern "C"
@@ -183,14 +185,6 @@ extern "C"
     // 回调函数，当 pipeline_ivps_config_t::n_fifo_count 大于0时候，用作输出给用户
     typedef void (*pipeline_frame_callback_func)(pipeline_buffer_t *buf);
 
-    /* save frame */
-    typedef struct {
-        int frameNum; // 已写入的帧数量
-        int DataSize; // 已写入帧总计大小
-        unsigned char *p_h26data = NULL;
-        int IsWrite; //当前写
-    } h26xData_t;
-
     typedef struct
     {
         int enable;                      // 是否启用
@@ -217,27 +211,29 @@ extern "C"
 
         pipeline_frame_callback_func output_func;
 
-        // h265_save_func相关成员变量
-        h26xData_t h26data[2];
-        //FILE *ffmpeg_pipe;
 
         FILE *ffmpeg_pipe_file; // 用于录制视频
-
         bool IsRecordVideo = false;
         int whatPicture = 0;  //what_kind_pic, 0:不拍 1：标定 2：巡检
 
-        char video_filename[256]; // 存储录制视频的文件路径
+        char dir_prefix[128];     // 目录前缀， 不同的项目模型使用不同的目录前缀
+        char video_filename[256]; // 存储录制视频的文件完整路径
         char pic_filename[256]; // 存储录制图片的文件路径
 
         char channel_name[64]={0};
         int point_id=0;
 
-        // 添加缓存相关字段
-        unsigned char* frame_buffer;      // 帧缓存区
-        int buffer_size;               // 缓冲区大小
-        int buffer_index;              // 当前缓冲区索引
-        int buffer_count;              // 缓冲的帧数量
-        bool is_buffering;            // 是否正在缓冲
+        // 动态帧缓存列表（录制时缓存到内存，结束时后台写入）
+        std::vector<std::vector<uint8_t>> frame_list;  // 存储所有帧数据
+        size_t total_cached_size;                      // 已缓存的总字节数
+        size_t max_memory_limit;                       // 内存限制（默认100MB）
+
+        // 后台写入线程相关
+        pthread_t writer_thread;
+        bool writer_running;
+        char ffmpeg_cmd[512];                          // ffmpeg命令缓存
+
+        // 保留互斥锁用于保护 frame_list
         pthread_mutex_t buffer_mutex;  // 缓冲区互斥锁
     } pipeline_t;
 
@@ -248,8 +244,6 @@ extern "C"
 
 
     // FFmpeg相关函数
-    //bool init_ffmpeg_pipe(pipeline_t *pipe);
-    bool init_ffmpeg_pipe_video_recorder(pipeline_t *pipe); // 录制视频
     bool record_ffmpeg_pipe_jpg(pipeline_t *pipe, void *p_hevc , int pLen);
 
 #if __cplusplus

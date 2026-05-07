@@ -116,6 +116,7 @@ public:
     void finish_patrolling(); // 告知巡逻结束
     int add_preset_position(PresetPosition pos); // 添加单个点位到点位集合中
     bool start_record_video(); // 录制视频
+    bool stop_record_video();  //结束录制并存储视频文件
     bool start_take_a_picture(int kind); // 拍照
     std::string getName(); // 获取相机名称
     std::string get_pic_path() const; // 获取当前录制图片路径
