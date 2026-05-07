@@ -143,7 +143,6 @@ void ai_inference_func(pipeline_buffer_t *buff)
     }
 }
 
-// h265保存函数
 void h265_save_func(pipeline_buffer_t *buff)
 {
     pipeline_t *pipe = (pipeline_t *)buff->p_pipe;
@@ -158,18 +157,9 @@ void h265_save_func(pipeline_buffer_t *buff)
         return;
     }
 
-    // 加锁保护对buff的访问
-    if (pthread_mutex_lock(&pipe->buffer_mutex) != 0) {
-        WTALOGI("获取互斥锁失败");
-        return;
-    }
-
     // 本地复制buff->n_size，防止在操作过程中被修改
     size_t frame_size = buff->n_size;
-    void *frame_data = buff->p_vir; // 同时复制指针
-
-    // 释放互斥锁
-    pthread_mutex_unlock(&pipe->buffer_mutex);
+    void *frame_data = buff->p_vir;
 
     // 巡检模式：持续录像，使用缓存批量写入
     if (pipe->IsRecordVideo) {
@@ -177,7 +167,7 @@ void h265_save_func(pipeline_buffer_t *buff)
         if (NULL == pipe->ffmpeg_pipe_file) {
             // 加锁保护对frame_buffer的访问
             if (pthread_mutex_lock(&pipe->buffer_mutex) != 0) {
-                ALOGE("获取互斥锁失败");
+                WTALOGI("获取互斥锁失败");
                 return;
             }
 
@@ -229,6 +219,10 @@ void h265_save_func(pipeline_buffer_t *buff)
             // 当缓冲区满或达到一定数量时，批量写入
             if (pipe->buffer_index >= pipe->buffer_count) {
                 size_t total_size = pipe->buffer_index * frame_size;
+
+                // 释放锁，避免在写入文件时持有锁
+                pthread_mutex_unlock(&pipe->buffer_mutex);
+
                 size_t written = fwrite(pipe->frame_buffer, 1, total_size, pipe->ffmpeg_pipe_file);
 
                 if (written != total_size) {
@@ -237,14 +231,25 @@ void h265_save_func(pipeline_buffer_t *buff)
                 }
 
                 fflush(pipe->ffmpeg_pipe_file);
+
+                // 重新加锁更新buffer_index
+                if (pthread_mutex_lock(&pipe->buffer_mutex) != 0) {
+                    WTALOGI("获取互斥锁失败");
+                    return;
+                }
+
                 pipe->buffer_index = 0;
+                pthread_mutex_unlock(&pipe->buffer_mutex);
 
                 WTALOGI("批量写入%d帧，总大小: %d字节", pipe->buffer_count, total_size);
+            } else {
+                // 释放锁
+                pthread_mutex_unlock(&pipe->buffer_mutex);
             }
+        } else {
+            // 释放锁
+            pthread_mutex_unlock(&pipe->buffer_mutex);
         }
-
-        // 释放互斥锁
-        pthread_mutex_unlock(&pipe->buffer_mutex);
     } else if (pipe->ffmpeg_pipe_file) {
         // 加锁保护对frame_buffer的访问
         if (pthread_mutex_lock(&pipe->buffer_mutex) != 0) {
@@ -255,16 +260,28 @@ void h265_save_func(pipeline_buffer_t *buff)
         // 停止录像时，先写入剩余缓冲区数据
         if (pipe->frame_buffer != NULL && pipe->buffer_index > 0) {
             size_t total_size = pipe->buffer_index * frame_size;
+
+            // 释放锁，避免在写入文件时持有锁
+            pthread_mutex_unlock(&pipe->buffer_mutex);
+
             fwrite(pipe->frame_buffer, 1, total_size, pipe->ffmpeg_pipe_file);
             fflush(pipe->ffmpeg_pipe_file);
             ALOGI("停止录制，写入剩余%d帧，总大小: %d字节",
                    pipe->buffer_index, total_size);
-        }
 
-        // 释放缓存区
-        if (pipe->frame_buffer != NULL) {
+            // 重新加锁释放frame_buffer
+            if (pthread_mutex_lock(&pipe->buffer_mutex) != 0) {
+                ALOGE("获取互斥锁失败");
+                return;
+            }
+
+            // 释放缓存区
             free(pipe->frame_buffer);
             pipe->frame_buffer = NULL;
+            pthread_mutex_unlock(&pipe->buffer_mutex);
+        } else {
+            // 释放锁
+            pthread_mutex_unlock(&pipe->buffer_mutex);
         }
 
         // 关闭FFmpeg管道
@@ -272,9 +289,6 @@ void h265_save_func(pipeline_buffer_t *buff)
         pipe->ffmpeg_pipe_file = NULL;
         WTALOGI("录制视频完成，关闭文件[%s]", pipe->video_filename);
         pipe->video_filename[0] = '\0';
-
-        // 释放互斥锁
-        pthread_mutex_unlock(&pipe->buffer_mutex);
     }
 
     if (pipe->whatPicture) {

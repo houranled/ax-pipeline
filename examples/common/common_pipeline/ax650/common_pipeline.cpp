@@ -839,7 +839,7 @@ bool init_ffmpeg_pipe_video_recorder(pipeline_t *pipe)
         strcpy(pipe->video_filename, filename); // 将文件路径保存到pipeline_t结构体中
 
         char cmd[512]={0};
-        sprintf(cmd , "ffmpeg -y -f hevc -i pipe:%d -c:v copy -f mp4 %s",pipe->pipeid, filename);
+        sprintf(cmd , "ffmpeg -y -loglevel quiet -f hevc -i - -c:v copy -f mp4 %s 2>/dev/null", filename);
         // 使用 popen 创建管道
         pipe->ffmpeg_pipe_file = popen(cmd, "w");
         WTALOGI("开始录制视频到文件[%s]", pipe->video_filename);
