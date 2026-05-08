@@ -548,14 +548,6 @@ void CameraController::early_warning_process(int camera_id)
 
 }
 
-void CameraController::setCameraPipe(int camera_id, pipeline_t *pipe)
-{
-    auto camera = getCamera(camera_id);
-    if (camera != nullptr) {
-        camera->setPipe(pipe);
-    }
-}
-
 Camera *CameraController::getCamera(int camera_id)
 {
     auto it = cameras.find(camera_id);
@@ -714,6 +706,14 @@ bool Camera::start_take_a_picture(int kind)
 std::string Camera::getName()
 {
     return name;
+}
+
+void Camera::connectPipes(pipeline_t *pipe1, pipeline_t *pipe2)
+{
+    this->setPipe(pipe1);
+    // 设置两个管道为同一个相机指针
+    pipe1->m_pcamera = this;
+    pipe2->m_pcamera = this;
 }
 
 std::string Camera::get_pic_path() const

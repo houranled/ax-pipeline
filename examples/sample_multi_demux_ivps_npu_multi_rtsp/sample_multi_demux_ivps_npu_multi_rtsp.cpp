@@ -122,6 +122,9 @@ static struct _g_sample_
 void ai_inference_func(pipeline_buffer_t *buff)
 {
     pipeline_t *pipe = (pipeline_t *)buff->p_pipe;
+    if (!pipe->m_pcamera || !pipe->m_pcamera->ptz_ip.empty() && !pipe->m_pcamera->is_patroling())
+        return ; // //有云台配置才有巡检能力.非巡检状态直接返回，跳过推理和绘制
+
     if (g_sample.osd_target_map[pipe->pipeid]->bRunJoint)
     {
         static std::map<int, axdl_results_t> mResults; //TODO: 打算改为全局变量
@@ -684,8 +687,7 @@ int main(int argc, char *argv[])
             pipe2.m_vdec_attr.n_vdec_grp = i;
             pipe2.output_func = h265_save_func;
             */
-
-            CameraController::getInstance()->setCameraPipe(camera->get_id(), &pipe0);
+            camera->connectPipes(&pipe0, &pipe1); //注意先后顺序
         }
         i++;
     }

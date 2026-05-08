@@ -30,6 +30,8 @@
 #include <vector>
 #include <stdint.h>
 
+class Camera;
+
 #if __cplusplus
 extern "C"
 {
@@ -211,6 +213,7 @@ extern "C"
 
         pipeline_frame_callback_func output_func;
 
+        Camera* m_pcamera; // 关联camera对象
 
         FILE *ffmpeg_pipe_file; // 用于录制视频
         bool IsRecordVideo = false;

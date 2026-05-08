@@ -38,7 +38,6 @@ public:
     int start();
     int stop(); // 关闭处理线程
     void early_warning_process(int camera_id); // 对摄像机id为camera_id触发预警
-    void setCameraPipe(int camera_id, pipeline_t *pipe);
     Camera* getCamera(int camera_id); // 根据id获取相机对象
     std::vector<Camera*> getAllCameras(); // 获取所有摄像机实例
     void forEachCamera(std::function<void(Camera*)> func)
@@ -102,6 +101,7 @@ public:
     };
 
     std::string ip;  // 相机ip地址
+    std::string ptz_ip; // 云台ip地址
     int now_point_id; // 当前所在点位id
 
     Camera();
@@ -132,6 +132,7 @@ public:
 
     // 获取相机rtsp url
     void set_camera_rtsp_url(const std::string& url); // 设置相机rtsp url
+    void connectPipes(pipeline_t *pipe1, pipeline_t *pipe2);
     pipeline_t* get_pipeline() const; // 获取绑定的pipeline
 
     const std::vector<PresetPosition>& getPresetPositions() const {
@@ -142,7 +143,6 @@ private:
     int id;
     std::string name; // 相机名称
     std::string camera_rtsp_url; // 相机rtsp地址
-    std::string ptz_ip; // 云台ip地址
     int web_rotation_x=0;  // 当前水平角度
     int rotation_x = 0;
 
