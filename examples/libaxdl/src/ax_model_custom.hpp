@@ -35,6 +35,7 @@ protected:
     int preprocess(axdl_image_t *srcFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results) override; // 推理前
     //int post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results) override; // 推理后归一化前
     void draw_custom(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y) override;
+    void wt_amp_draw_face_bbox(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y);
     void draw_custom(int chn, axdl_results_t *results, float fontscale, int thickness) override;
     void process_texts(axdl_results_t *results, int &chn, int d, float fontscale) override;
     void export_amplitude();

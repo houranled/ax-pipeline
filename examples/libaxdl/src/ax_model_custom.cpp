@@ -8,6 +8,7 @@
 #include "../../camera/camera_controller.hpp"
 #include <time.h>
 #include <sys/stat.h>
+#include "ax_model_base.hpp"
 
 
 // 初始化静态成员
@@ -173,6 +174,70 @@ void ax_model_custom::draw_custom(cv::Mat &image, axdl_results_t *results, float
     cv::rectangle(image, mask_rect, cv::Scalar(255, 0, 0, 255), 1);
 
     wt_amp_draw_face_bbox(image, results, fontscale, thickness, offset_x, offset_y);
+}
+
+void ax_model_custom::wt_amp_draw_face_bbox(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y)
+{
+    int x, y;
+    cv::Size label_size;
+    int baseLine = 0;
+
+    for (int i = 0; i < results->nObjSize; i++)
+    {
+        if (strcmp(results->mObjects[i].objname, "face") != 0)
+            continue;
+
+        cv::Rect rect(results->mObjects[i].bbox.x * image.cols + offset_x,
+                      results->mObjects[i].bbox.y * image.rows + offset_y,
+                      results->mObjects[i].bbox.w * image.cols,
+                      results->mObjects[i].bbox.h * image.rows);
+        std::string label_str = results->mObjects[i].objname;
+        if (b_track)
+        {
+            label_str += " " + std::to_string(results->mObjects[i].track_id);
+        }
+
+        label_size = cv::getTextSize(label_str, cv::FONT_HERSHEY_SIMPLEX, fontscale, thickness, &baseLine);
+        if (results->mObjects[i].bHasBoxVertices)
+        {
+            cv::line(image,
+                     cv::Point(results->mObjects[i].bbox_vertices[0].x * image.cols + offset_x, results->mObjects[i].bbox_vertices[0].y * image.rows + offset_y),
+                     cv::Point(results->mObjects[i].bbox_vertices[1].x * image.cols + offset_x, results->mObjects[i].bbox_vertices[1].y * image.rows + offset_y),
+                     cv::Scalar(128, 0, 0, 255), thickness * 2, 8, 0);
+            cv::line(image,
+                     cv::Point(results->mObjects[i].bbox_vertices[1].x * image.cols + offset_x, results->mObjects[i].bbox_vertices[1].y * image.rows + offset_y),
+                     cv::Point(results->mObjects[i].bbox_vertices[2].x * image.cols + offset_x, results->mObjects[i].bbox_vertices[2].y * image.rows + offset_y),
+                     cv::Scalar(128, 0, 0, 255), thickness * 2, 8, 0);
+            cv::line(image,
+                     cv::Point(results->mObjects[i].bbox_vertices[2].x * image.cols + offset_x, results->mObjects[i].bbox_vertices[2].y * image.rows + offset_y),
+                     cv::Point(results->mObjects[i].bbox_vertices[3].x * image.cols + offset_x, results->mObjects[i].bbox_vertices[3].y * image.rows + offset_y),
+                     cv::Scalar(128, 0, 0, 255), thickness * 2, 8, 0);
+            cv::line(image,
+                     cv::Point(results->mObjects[i].bbox_vertices[3].x * image.cols + offset_x, results->mObjects[i].bbox_vertices[3].y * image.rows + offset_y),
+                     cv::Point(results->mObjects[i].bbox_vertices[0].x * image.cols + offset_x, results->mObjects[i].bbox_vertices[0].y * image.rows + offset_y),
+                     cv::Scalar(128, 0, 0, 255), thickness * 2, 8, 0);
+
+            x = results->mObjects[i].bbox_vertices[0].x * image.cols + offset_x;
+            y = results->mObjects[i].bbox_vertices[0].y * image.rows + offset_y - label_size.height - baseLine;
+        }
+        else
+        {
+            cv::rectangle(image, rect, COCO_COLORS[results->mObjects[i].label % COCO_COLORS.size()], thickness);
+            x = rect.x;
+            y = rect.y - label_size.height - baseLine;
+        }
+
+        if (y < 0)
+            y = 0;
+        if (x + label_size.width > image.cols)
+            x = image.cols - label_size.width;
+
+        cv::rectangle(image, cv::Rect(cv::Point(x, y), cv::Size(label_size.width, label_size.height + baseLine)),
+                      cv::Scalar(255, 255, 255, 255), -1);
+
+        cv::putText(image, label_str, cv::Point(x, y + label_size.height), cv::FONT_HERSHEY_SIMPLEX, fontscale,
+                    cv::Scalar(0, 0, 0, 255), thickness);
+    }
 }
 
 void ax_model_custom::draw_custom(int chn, axdl_results_t *results, float fontscale, int thickness)
