@@ -82,11 +82,6 @@ void ax_model_custom::draw_custom(cv::Mat &image, axdl_results_t *results, float
     int image_width = image.cols;
     int image_height = image.rows;
 
-    // 只处理第一个检测结果
-    if (results->nObjSize <= 0) {
-        return ;
-    }
-
     auto now = std::chrono::system_clock::now();
     auto &obj = results->mObjects[0];
     auto& cad = channel_amplitude_data;  //cad: channel amplitude data
@@ -135,47 +130,47 @@ void ax_model_custom::draw_custom(cv::Mat &image, axdl_results_t *results, float
                    cv::Scalar(255, 255, 255, UCHAR_MAX), 2);
     }
 
-        cv::Point pos_text_pt(static_cast<int>(0.3 * image_width), 20);
-        std::string pos_text = "positive max:" + std::to_string(cad.amp_max_positive);
-        cv::putText(image, pos_text, pos_text_pt, cv::FONT_HERSHEY_SIMPLEX, 1.0,
-                   cv::Scalar(255, 0, 0, UCHAR_MAX), 2);
+    cv::Point pos_text_pt(static_cast<int>(0.3 * image_width), 20);
+    std::string pos_text = "positive max:" + std::to_string(cad.amp_max_positive);
+    cv::putText(image, pos_text, pos_text_pt, cv::FONT_HERSHEY_SIMPLEX, 1.0,
+               cv::Scalar(255, 0, 0, UCHAR_MAX), 2);
 
-        cv::Point neg_text_pt(static_cast<int>(0.5 * image_width), 20);
-        std::string neg_text = "negative max:" + std::to_string(cad.amp_max_negative);
-        cv::putText(image, neg_text, neg_text_pt, cv::FONT_HERSHEY_SIMPLEX, 1.0,
-                   cv::Scalar(255, 0, 0, UCHAR_MAX), 2);
+    cv::Point neg_text_pt(static_cast<int>(0.5 * image_width), 20);
+    std::string neg_text = "negative max:" + std::to_string(cad.amp_max_negative);
+    cv::putText(image, neg_text, neg_text_pt, cv::FONT_HERSHEY_SIMPLEX, 1.0,
+               cv::Scalar(255, 0, 0, UCHAR_MAX), 2);
 
 
-        // 添加初始位置坐标 (橙色点)
-        int point_x = static_cast<int>(cad.origin_x_no_uniform);
-        int point_y = static_cast<int>(cad.occlusion_pixel_height);
-        cv::circle(image, cv::Point(point_x, point_y), 2, cv::Scalar(255, 0, 255, 255), -1);
+    // 添加初始位置坐标 (橙色点)
+    int point_x = static_cast<int>(cad.origin_x_no_uniform);
+    int point_y = static_cast<int>(cad.occlusion_pixel_height);
+    cv::circle(image, cv::Point(point_x, point_y), 2, cv::Scalar(255, 0, 255, 255), -1);
 
-        // 视频左上角绘制车牌号水印 carNo 与时间戳
-        int text_y = 30;  // 起始Y位置
-        if (car_no != "") {
-           cv::putText(image, car_no, cv::Point(10, text_y),
-                       cv::FONT_HERSHEY_SIMPLEX, fontscale * 2,
-                       cv::Scalar(255, 0, 0, 255), thickness * 2);
-           text_y += 40;
-        }
+    // 视频左上角绘制车牌号水印 carNo 与时间戳
+    int text_y = 30;  // 起始Y位置
+    if (car_no != "") {
+       cv::putText(image, car_no, cv::Point(10, text_y),
+                   cv::FONT_HERSHEY_SIMPLEX, fontscale * 2,
+                   cv::Scalar(255, 0, 0, 255), thickness * 2);
+       text_y += 40;
+    }
 
-        // 获取当前时间
-        auto now_time = std::chrono::system_clock::to_time_t(now);
-        std::tm tm_now;
-        localtime_r(&now_time, &tm_now);
+    // 获取当前时间
+    auto now_time = std::chrono::system_clock::to_time_t(now);
+    std::tm tm_now;
+    localtime_r(&now_time, &tm_now);
 
-        std::ostringstream time_stream;
-        time_stream << std::put_time(&tm_now, "%Y-%m-%d %H:%M:%S");
+    std::ostringstream time_stream;
+    time_stream << std::put_time(&tm_now, "%Y-%m-%d %H:%M:%S");
 
-        // 在车牌号下方显示时间戳
-        cv::putText(image, time_stream.str(), cv::Point(10, text_y),
-                   cv::FONT_HERSHEY_SIMPLEX, fontscale * 2, cv::Scalar(255, 255, 255, 255), thickness * 2);
+    // 在车牌号下方显示时间戳
+    cv::putText(image, time_stream.str(), cv::Point(10, text_y),
+               cv::FONT_HERSHEY_SIMPLEX, fontscale * 2, cv::Scalar(255, 255, 255, 255), thickness * 2);
 
-        // 绘制遮罩框
-        int mask_height = static_cast<int>(cad.occlusion_pixel_height);
-        cv::Rect mask_rect(0, 0, image_width, mask_height);
-        cv::rectangle(image, mask_rect, cv::Scalar(255, 0, 0, 255), 1);
+    // 绘制遮罩框
+    int mask_height = static_cast<int>(cad.occlusion_pixel_height);
+    cv::Rect mask_rect(0, 0, image_width, mask_height);
+    cv::rectangle(image, mask_rect, cv::Scalar(255, 0, 0, 255), 1);
 
     wt_amp_draw_face_bbox(image, results, fontscale, thickness, offset_x, offset_y);
 }
@@ -482,8 +477,7 @@ std::string ax_model_custom::generate_face_record_filename()
 
     std::ostringstream filename;
     // 格式: 通道名_年_月_日_时_分_秒.mp4
-    filename << channel_name << "_"
-              << std::put_time(&tm_now, "%Y_%m_%d_%H_%M_%S") << ".mp4";
+    filename << channel_name << "_" << std::put_time(&tm_now, "%Y_%m_%d_%H_%M_%S") << ".mp4";
 
     return filename.str();
 }
@@ -506,26 +500,12 @@ void ax_model_custom::trigger_camera_record(bool start)
         }
 
         if (start) {
-            // 生成文件名并设置路径
-            std::string filename = generate_face_record_filename();
-            std::string base_path = "/wt_tech/data/video2/person";
-            std::string full_path = base_path + "/" + filename;
-
-            // 确保目录存在
-            struct stat st = {0};
-            if (stat(base_path.c_str(), &st) == -1) {
-                std::string cmd = "mkdir -p " + base_path;
-                system(cmd.c_str());
-            }
-
-            // 设置录制文件名（供 h265_save_func 使用）
-            strncpy(pipeline->video_filename, full_path.c_str(), sizeof(pipeline->video_filename) - 1);
-            pipeline->video_filename[sizeof(pipeline->video_filename) - 1] = '\0';
+            // 生成并设置文件名
+            auto fpath = camera->generateCustomVideoPath(Camera::VideoPathType::PERSON);
 
             // 开始录制
             camera->start_record_video();
-            WTALOGI("[FaceRecord] 通道[%s] 开始录制，路径: %s",
-                    channel_name.c_str(), full_path.c_str());
+            WTALOGI("[FaceRecord] 通道[%s] 开始录制，路径: %s", channel_name.c_str(), fpath.c_str());
         } else {
             // 停止录制 - 直接设置 IsRecordVideo = false
             // h265_save_func 会检测到变化并关闭 ffmpeg 管道

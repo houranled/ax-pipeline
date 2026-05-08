@@ -84,6 +84,11 @@ class Camera {
     friend AlarmManager;      // 允许AlarmManager类访问Camera类的私有成员
 
 public:
+    enum class VideoPathType {
+        PERSON,  // 人物识别视频路径
+        VIDEO    // 普通视频路径
+    };
+
     struct PresetPosition {
         int id;
         std::string name;
@@ -115,12 +120,17 @@ public:
     bool is_patroling() const; // 获取是否在巡逻中
     void finish_patrolling(); // 告知巡逻结束
     int add_preset_position(PresetPosition pos); // 添加单个点位到点位集合中
+
     bool start_record_video(); // 录制视频
     bool stop_record_video();  //结束录制并存储视频文件
     bool start_take_a_picture(int kind); // 拍照
+
     std::string getName(); // 获取相机名称
     std::string get_pic_path() const; // 获取当前录制图片路径
-    std::string get_camera_rtsp_url(); // 获取相机rtsp url
+    std::string get_camera_rtsp_url();
+    std::string generateCustomVideoPath(VideoPathType); // 生成自定义视频路径
+
+    // 获取相机rtsp url
     void set_camera_rtsp_url(const std::string& url); // 设置相机rtsp url
     pipeline_t* get_pipeline() const; // 获取绑定的pipeline
 

@@ -42,7 +42,6 @@
 #include "../../../camera/camera_controller.hpp"
 #include <list>
 #include <cstdint>
-#include "path_manager.hpp"
 
 #define pipe_count 2
 
@@ -244,22 +243,7 @@ void h265_save_func(pipeline_buffer_t *buff)
         args->filename[sizeof(args->filename) - 1] = '\0';
 
         // 保存 ffmpeg 命令
-        time_t timeReal;
-        time(&timeReal);
-        timeReal = timeReal + 8 * 3600;
-        
-        // 使用PathManager生成路径
-        PathManager& pathManager = PathManager::getInstance();
-        std::string dirname = pathManager.generatePath("video", pipe->channel_name, timeReal);
-        
-        tm *t = gmtime(&timeReal);
-        char filename[256] = {0};
-        sprintf(filename, "%s/%d-%02d-%02d_%02d_%s.mp4", dirname.c_str(), t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour,
-            pipe->channel_name);
-        strncpy(pipe->video_filename, filename, sizeof(pipe->video_filename) - 1);
-        pipe->video_filename[sizeof(pipe->video_filename) - 1] = '\0';
-
-        sprintf(args->ffmpeg_cmd, "ffmpeg -y -loglevel quiet -f hevc -i - -c:v copy -f mp4 %s 2>/dev/null", filename);
+        sprintf(args->ffmpeg_cmd, "ffmpeg -y -loglevel quiet -f hevc -i - -c:v copy -f mp4 %s 2>/dev/null", args->filename);
 
         size_t total_frames = args->frames.size();
         size_t total_size = pipe->total_cached_size;
@@ -267,14 +251,7 @@ void h265_save_func(pipeline_buffer_t *buff)
 
         pthread_mutex_unlock(&pipe->buffer_mutex);
 
-        WTALOGI("录制结束，启动后台线程写入 %zu 帧(%.2f MB)到 %s", total_frames, total_size / (1024.0*1024.0), filename);
-
-        // 创建目录
-        if (access(dirname.c_str(), 0) != 0) {
-            char cmd[256] = {0};
-            sprintf(cmd, "mkdir -p %s", dirname.c_str());
-            system(cmd);
-        }
+        WTALOGI("录制结束，启动后台线程写入 %zu 帧(%.2f MB)到 %s", total_frames, total_size / (1024.0*1024.0), args->filename);
 
         // 启动后台写入线程
         pipe->writer_running = true;
@@ -449,11 +426,7 @@ int main(int argc, char *argv[])
 
     signal(SIGPIPE, SIG_IGN);
     signal(SIGINT, __sigExit);
-    // 使用PathManager获取模型配置文件路径
-    PathManager& pathManager = PathManager::getInstance();
-    std::string config_file_path = pathManager.generatePath("model", "", 0) + "/wt_rtsp.json";
-    char config_file[256] = {0};
-    strncpy(config_file, config_file_path.c_str(), sizeof(config_file) - 1);
+    char config_file[256] = "/wt_tech/app/ax-pipeline/config/wt_rtsp.json"; //默认json配置文件
     char config_file_test[128]={0};
 
     ALOGN("sample begin\n\n");
@@ -578,15 +551,12 @@ int main(int argc, char *argv[])
     for (auto const &camera : CameraController::getInstance()->getAllCameras())
     {
         if (camera->getName() == "tc") {
-            std::string config_file_path = pathManager.generatePath("model", "", 0) + "/wt_rtsp_tc.json";
-            strncpy(config_file, config_file_path.c_str(), sizeof(config_file) - 1);
+            strcpy(config_file, "/wt_tech/app/ax-pipeline/config/wt_rtsp_tc.json"); // 叶片尖专用模型
         } else {
             if (strlen(config_file_test))
                 strcpy(config_file, config_file_test); // -f参数指定的json配置文件
-            else {
-                std::string config_file_path = pathManager.generatePath("model", "", 0) + "/wt_rtsp.json";
-                strncpy(config_file, config_file_path.c_str(), sizeof(config_file) - 1);
-            }
+            else
+                strcpy(config_file, "/wt_tech/app/ax-pipeline/config/wt_rtsp.json"); // 默认json配置文件
         }
 
         void *model1 = nullptr;
@@ -602,9 +572,7 @@ int main(int argc, char *argv[])
         }
 
         // 加载第二个模型（例如人脸识别模型）
-        std::string config_file_people_path = pathManager.generatePath("model", "", 0) + "/wt_rtsp_people.json";
-        char config_file_people[256] = {0};
-        strncpy(config_file_people, config_file_people_path.c_str(), sizeof(config_file_people) - 1);
+        char config_file_people[256] = "/wt_tech/app/ax-pipeline/config/wt_rtsp_people.json"; //人体识别
 
         void *model2 = nullptr;
         s32Ret = axdl_parse_param_init(config_file_people, &model2, camera->getName().c_str(), camera->get_id());

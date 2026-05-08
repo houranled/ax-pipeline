@@ -726,6 +726,55 @@ std::string Camera::get_camera_rtsp_url()
     return camera_rtsp_url;
 }
 
+std::string Camera::generateCustomVideoPath(VideoPathType type= VideoPathType::VIDEO)
+{
+    time_t timeReal;
+    time(&timeReal);
+    timeReal = timeReal + 8 * 3600; // 转换为东八区时间
+    tm *t = gmtime(&timeReal);
+
+    char dateStr[16] = {0};
+    sprintf(dateStr, "%04d%02d%02d", t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
+
+    // 生成目录路径
+    std::string dirname;
+    char filename[256] = {0};
+
+    // 根据类型选择不同的基础路径
+    std::string base_path;
+    if (type == VideoPathType::PERSON) {
+        base_path = "/wt_tech/data/video2/person";
+        dirname = base_path;
+
+        // 生成文件名 - 增加到秒级
+        sprintf(filename, "%s/%s-%d-%02d-%02d_%02d%02d%02d.mp4", dirname.c_str(), name.c_str(),
+            t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
+
+    } else {
+        base_path = "/wt_tech/data/F02";
+        dirname = base_path + "/" + std::string(dateStr) + "/" + std::string(dateStr) + "_"
+            + std::to_string(t->tm_hour) + "/video";
+
+        // 生成文件名
+        sprintf(filename, "%s/%d-%02d-%02d_%02d_%s.mp4", dirname.c_str(), t->tm_year + 1900,
+            t->tm_mon + 1, t->tm_mday, t->tm_hour, name.c_str());
+    }
+
+    strncpy(m_pipeline->video_filename, filename, sizeof(this->m_pipeline->video_filename)-1);
+    m_pipeline->video_filename[sizeof(m_pipeline->video_filename)-1] = '\0';
+
+
+    // 创建目录
+    if (access(dirname.c_str(), 0) != 0) {
+        char cmd[256] = {0};
+        sprintf(cmd, "mkdir -p %s", dirname.c_str());
+        system(cmd);
+    }
+
+    return filename;
+}
+
+
 void Camera::set_camera_rtsp_url(const std::string& url)
 {
     camera_rtsp_url = url;
@@ -740,6 +789,8 @@ int Camera::patrol_with_calibration_loop(bool is_calibrate) //return 0表示正�
 
     // 巡检模式：开始持续录像
     if (!is_calibrate) {
+        //这里设置存储的文件路径
+        generateCustomVideoPath();
         start_record_video();
     }
 
