@@ -76,6 +76,16 @@ void ax_model_custom::draw_custom(cv::Mat &image, axdl_results_t *results, float
      * 2、请不要对 cv::Mat &image 进行除了绘制图案之外的其他修改，如 resize、cvtColor 等
      */
 
+     /* 计算振幅△Y:
+     * 根据x =fX/Z (透视原理. XYZ是监测视点在物理世界的坐标, xy是其在画面屏幕上的坐标)可以得出:
+     * 1、 x' = f*X/Z'  →  Z' = fX/x'       # 第0帧的景深 = 焦距 * 扇叶宽度 / 帧0识别框左上角横坐标
+     * 2、 x'' = f*X/Z'' → Z'' = fX/x''      # 第n帧的景深 = 焦距 * 扇叶宽度 / 帧n识别框左上角横坐标
+     * 已知x' x'' f  X  ,求出了 Z' 和 Z''两个景深.
+     * 然后计算△Z景深差： △Z = Z'' - Z'   # 景深差 = 第n帧的景深 - 第0帧的景深
+     * 需要提前知道摄像头上沿视线与摄像头主视线的垂直夹角,
+     * 然后通过  tanθ= △Y /△Z    →   △Y = △Z * tan仰角得出△Y, 即振幅.
+    */
+
     // 检查人脸检测并触发录像
     check_and_trigger_face_recording(results);
 
@@ -86,7 +96,7 @@ void ax_model_custom::draw_custom(cv::Mat &image, axdl_results_t *results, float
     auto now = std::chrono::system_clock::now();
     auto &obj = results->mObjects[0];
     auto& cad = channel_amplitude_data;  //cad: channel amplitude data
-    if (strcmp(obj.objname, "fan") == 0) {
+    if (results->nObjSize > 0 && strcmp(obj.objname, "fan") == 0) {
 
         //tan(画面上沿视线与摄像头主视线的垂直夹角) 即 镜头中间水平线到画面上沿的距离长度÷焦距 是个比例值
         auto tanAngle = (image_height/2.0f - cad.occlusion_pixel_height) / (cad.f/cad.size_per_pixel);
@@ -122,7 +132,7 @@ void ax_model_custom::draw_custom(cv::Mat &image, axdl_results_t *results, float
             cad.last_sample_time = now;
         }
 
-        // 使用OpenCV绘制文本
+        // 使用OpenCV绘制目标点内容
         cv::Point obj_pt(static_cast<int>(obj.bbox.x * image_width),
                         static_cast<int>(obj.bbox.y * image_height + 3));
         std::string obj_text = std::to_string(distance_now);
