@@ -21,8 +21,6 @@ public:
         model_type = "default";
     }
 
-    //virtual int inference(axdl_image_t *pstFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results) override;
-
     // Override sub_init to extract model type from filename (called after base init)
     int sub_init(void *json_obj) override;
 

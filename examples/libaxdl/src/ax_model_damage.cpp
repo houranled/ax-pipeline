@@ -23,18 +23,16 @@ int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resi
     int num_anchors = 0;
     int num_classes = CLASS_NUM; // 使用类成员变量
 
-    if (pOutputsInfo[0].vShape.size() == 3) {
-        // YOLOv8 OBB format: [batch=1, channels=5+classes, anchors=8400]
-        num_anchors = (int)pOutputsInfo[0].vShape[2];  // 8400
-        int channels = (int)pOutputsInfo[0].vShape[1];  // 5 + num_classes
-        //num_classes = channels - 5;
+    if (pOutputsInfo[0].vShape.size() >= 3) {
+        num_anchors = (int)pOutputsInfo[0].vShape[2];
+        int channels = (int)pOutputsInfo[0].vShape[1];
     } else {
-        ALOGE("YOLOv8 OBB requires 3D output [batch, channels, anchors]");
+        WTALOGI("YOLOv8 OBB requires 3D output [batch, channels, anchors]");
         return -1;
     }
 
     if (num_anchors <= 0) {
-        ALOGE("Invalid YOLOv8 OBB output shape");
+        WTALOGI("Invalid YOLOv8 OBB output shape");
         return -1;
     }
 
@@ -51,21 +49,12 @@ int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resi
     // Apply NMS and coordinate transformation
     std::vector<detection::Object> objects;
     detection::get_out_obb_bbox(proposals, objects, NMS_THRESHOLD, get_algo_height(), get_algo_width(),
-                                pstFrame->nHeight, pstFrame->nWidth);
+                                HEIGHT_DET_BBOX_RESTORE, WIDTH_DET_BBOX_RESTORE);
 
     // Convert to axdl_results_t format
     results->nObjSize = MIN(objects.size(), SAMPLE_MAX_BBOX_COUNT);
     for (int i = 0; i < results->nObjSize; i++) {
         const detection::Object& obj = objects[i];
-
-        // Set axis-aligned bounding box for compatibility
-        results->mObjects[i].bbox.x = obj.rect.x;
-        results->mObjects[i].bbox.y = obj.rect.y;
-        results->mObjects[i].bbox.w = obj.rect.width;
-        results->mObjects[i].bbox.h = obj.rect.height;
-        results->mObjects[i].label = obj.label;
-        results->mObjects[i].prob = obj.prob;
-        /* ↑ 似乎是冗余的 */
 
         // Set OBB vertices:
         results->mObjects[i].bHasBoxVertices = 1;
@@ -88,30 +77,6 @@ int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resi
 
 void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y)
 {
-    // Draw OBB polygons for each detected object
-    //for (int i = 0; i < results->nObjSize; i++) {
-    //    if (results->mObjects[i].bHasBoxVertices) {
-    //        cv::Point pts[4];
-    //        for (int j = 0; j < 4; j++) {
-    //            pts[j] = cv::Point(
-    //                results->mObjects[i].bbox_vertices[j].x * image.cols + offset_x,
-    //                results->mObjects[i].bbox_vertices[j].y * image.rows + offset_y
-    //            );
-    //        }
-
-    //        // Draw rotated rectangle/polygon
-    //        for (int j = 0; j < 4; j++) {
-    //            cv::line(image, pts[j], pts[(j + 1) % 4],
-    //                    cv::Scalar(0, 255, 0), thickness, 8, 0);
-    //        }
-
-    //        // Draw label with class name and confidence
-    //        std::string label_str = std::string(results->mObjects[i].objname) + " " +
-    //                               std::to_string(static_cast<int>(results->mObjects[i].prob * 100)) + "%";
-    //        cv::putText(image, label_str, pts[0], cv::FONT_HERSHEY_SIMPLEX,
-    //                   fontscale, cv::Scalar(0, 255, 0), thickness);
-    //    }
-    //}
     draw_bbox(image, results, fontscale, thickness, offset_x, offset_y);
     if (results->nObjSize > 0) {
         //生成告警 调用camera_Controller
@@ -119,37 +84,6 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
         CameraController::getInstance()->getCamera(camera_id)->start_take_a_picture(2);
     }
 }
-
-//void ax_model_damage::draw_custom(int chn, axdl_results_t *results, float fontscale, int thickness)
-//{
-//    // Custom OSD drawing for OBB - use polygon drawing
-//    //for (int i = 0; i < results->nObjSize; i++) {
-//    //    if (results->mObjects[i].bHasBoxVertices) {
-//    //        if (results->bObjTrack) {
-//    //            m_drawers[chn].add_polygon(results->mObjects[i].bbox_vertices, 4,
-//    //                COCO_COLORS_ARGB[results->mObjects[i].track_id % COCO_COLORS_ARGB.size()], thickness);
-//    //        } else {
-//    //            m_drawers[chn].add_polygon(results->mObjects[i].bbox_vertices, 4,
-//    //                COCO_COLORS_ARGB[results->mObjects[i].label % COCO_COLORS_ARGB.size()], thickness);
-//    //        }
-
-//    //        // Add label
-//    //        if (results->bObjTrack && b_draw_obj_name) {
-//    //            m_drawers[chn].add_text(
-//    //                std::string(results->mObjects[i].objname) + " " + std::to_string(results->mObjects[i].track_id),
-//    //                results->mObjects[i].bbox_vertices[0],
-//    //                {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
-//    //        } else if (b_draw_obj_name) {
-//    //            m_drawers[chn].add_text(results->mObjects[i].objname,
-//    //                results->mObjects[i].bbox_vertices[0],
-//    //                {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
-//    //        }
-//
-//            //生成告警 调用camera_Controller
-//            CameraController::getInstance()->early_warning_process(chn/2);
-//        }
-//    }
-//}
 
 int ax_model_damage::sub_init(void *json_obj)
 {
