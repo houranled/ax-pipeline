@@ -11,6 +11,16 @@
 #include "base/detection.hpp"
 #include "../include/ax_model_base.hpp"
 
+struct ScaleOutputs
+{
+    int stride;
+    int H, W;
+    int box_ch, cls_ch, ang_ch;
+    const float* box_ptr;
+    const float* cls_ptr;
+    const float* ang_ptr;
+};
+
 class ax_model_damage : public ax_model_yolov8_native
 {
 public:
