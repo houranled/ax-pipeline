@@ -154,7 +154,6 @@ void ai_inference_func(pipeline_buffer_t *buff)
         //memset(&mResults[pipe->pipeid], 0, sizeof(axdl_results_t));
         mResults[pipe->pipeid].nObjSize = 0;
 
-        int count = 0;
         // 使用所有模型对同一帧图像进行推理，并合并结果
         for (auto each_model : g_sample.osd_target_map[pipe->pipeid]->gModels)
         {
@@ -172,7 +171,7 @@ void ai_inference_func(pipeline_buffer_t *buff)
                     mResults[pipe->pipeid].nObjSize++;
                 }
             }
-            count++; // 记录模型数量
+            mResults[pipe->pipeid].niFps = model_result.niFps; // 保存推理FPS
         }
         // ALOGI("pipe=%d detect%d", pipe->pipeid, mResults[pipe->pipeid].nObjSize);
         g_sample.osd_target_map[pipe->pipeid]->osd_helper.Update(&mResults[pipe->pipeid]);
