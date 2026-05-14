@@ -589,27 +589,19 @@ std::string wt_damage_multi_model_recognize::get_current_point_prefix()
 {
     // Get current point information from camera controller
     CameraController* controller = CameraController::getInstance();
+    auto camera = controller->getCamera(this->camera_id);
 
-    // Try to get current camera from channel name or other means
-    // For now, we'll use the channel name to identify the camera
+    int current_point_id = camera->now_point_id;
 
-    // Find camera by channel name
-    for (auto camera : controller->getAllCameras()) {
-        if (camera->getName() == channel_name) {
-            int current_point_id = camera->now_point_id;
-
-            // Find preset position by ID
-            for (const auto& pos : camera->getPresetPositions()) {
-                if (pos.id == current_point_id) {
-                    WTALOGI("Current point: ID=%d, Name='%s'", current_point_id, pos.name.c_str());
-                    return pos.name; // Return full point name for prefix matching
-                }
-            }
-            break;
+    // Find preset position by ID
+    for (const auto& pos : camera->getPresetPositions()) {
+        if (pos.id == current_point_id) {
+            WTALOGI("Current point: ID=%d, Name='%s'", current_point_id, pos.name.c_str());
+            return pos.name; // Return full point name for prefix matching
         }
     }
 
-    WTALOGI("Could not find current point information for channel '%s'", channel_name.c_str());
+    WTALOGI("无法找到通道%s的当前点信息", channel_name.c_str());
     return ""; // Return empty string if not found
 }
 
@@ -669,26 +661,43 @@ int wt_damage_multi_model_recognize::inference(axdl_image_t *pstFrame, axdl_bbox
         return -1;
     }
 
-    // Get all models of the matched type
+    int result = 0;
+    // 获取所有匹配类型的模型
     std::vector<std::shared_ptr<ax_model_base>> models_to_run = get_models_by_type(model_type);
 
+    // 如果没有对应类型的模型，则遍历使用所有模型
     if (models_to_run.empty()) {
-        WTALOGI("No models found for type '%s'", model_type.c_str());
-        return -1;
+        WTALOGI("未找到类型为 '%s' 的模型，应当遍历使用所有模型", model_type.c_str());
+        models_to_run = m_models;
+    } else {
+        WTALOGI("Running inference for point '%s' with %zu models of type '%s'", current_point_name.c_str(),
+            models_to_run.size(), model_type.c_str());
     }
 
-    // Run inference with all models of the matched type
-    WTALOGI("Running inference for point '%s' with %zu models of type '%s'",
-            current_point_name.c_str(), models_to_run.size(), model_type.c_str());
-
-    int result = 0;
+    results->nObjSize = 0;
     for (auto& model : models_to_run) {
-        int model_result = model->inference(pstFrame, crop_resize_box, results);
+        axdl_results_t temp_results = {};
+        int model_result = model->inference(pstFrame, crop_resize_box, &temp_results);
         if (model_result != 0) {
-            WTALOGI("Model inference failed for type '%s', result=%d", model_type.c_str(), model_result);
-            result = model_result; // Return last error, but continue with other models
+            WTALOGI("Model inference failed, result=%d", model_result);
+            result = model_result;
+            continue;
+        }
+
+        // 合并当前模型的推理结果到主results中
+        int space_left = SAMPLE_MAX_BBOX_COUNT - results->nObjSize;
+        int to_copy = std::min((int)temp_results.nObjSize, space_left);
+        if (to_copy > 0) {
+            memcpy(&(results->mObjects[results->nObjSize]), &(temp_results.mObjects[0]), to_copy * sizeof(results->mObjects[0]));
+            results->nObjSize += to_copy;
+        }
+
+        if (results->nObjSize >= SAMPLE_MAX_BBOX_COUNT) {
+            WTALOGI("Results buffer full, skipping remaining models");
+            break;
         }
     }
 
     return result;
+
 }
