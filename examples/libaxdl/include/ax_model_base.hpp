@@ -304,7 +304,22 @@ public:
 
     int init(void *json_obj) override;
     void deinit() override;
-    axdl_color_space_e get_color_space() override { WTALOGI("待实现"); return axdl_color_space_e::axdl_color_space_nv12 ; /*return m_models[0].get()->get_color_space();*/ }
-    int get_algo_width() override { WTALOGI("待实现"); return 640; /*return m_models[0].get()->get_algo_width();*/ }
-    int get_algo_height() override { WTALOGI("待实现"); return 640; /*return m_models[0].get()->get_algo_height();*/ }
+    axdl_color_space_e get_color_space() override {
+        return m_models.empty() ? axdl_color_space_e::axdl_color_space_nv12
+                                : m_models[0]->get_color_space();
+    }
+    int get_algo_width() override {
+        return m_models.empty() ? 640 : m_models[0]->get_algo_width();
+    }
+    int get_algo_height() override {
+        return m_models.empty() ? 640 : m_models[0]->get_algo_height();
+    }
+
+    void set_det_restore_resolution(int width, int height) override {
+        WIDTH_DET_BBOX_RESTORE = width;
+        HEIGHT_DET_BBOX_RESTORE = height;
+        for (auto &m : m_models) {
+            if (m) m->set_det_restore_resolution(width, height);
+        }
+    }
 };

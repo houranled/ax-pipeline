@@ -103,6 +103,7 @@ public:
     std::string ip;  // 相机ip地址
     std::string ptz_ip; // 云台ip地址
     int now_point_id; // 当前所在点位id
+    bool posture_completed = false; // 是否到达指定位置
 
     Camera();
     ~Camera();
@@ -167,10 +168,9 @@ private:
 
     CURL *curl_handle;  // 持久化的curl句柄
     modbus_t *modbus_ctx = nullptr;
-    bool posture_completed = false; // 是否到达指定位置
 
     int patrol_with_calibration_loop(bool is_calibrate);  // 摄像机巡检(可伴随标定)
-    bool is_posture_completed(int x, int y); // 判断是否到达指定位置
+    void update_posture_state(int x, int y); // 判断是否到达指定位置
     void setPipe(pipeline_t * pipe); // 绑定pipeline
     bool connect_modbus(); // 重连modbus
 

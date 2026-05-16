@@ -45,7 +45,7 @@ public:
     bool generateAlarm(AlarmType type, const std::string& message, float confidence, Camera *camera); // 生成告警
     std::string output_alarms(int camera_id); // 输出对应id的摄像机的告警信息
 
-    static uint32_t cooldown;
+    static uint32_t cooldown;  // 同(相机,类型)告警冷却时间(秒)
 
 private:
     std::map<int, std::queue<Alarm>> alarm_map_datas;  // 按通道ID分别存储的告警队列

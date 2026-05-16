@@ -5,7 +5,7 @@
 #include "../examples/utilities/json.hpp"
 #include "../examples/utilities/sample_log.h"
 
-uint32_t AlarmManager::cooldown = 0;
+uint32_t AlarmManager::cooldown = 5;  // 默认冷却 5 秒
 
 bool AlarmManager::isAlarmTriggered(AlarmType type, const std::string &message, int cameraId, float confidence)
 {
@@ -55,8 +55,12 @@ std::string AlarmManager::output_alarms(int camera_id)
                 alarm_map_datas[camera_id].pop();
 
                 nlohmann::json warning;
+                warning["camera_id"] = alarm.cameraId;
                 warning["point_id"] = alarm.point_id;
-                warning["type"] = alarm.type;
+                warning["type"] = static_cast<int>(alarm.type);
+                warning["message"] = alarm.message;
+                warning["timestamp"] = static_cast<long long>(alarm.timestamp);
+                warning["confidence"] = alarm.confidence;
                 warning["image"] = alarm.picPath.empty() ? "" : alarm.picPath;
 
                 result["warnings"].push_back(warning);
@@ -71,8 +75,12 @@ std::string AlarmManager::output_alarms(int camera_id)
                 alarm_map_datas[current_camera_id].pop();
 
                 nlohmann::json one_warning;
+                one_warning["camera_id"] = alarm.cameraId;
                 one_warning["point_id"] = alarm.point_id;
-                one_warning["type"] = alarm.type;
+                one_warning["type"] = static_cast<int>(alarm.type);
+                one_warning["message"] = alarm.message;
+                one_warning["timestamp"] = static_cast<long long>(alarm.timestamp);
+                one_warning["confidence"] = alarm.confidence;
                 one_warning["image"] = alarm.picPath.empty() ? "" : alarm.picPath;
 
                 result["warnings"].push_back(one_warning);

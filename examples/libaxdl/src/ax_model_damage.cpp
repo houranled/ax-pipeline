@@ -3,6 +3,8 @@
 #include <opencv2/opencv.hpp>
 #include <numeric>  // 添加此行以使用 std::accumulate
 #include <algorithm>
+#include <unistd.h>
+#include <ctime>
 #include "../../camera/camera_controller.hpp"
 #include "../../utilities/json.hpp"
 
@@ -410,11 +412,57 @@ int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resi
 void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y)
 {
     draw_bbox(image, results, fontscale, thickness, offset_x, offset_y);
-    if (results->nObjSize > 0) {
-        //生成告警 调用camera_Controller
-        CameraController::getInstance()->early_warning_process(camera_id);
-        CameraController::getInstance()->getCamera(camera_id)->start_take_a_picture(2);
+
+    auto *cam = CameraController::getInstance()->getCamera(camera_id);
+    if (!cam || !cam->is_patroling()) return;
+
+    int cur_point = cam->now_point_id;
+
+    // 每个点位仅触发一次拍照+告警：point_id 变化才视为"新点位"
+    static std::map<int, int> last_fired_point; // camera_id -> 上次已触发的点位
+    auto it = last_fired_point.find(camera_id);
+    if (it != last_fired_point.end() && it->second == cur_point) {
+        return; // 同点位已触发过，跳过
     }
+
+    if (!cam->posture_completed)
+        return; //未到点位，跳过
+
+    // 生成路径（沿用 record_ffmpeg_pipe_jpg 的目录方案）
+    time_t now = time(nullptr) + 8 * 3600;
+    tm *t = gmtime(&now);
+    char ymd[16] = {0};
+    snprintf(ymd, sizeof(ymd), "%04d%02d%02d", t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
+
+    char dirname[160] = {0};
+    snprintf(dirname, sizeof(dirname), "/wt_tech/data/F02/%s/%s_%d/image", ymd, ymd, t->tm_hour);
+    if (access(dirname, 0) != 0) {
+        char mk[256] = {0};
+        snprintf(mk, sizeof(mk), "mkdir -p %s", dirname);
+        system(mk);
+    }
+
+    char filepath[320] = {0};
+    snprintf(filepath, sizeof(filepath), "%s/%s_%02d_%s_%d.jpg", dirname, ymd, t->tm_hour, channel_name.c_str(), cur_point);
+
+    std::vector<int> jpg_params = { cv::IMWRITE_JPEG_QUALITY, 90 };
+    if (!cv::imwrite(filepath, image, jpg_params)) {
+        WTALOGI("[damage] 点位[%d] cv::imwrite 失败: %s", cur_point, filepath);
+    }
+
+    // 写回 pipeline，让 generateAlarm 拿到本张快照路径
+    if (auto *pipe = cam->get_pipeline()) {
+        strncpy(pipe->pic_filename, filepath, sizeof(pipe->pic_filename) - 1);
+        pipe->pic_filename[sizeof(pipe->pic_filename) - 1] = '\0';
+    }
+
+    // 触发新增点位告警
+    if (results->nObjSize > 0)
+        CameraController::getInstance()->early_warning_process(camera_id);
+
+    // 标记该点位已处理
+    last_fired_point[camera_id] = cur_point;
+    WTALOGI("[damage] 点位[%d] 已拍照并告警: %s", cur_point, filepath);
 }
 
 int ax_model_damage::sub_init(void *json_obj)
@@ -596,12 +644,10 @@ std::string wt_damage_multi_model_recognize::get_current_point_prefix()
     // Find preset position by ID
     for (const auto& pos : camera->getPresetPositions()) {
         if (pos.id == current_point_id) {
-            WTALOGI("Current point: ID=%d, Name='%s'", current_point_id, pos.name.c_str());
             return pos.name; // Return full point name for prefix matching
         }
     }
 
-    WTALOGI("无法找到通道%s的当前点信息", channel_name.c_str());
     return ""; // Return empty string if not found
 }
 
@@ -623,8 +669,8 @@ std::string wt_damage_multi_model_recognize::find_model_type_for_point(const std
     // If no specific match found, return first available model type as fallback
     if (!m_model_types.empty()) {
         std::string fallback_type = m_model_types.begin()->first;
-        WTALOGI("No specific model type match for point '%s', using fallback type '%s'",
-                point_name.c_str(), fallback_type.c_str());
+        WTALOGI("No specific model type match for point '%s', using fallback type '%s'", point_name.c_str(),
+            fallback_type.c_str());
         return fallback_type;
     }
 
@@ -648,30 +694,30 @@ int wt_damage_multi_model_recognize::inference(axdl_image_t *pstFrame, axdl_bbox
     // Get current point name prefix
     std::string current_point_name = get_current_point_prefix();
 
-    if (current_point_name.empty()) {
-        WTALOGI("Could not determine current point name, skipping inference");
-        return -1;
-    }
-
-    // Find appropriate model type for current point
-    std::string model_type = find_model_type_for_point(current_point_name);
-
-    if (model_type.empty()) {
-        WTALOGI("No suitable model type found for point '%s'", current_point_name.c_str());
-        return -1;
-    }
-
+    std::vector<std::shared_ptr<ax_model_base>> models_to_run;
+    std::string model_type;
     int result = 0;
-    // 获取所有匹配类型的模型
-    std::vector<std::shared_ptr<ax_model_base>> models_to_run = get_models_by_type(model_type);
+    if (current_point_name.empty()) {
+        WTALOGI("Could not determine current point name！");
+    } else {
+        // Find appropriate model type for current point
+        model_type = find_model_type_for_point(current_point_name);
+
+        if (model_type.empty()) {
+            WTALOGI("No suitable model type found for point '%s'", current_point_name.c_str());
+        }
+
+        // 获取所有匹配类型的模型
+        models_to_run = get_models_by_type(model_type);
+    }
 
     // 如果没有对应类型的模型，则遍历使用所有模型
     if (models_to_run.empty()) {
         WTALOGI("未找到类型为 '%s' 的模型，应当遍历使用所有模型", model_type.c_str());
         models_to_run = m_models;
     } else {
-        WTALOGI("Running inference for point '%s' with %zu models of type '%s'", current_point_name.c_str(),
-            models_to_run.size(), model_type.c_str());
+        WTALOGI("Running inference for point '%s' with %zu models of type '%s'",
+            current_point_name.c_str(), models_to_run.size(), model_type.c_str());
     }
 
     results->nObjSize = 0;
