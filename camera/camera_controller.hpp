@@ -102,8 +102,8 @@ public:
 
     std::string ip;  // 相机ip地址
     std::string ptz_ip; // 云台ip地址
-    int now_point_id; // 当前所在点位id
-    bool posture_completed = false; // 是否到达指定位置
+    int now_point_id=0; // 当前所在点位id
+    bool posture_completed = true; // 是否到达指定位置
 
     Camera();
     ~Camera();

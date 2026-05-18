@@ -102,7 +102,7 @@ protected:
 
     // pipe chn
     bool b_letter_box = true;
-    bool b_draw_fps = true;
+    bool b_draw_fps = false;
     bool b_draw_obj_name = true;
     std::map<int, ax_osd_drawer> m_drawers;
 

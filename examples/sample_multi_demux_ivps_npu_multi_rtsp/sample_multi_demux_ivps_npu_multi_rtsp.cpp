@@ -122,60 +122,58 @@ static struct _g_sample_
 void ai_inference_func(pipeline_buffer_t *buff)
 {
     pipeline_t *pipe = (pipeline_t *)buff->p_pipe;
-    if (!pipe->m_pcamera || !pipe->m_pcamera->ptz_ip.empty() && !pipe->m_pcamera->is_patroling())
-        return ; // //有云台配置才有巡检能力.非巡检状态直接返回，跳过推理和绘制
-
-    if (g_sample.osd_target_map[pipe->pipeid]->bRunJoint)
-    {
-        static std::map<int, axdl_results_t> mResults; //TODO: 打算改为全局变量
-        axdl_image_t tSrcFrame = {0};
-        switch (buff->d_type)
-        {
-        case po_buff_nv12:
-            tSrcFrame.eDtype = axdl_color_space_nv12;
-            break;
-        case po_buff_bgr:
-            tSrcFrame.eDtype = axdl_color_space_bgr;
-            break;
-        case po_buff_rgb:
-            tSrcFrame.eDtype = axdl_color_space_rgb;
-            break;
-        default:
-            break;
-        }
-        tSrcFrame.nWidth = buff->n_width;
-        tSrcFrame.nHeight = buff->n_height;
-        tSrcFrame.pVir = (unsigned char *)buff->p_vir;
-        tSrcFrame.pPhy = buff->p_phy;
-        tSrcFrame.tStride_W = buff->n_stride;
-        tSrcFrame.nSize = buff->n_size;
-
-        // 初始化合并后的结果
-        //memset(&mResults[pipe->pipeid], 0, sizeof(axdl_results_t));
-        mResults[pipe->pipeid].nObjSize = 0;
-
-        // 使用所有模型对同一帧图像进行推理，并合并结果
-        for (auto each_model : g_sample.osd_target_map[pipe->pipeid]->gModels)
-        {
-            axdl_results_t model_result;
-            memset(&model_result, 0, sizeof(axdl_results_t));
-
-            axdl_inference(each_model, &tSrcFrame, &model_result);
-
-            // 合并模型结果到统一结果中
-            for (int i = 0; i < model_result.nObjSize; i++)
+        if (g_sample.osd_target_map[pipe->pipeid]->bRunJoint) {
+            static std::map<int, axdl_results_t> mResults; //TODO: 打算改为全局变量
+            axdl_image_t tSrcFrame = {0};
+            switch (buff->d_type)
             {
-                if (mResults[pipe->pipeid].nObjSize < SAMPLE_MAX_BBOX_COUNT)
-                {
-                    mResults[pipe->pipeid].mObjects[mResults[pipe->pipeid].nObjSize] = model_result.mObjects[i];
-                    mResults[pipe->pipeid].nObjSize++;
-                }
+            case po_buff_nv12:
+                tSrcFrame.eDtype = axdl_color_space_nv12;
+                break;
+            case po_buff_bgr:
+                tSrcFrame.eDtype = axdl_color_space_bgr;
+                break;
+            case po_buff_rgb:
+                tSrcFrame.eDtype = axdl_color_space_rgb;
+                break;
+            default:
+                break;
             }
-            mResults[pipe->pipeid].niFps = model_result.niFps; // 保存推理FPS
+            tSrcFrame.nWidth = buff->n_width;
+            tSrcFrame.nHeight = buff->n_height;
+            tSrcFrame.pVir = (unsigned char *)buff->p_vir;
+            tSrcFrame.pPhy = buff->p_phy;
+            tSrcFrame.tStride_W = buff->n_stride;
+            tSrcFrame.nSize = buff->n_size;
+
+            // 初始化合并后的结果
+            //memset(&mResults[pipe->pipeid], 0, sizeof(axdl_results_t));
+            mResults[pipe->pipeid].nObjSize = 0;
+
+            if (pipe->m_pcamera && (pipe->m_pcamera->ptz_ip.empty() || pipe->m_pcamera->is_patroling())) {
+                // 使用所有模型对同一帧图像进行推理，并合并结果
+                for (auto each_model : g_sample.osd_target_map[pipe->pipeid]->gModels) {
+                    axdl_results_t model_result;
+                    memset(&model_result, 0, sizeof(axdl_results_t));
+
+                    axdl_inference(each_model, &tSrcFrame, &model_result);
+
+                    // 合并模型结果到统一结果中
+                    for (int i = 0; i < model_result.nObjSize; i++) {
+                        if (mResults[pipe->pipeid].nObjSize < SAMPLE_MAX_BBOX_COUNT)
+                        {
+                            mResults[pipe->pipeid].mObjects[mResults[pipe->pipeid].nObjSize] = model_result.mObjects[i];
+                            mResults[pipe->pipeid].nObjSize++;
+                        }
+                    }
+                    mResults[pipe->pipeid].niFps = model_result.niFps; // 保存推理FPS
+                }
+
+            }
+
+            // ALOGI("pipe=%d detect%d", pipe->pipeid, mResults[pipe->pipeid].nObjSize);
+            g_sample.osd_target_map[pipe->pipeid]->osd_helper.Update(&mResults[pipe->pipeid]);
         }
-        // ALOGI("pipe=%d detect%d", pipe->pipeid, mResults[pipe->pipeid].nObjSize);
-        g_sample.osd_target_map[pipe->pipeid]->osd_helper.Update(&mResults[pipe->pipeid]);
-    }
 }
 
 void h265_save_func(pipeline_buffer_t *buff)

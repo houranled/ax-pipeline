@@ -58,9 +58,6 @@ std::string AlarmManager::output_alarms(int camera_id)
                 warning["camera_id"] = alarm.cameraId;
                 warning["point_id"] = alarm.point_id;
                 warning["type"] = static_cast<int>(alarm.type);
-                warning["message"] = alarm.message;
-                warning["timestamp"] = static_cast<long long>(alarm.timestamp);
-                warning["confidence"] = alarm.confidence;
                 warning["image"] = alarm.picPath.empty() ? "" : alarm.picPath;
 
                 result["warnings"].push_back(warning);
@@ -78,9 +75,6 @@ std::string AlarmManager::output_alarms(int camera_id)
                 one_warning["camera_id"] = alarm.cameraId;
                 one_warning["point_id"] = alarm.point_id;
                 one_warning["type"] = static_cast<int>(alarm.type);
-                one_warning["message"] = alarm.message;
-                one_warning["timestamp"] = static_cast<long long>(alarm.timestamp);
-                one_warning["confidence"] = alarm.confidence;
                 one_warning["image"] = alarm.picPath.empty() ? "" : alarm.picPath;
 
                 result["warnings"].push_back(one_warning);
@@ -90,6 +84,9 @@ std::string AlarmManager::output_alarms(int camera_id)
 
     lock.unlock();
 
+    auto res_str = result.dump();
+    WTALOGI("返回告警: %s", res_str.c_str());
+
     // 返回JSON字符串
-    return result.dump();
+    return res_str;
 }

@@ -413,10 +413,62 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
 {
     draw_bbox(image, results, fontscale, thickness, offset_x, offset_y);
 
-    auto *cam = CameraController::getInstance()->getCamera(camera_id);
-    if (!cam || !cam->is_patroling()) return;
+    /* ---------- 绘制时间和点位信息 ---------- */
+    time_t now_ts = time(nullptr) + 8 * 3600;
+    tm *t_info = gmtime(&now_ts);
+    char time_str[64] = {0};
+    snprintf(time_str, sizeof(time_str), "%04d-%02d-%02d %02d:%02d:%02d",
+             t_info->tm_year + 1900, t_info->tm_mon + 1, t_info->tm_mday,
+             t_info->tm_hour, t_info->tm_min, t_info->tm_sec);
 
+    auto *cam = CameraController::getInstance()->getCamera(camera_id);
     int cur_point = cam->now_point_id;
+    char point_str[128] = {0};
+    bool is_moving = false;
+    if (cam && cam->posture_completed) {
+        snprintf(point_str, sizeof(point_str), "Point: %d (arrived)", cur_point);
+    } else {
+        snprintf(point_str, sizeof(point_str), "Point: %d (moving...)", cur_point);
+        is_moving = true;
+    }
+
+    int text_y = 30;
+    int text_x = 10;
+    int font_face = cv::FONT_HERSHEY_SIMPLEX;
+    double font_scale = 0.8;
+    int text_thickness = 2;
+    int baseline = 0;
+
+    // 绘制时间文字背景及文字
+    cv::Size time_size = cv::getTextSize(time_str, font_face, font_scale, text_thickness, &baseline);
+    cv::rectangle(image, cv::Point(text_x, text_y - time_size.height - baseline),
+                  cv::Point(text_x + time_size.width, text_y + baseline), cv::Scalar(255, 255, 255), -1);
+    cv::putText(image, time_str, cv::Point(text_x, text_y), font_face, font_scale, cv::Scalar(139, 0, 0), text_thickness);
+
+    // 在画面左下角绘制通道名称/摄像机名称
+    text_x = 10;
+    text_y = image.rows - 30; // 距离底部60像素，避免与点位信息重叠
+    cv::putText(image, channel_name, cv::Point(text_x, text_y), font_face, font_scale, cv::Scalar(139, 0, 0), text_thickness);
+
+    if (!cam || !cam->is_patroling()) return; // 非巡逻状态不绘制以下内容
+
+    // 绘制点位文字背景及文字
+    cv::Size point_size = cv::getTextSize(point_str, font_face, font_scale, text_thickness, &baseline);
+    // 计算画面下方的居中位置
+    int image_width = image.cols;
+    text_x = (image_width - point_size.width) / 2;  // 居中
+    text_y = image.rows - baseline - 10;  // 距离底部10像素
+
+    // 计算呼吸灯系数 (0.2 ~ 1.0)
+    double breath_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count() / 1000.0;
+    double breath_factor = 0.2 + 0.8 * (std::sin(breath_time * 2.0 * M_PI / 2.0) + 1.0) / 2.0; // 2秒为一个周期
+
+    // 动态计算颜色：移动时呼吸灯效果，到达时保持原色
+    int point_color_val = is_moving ? static_cast<int>(139 * breath_factor) : 139;
+    cv::Scalar point_color = cv::Scalar(point_color_val, 0, 0);
+
+    cv::putText(image, point_str, cv::Point(text_x, text_y + baseline), font_face, font_scale*2, point_color, text_thickness);
+
 
     // 每个点位仅触发一次拍照+告警：point_id 变化才视为"新点位"
     static std::map<int, int> last_fired_point; // camera_id -> 上次已触发的点位
