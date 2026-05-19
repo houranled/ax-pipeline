@@ -21,6 +21,7 @@ bool AlarmManager::generateAlarm(AlarmType type, const std::string& message, flo
     alarm.cameraId = camera->get_id();
     WTALOGI("为摄像头id[%d]生成告警!", alarm.cameraId);
 
+    alarm.channel_name = camera->getName();
     alarm.point_id = camera->now_point_id;
     alarm.type = type;
     alarm.timestamp = time(nullptr);  // 获取当前时间戳
@@ -56,6 +57,7 @@ std::string AlarmManager::output_alarms(int camera_id)
 
                 nlohmann::json warning;
                 warning["camera_id"] = alarm.cameraId;
+                warning["name"] = alarm.channel_name;
                 warning["point_id"] = alarm.point_id;
                 warning["type"] = static_cast<int>(alarm.type);
                 warning["image"] = alarm.picPath.empty() ? "" : alarm.picPath;
@@ -73,6 +75,7 @@ std::string AlarmManager::output_alarms(int camera_id)
 
                 nlohmann::json one_warning;
                 one_warning["camera_id"] = alarm.cameraId;
+                one_warning["name"] = alarm.channel_name;
                 one_warning["point_id"] = alarm.point_id;
                 one_warning["type"] = static_cast<int>(alarm.type);
                 one_warning["image"] = alarm.picPath.empty() ? "" : alarm.picPath;

@@ -104,6 +104,7 @@ public:
     std::string ptz_ip; // 云台ip地址
     int now_point_id=0; // 当前所在点位id
     bool posture_completed = true; // 是否到达指定位置
+    std::string orga_name; //风场名称
 
     Camera();
     ~Camera();

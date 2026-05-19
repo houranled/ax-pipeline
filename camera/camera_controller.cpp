@@ -427,6 +427,11 @@ int CameraController::load_config_from_file(const std::string& config_file_path)
             alarm_manager.cooldown = std::stoi(config["cooldown"].get<std::string>());
         }
 
+        std::string orga_name="";
+        if (config.contains("name")) {
+            orga_name = config["name"];
+        }
+
         // 遍历相机列表
         if (config.contains("chl_list") && config["chl_list"].is_array()) {
             for (const auto& camera_config : config["chl_list"]) {
@@ -444,6 +449,8 @@ int CameraController::load_config_from_file(const std::string& config_file_path)
                 camera->id = std::stoi(camera_config["id"].get<std::string>());
 
                 camera->name = camera_config["name"];
+
+                camera->orga_name = orga_name;
 
                 // 设置 PTZ IP
                 if (camera_config.contains("ptz_ip")) {
@@ -756,13 +763,13 @@ std::string Camera::generateCustomVideoPath(VideoPathType type= VideoPathType::V
             t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
 
     } else {
-        base_path = "/wt_tech/data/F02";
-        dirname = base_path + "/" + std::string(dateStr) + "/" + std::string(dateStr) + "_"
+        base_path = "/wt_tech/data/";
+        dirname = base_path + orga_name.c_str() + "/" + std::string(dateStr) + "/" + std::string(dateStr) + "_"
             + std::to_string(t->tm_hour) + "/video";
 
         // 生成文件名
         sprintf(filename, "%s/%d-%02d-%02d_%02d_%s.mp4", dirname.c_str(), t->tm_year + 1900,
-            t->tm_mon + 1, t->tm_mday, t->tm_hour, name.c_str());
+            t->tm_mon + 1, t->tm_mday, t->tm_hour, orga_name.c_str(), name.c_str());
     }
 
     strncpy(m_pipeline->video_filename, filename, sizeof(this->m_pipeline->video_filename)-1);

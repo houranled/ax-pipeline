@@ -24,6 +24,7 @@ enum class AlarmType {
 // 告警结构体
 struct Alarm {
     int cameraId;           // 摄像头ID
+    std::string channel_name;       // 摄像头名称
     int point_id;           // 告警点id
     AlarmType type;         // 告警类型
     std::string message;    // 告警消息

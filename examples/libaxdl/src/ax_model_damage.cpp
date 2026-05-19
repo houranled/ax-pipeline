@@ -487,7 +487,7 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
     snprintf(ymd, sizeof(ymd), "%04d%02d%02d", t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
 
     char dirname[160] = {0};
-    snprintf(dirname, sizeof(dirname), "/wt_tech/data/F02/%s/%s_%d/image", ymd, ymd, t->tm_hour);
+    snprintf(dirname, sizeof(dirname), "/wt_tech/data/%s/%s/%s_%d/image",cam->orga_name.c_str(), ymd, ymd, t->tm_hour);
     if (access(dirname, 0) != 0) {
         char mk[256] = {0};
         snprintf(mk, sizeof(mk), "mkdir -p %s", dirname);
@@ -495,7 +495,8 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
     }
 
     char filepath[320] = {0};
-    snprintf(filepath, sizeof(filepath), "%s/%s_%02d_%s_%d.jpg", dirname, ymd, t->tm_hour, channel_name.c_str(), cur_point);
+    snprintf(filepath, sizeof(filepath), "%s/%s_%02d_%s_%s_%d.png", dirname, ymd, t->tm_hour,
+        cam->orga_name.c_str(), channel_name.c_str(), cur_point);
 
     std::vector<int> jpg_params = { cv::IMWRITE_JPEG_QUALITY, 90 };
     if (!cv::imwrite(filepath, image, jpg_params)) {
