@@ -915,7 +915,7 @@ void Camera::update_posture_state(int x, int y)
     if (rc == -1) {
         WTALOGI("摄像机[%d] read position failed: %s", id, modbus_strerror(errno));
     } else {
-        if (x >= regs[1]-1 && x <= regs[1]+1 && y >= regs[0]-1 && y <= regs[0]+1) {
+        if (x >= regs[1]-3 && x <= regs[1]+3 && y >= regs[0]-3 && y <= regs[0]+3) {
             posture_completed = true;
         }
         else {
