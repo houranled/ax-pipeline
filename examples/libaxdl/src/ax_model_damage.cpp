@@ -510,12 +510,14 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
     }
 
     // 触发新增点位告警
-    if (results->nObjSize > 0)
+    if (results->nObjSize > 0) {
         CameraController::getInstance()->early_warning_process(camera_id);
+        WTALOGI("[damage] 点位[%d] 已拍照并告警: %s", cur_point, filepath);
+    }
 
     // 标记该点位已处理
     last_fired_point[camera_id] = cur_point;
-    WTALOGI("[damage] 点位[%d] 已拍照并告警: %s", cur_point, filepath);
+
 }
 
 int ax_model_damage::sub_init(void *json_obj)
@@ -623,6 +625,7 @@ int wt_damage_multi_model_recognize::init(void *json_obj)
                 WTALOGI("Failed to initialize model, ret=%d", ret);
                 return ret;
             }
+            model->set_channel_init_info(channel_name, camera_id);
 
             // Get model type from the model instance (for ax_model_damage)
             std::string actual_model_type = "default";

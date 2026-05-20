@@ -224,7 +224,6 @@ public:
         channel_name = name;
         camera_id = id;
     }
-    void wt_amp_draw_face_bbox(cv::Mat & image, axdl_results_t * results, float fontscale, int thickness, int offset_x, int offset_y);
 };
 
 class ax_model_single_base_t : public ax_model_base
