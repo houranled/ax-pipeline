@@ -480,39 +480,13 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
     if (!cam->posture_completed)
         return; //未到点位，跳过
 
-    // 生成路径（沿用 record_ffmpeg_pipe_jpg 的目录方案）
-    time_t now = time(nullptr) + 8 * 3600;
-    tm *t = gmtime(&now);
-    char ymd[16] = {0};
-    snprintf(ymd, sizeof(ymd), "%04d%02d%02d", t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
-
-    char dirname[160] = {0};
-    snprintf(dirname, sizeof(dirname), "/wt_tech/data/%s/%s/%s_%d/image",cam->orga_name.c_str(), ymd, ymd, t->tm_hour);
-    if (access(dirname, 0) != 0) {
-        char mk[256] = {0};
-        snprintf(mk, sizeof(mk), "mkdir -p %s", dirname);
-        system(mk);
-    }
-
-    char filepath[320] = {0};
-    snprintf(filepath, sizeof(filepath), "%s/%s_%02d_%s_%s_%d.png", dirname, ymd, t->tm_hour,
-        cam->orga_name.c_str(), channel_name.c_str(), cur_point);
-
-    std::vector<int> jpg_params = { cv::IMWRITE_JPEG_QUALITY, 90 };
-    if (!cv::imwrite(filepath, image, jpg_params)) {
-        WTALOGI("[damage] 点位[%d] cv::imwrite 失败: %s", cur_point, filepath);
-    }
-
-    // 写回 pipeline，让 generateAlarm 拿到本张快照路径
-    if (auto *pipe = cam->get_pipeline()) {
-        strncpy(pipe->pic_filename, filepath, sizeof(pipe->pic_filename) - 1);
-        pipe->pic_filename[sizeof(pipe->pic_filename) - 1] = '\0';
-    }
+    // 调用 Camera 类的opencv方法保存图片 TODO: 保存的图片是不带原图的仅叠加层的内容×
+    std::string saved_path = cam->captureSnapshot(image);
 
     // 触发新增点位告警
     if (results->nObjSize > 0) {
         CameraController::getInstance()->early_warning_process(camera_id);
-        WTALOGI("[damage] 点位[%d] 已拍照并告警: %s", cur_point, filepath);
+        WTALOGI("[damage] 点位[%d] 已拍照并告警: %s", cur_point, saved_path.c_str());
     }
 
     // 标记该点位已处理

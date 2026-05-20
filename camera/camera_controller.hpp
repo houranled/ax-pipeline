@@ -105,6 +105,7 @@ public:
     int now_point_id=0; // 当前所在点位id
     bool posture_completed = true; // 是否到达指定位置
     std::string orga_name; //风场名称
+    char pic_dirname[160] = {0}; //巡检保存的图片路径
 
     Camera();
     ~Camera();
@@ -126,6 +127,15 @@ public:
     bool start_record_video(); // 录制视频
     bool stop_record_video();  //结束录制并存储视频文件
     bool start_take_a_picture(int kind); // 拍照
+    /**
+     * @brief 保存当前帧为图片，并更新 pipeline 的图片路径
+     * @param image 要保存的 OpenCV 图像
+     * @param channel_name 通道名称
+     * @param point_id 点位ID
+     * @return 保存的图片完整路径，失败返回空字符串
+     */
+    std::string captureSnapshot(const cv::Mat& image);
+
 
     std::string getName(); // 获取相机名称
     std::string get_pic_path() const; // 获取当前录制图片路径
@@ -165,7 +175,6 @@ private:
 
     // 图像拍摄相关成员
     pipeline_t *m_pipeline;
-    static std::string capture_path; // 图像保存路径
 
     CURL *curl_handle;  // 持久化的curl句柄
     modbus_t *modbus_ctx = nullptr;

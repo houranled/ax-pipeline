@@ -8,7 +8,6 @@
 #include <unistd.h>
 #include <pthread.h>
 
-std::string Camera::capture_path ="/wt_tech/conf/img/"; // 图像保存路径初始化
 
 void CameraController::addCamera(int id, std::string channel_name, std::string rtsp_url)
 {
@@ -265,7 +264,7 @@ int CameraController::receive_input_loop() {
                     camera->patrol_with_calibration_loop(false);
                     auto warnstr = alarm_manager.output_alarms(currentCameraId);
 
-                    // 巡检完成后构造JSON响应
+                    // 指定摄像通道巡检完成后构造JSON响应
                     nlohmann::json result;
                     result["status"] = "end";
                     // 将warnings字符串解析为JSON对象，然后提取其中的warnings数组
@@ -279,12 +278,13 @@ int CameraController::receive_input_loop() {
                     auto res = all_cameras_patrol();
                     auto warnstr = alarm_manager.output_alarms(currentCameraId); //批量检查告警
 
-                    // 巡检完成后构造JSON响应
+                    // 全部摄像通道巡检完成后构造JSON响应
                     nlohmann::json result;
                     result["status"] = "end";
                     // 将warnings字符串解析为JSON对象，然后提取其中的warnings数组
                     nlohmann::json warn_json = nlohmann::json::parse(warnstr);
                     result["warnings"] = warn_json["warnings"];
+                    result["path"] = cameras.size()>0 ? cameras.begin()->second->pic_dirname: "";
                     if (res) {
                         result["msg"] = "巡检过程可能受限，请检查设备连接";
                     } else {
@@ -708,6 +708,40 @@ bool Camera::start_take_a_picture(int kind)
 {
     m_pipeline->whatPicture = kind; // 标识拍照
     return false;
+}
+
+std::string Camera::captureSnapshot(const cv::Mat& image)
+{
+    // 生成路径（沿用 record_ffmpeg_pipe_jpg 的目录方案）
+    time_t now = time(nullptr) + 8 * 3600;
+    tm *t = gmtime(&now);
+    char ymd[16] = {0};
+    snprintf(ymd, sizeof(ymd), "%04d%02d%02d", t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
+
+    snprintf(pic_dirname, sizeof(pic_dirname), "/wt_tech/data/%s/%s/%s_%d/image", orga_name.c_str(), ymd, ymd, t->tm_hour);
+    if (access(pic_dirname, 0) != 0) {
+        char mk[256] = {0};
+        snprintf(mk, sizeof(mk), "mkdir -p %s", pic_dirname);
+        system(mk);
+    }
+
+    char filepath[320] = {0};
+    snprintf(filepath, sizeof(filepath), "%s/%s_%02d_%s_%s_%d.png", pic_dirname, ymd, t->tm_hour,
+        orga_name.c_str(), name.c_str(), now_point_id);
+
+    std::vector<int> jpg_params = { cv::IMWRITE_JPEG_QUALITY, 90 };
+    if (!cv::imwrite(filepath, image, jpg_params)) {
+        WTALOGI("[Camera] 点位[%d] cv::imwrite 失败: %s", now_point_id, filepath);
+        return "";
+    }
+
+    // 写回 pipeline，让 generateAlarm 拿到本张快照路径
+    if (auto *pipe = get_pipeline()) {
+        strncpy(pipe->pic_filename, filepath, sizeof(pipe->pic_filename) - 1);
+        pipe->pic_filename[sizeof(pipe->pic_filename) - 1] = '\0';
+    }
+
+    return filepath;
 }
 
 std::string Camera::getName()
