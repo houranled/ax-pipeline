@@ -63,6 +63,8 @@ private:
     AlarmManager alarm_manager; // 告警生成器
     ax_model_base* _model;
 
+    bool is_patrolling = false; // 是否存在巡逻中的摄像通道
+
     // a function for executing in new thread to receive the input read from std-io
     int receive_input_loop();
     int all_cameras_patrol(); // 巡逻

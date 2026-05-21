@@ -52,7 +52,7 @@ int CameraController::receive_input_loop() {
                 if (c == '}') brace_count--;
             }
             json_str += input + "\n";
-            if (brace_count == 0) break; // JSON 闭合
+            if (brace_count == 0 && json_str.size()>2 ) break; // JSON 闭合
         }
 
         nlohmann::json json_request; //请求
@@ -104,7 +104,7 @@ int CameraController::receive_input_loop() {
                 resp_first_camera_data["photosensitive"] = camera->photosensitive;
                 resp_first_camera_data["photosensitiveThreshold"] = camera->photosensitiveThreshold;
             } else if (camera_id > 0) {
-                response["msg"] = "该相机不存在";
+                response["msg"] = "该相机不存在!";
                 response["status"] = 500;
             } else if (camera_id <= 0) { // 所有摄像机信息
                 int index = 0;
@@ -131,7 +131,7 @@ int CameraController::receive_input_loop() {
             if (camera_id > 0 && camera != NULL) { //指定了相机
                 if (camera->is_patroling()) { // 是巡检模式,不允许设置
                     response["status"] = 500;
-                    response["msg"] = "Camera is in patrol mode, can't set parameters";
+                    response["msg"] = "摄像头处于巡逻模式，无法操作.待巡逻结束后再试...";
                     goto Finish;
                 }
 
@@ -247,6 +247,12 @@ int CameraController::receive_input_loop() {
             std::string currentReqId = reqId; // 捕获当前的reqId值
             int currentCameraId = camera_id; // 捕获当前的camera_id值
 
+            if (is_patrolling == true) {
+                response["status"] = 500;
+                response["msg"] = "存在正进行的巡检任务的摄像云台，请稍后再执行...";
+                goto Finish;
+            }
+
             // 根据是否指定了有效的摄像机ID返回不同的消息
             if (camera_id > 0 && cameras.find(camera_id) != cameras.end()) {
                 response["msg"] = "相机[" + std::to_string(camera_id) + "] 巡检于后台开始运行...";
@@ -255,6 +261,7 @@ int CameraController::receive_input_loop() {
             }
             response["status"] = "start";
 
+            is_patrolling = true; // 设置巡检状态为true
             // 创建后台线程执行巡检任务
             std::thread patrol_thread([this, currentReqId, currentCameraId]() { // 值捕获方式
                 // 如果指定了有效的摄像机ID，则只巡检该摄像机；否则巡检所有摄像机
@@ -295,6 +302,7 @@ int CameraController::receive_input_loop() {
                     result["reqId"] = currentReqId; // 添加reqId到响应中
                     std::cout << result.dump() << std::endl;
                 }
+                is_patrolling = false; // 巡检结束后，将巡检状态设置为false
             });
             patrol_thread.detach();
 
@@ -428,8 +436,8 @@ int CameraController::load_config_from_file(const std::string& config_file_path)
         }
 
         std::string orga_name="";
-        if (config.contains("name")) {
-            orga_name = config["name"];
+        if (config.contains("org_name")) {
+            orga_name = config["org_name"];
         }
 
         // 遍历相机列表
@@ -802,7 +810,7 @@ std::string Camera::generateCustomVideoPath(VideoPathType type= VideoPathType::V
             + std::to_string(t->tm_hour) + "/video";
 
         // 生成文件名
-        sprintf(filename, "%s/%d-%02d-%02d_%02d_%s.mp4", dirname.c_str(), t->tm_year + 1900,
+        sprintf(filename, "%s/%d-%02d-%02d_%02d_%s_%s.mp4", dirname.c_str(), t->tm_year + 1900,
             t->tm_mon + 1, t->tm_mday, t->tm_hour, orga_name.c_str(), name.c_str());
     }
 
