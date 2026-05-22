@@ -181,7 +181,7 @@ private:
     CURL *curl_handle;  // 持久化的curl句柄
     modbus_t *modbus_ctx = nullptr;
 
-    int patrol_with_calibration_loop(bool is_calibrate);  // 摄像机巡检(可伴随标定)
+    int patrol_with_calibration_loop(bool is_calibrate, bool enable_light=true);  // 摄像机巡检(可伴随标定)
     void update_posture_state(int x, int y); // 判断是否到达指定位置
     void setPipe(pipeline_t * pipe); // 绑定pipeline
     bool connect_modbus(); // 重连modbus
