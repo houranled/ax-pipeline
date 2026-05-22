@@ -431,7 +431,7 @@ int CameraController::load_config_from_file(const std::string& config_file_path)
         config_file >> config;
 
         if (config.contains("cooldown")){
-            alarm_manager.cooldown = std::stoi(config["cooldown"].get<std::string>());
+            alarm_manager.cooldown = config["cooldown"]; //单位 小时
         }
 
         std::string orga_name="";
