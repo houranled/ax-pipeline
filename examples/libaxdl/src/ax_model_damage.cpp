@@ -408,6 +408,63 @@ int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resi
     }
 }
 
+static void draw_ptz_hud(cv::Mat& frame, const Camera* camera, int x_offset, int y_offset)
+{
+    // HUD 尺寸配置
+    int hud_w = 180, hud_h = 180;
+    cv::Mat overlay(hud_h, hud_w, CV_8UC4, cv::Scalar(0, 0, 0, 160)); // 黑底，半透明
+
+    // 绿色画笔
+    cv::Scalar green(0, 255, 0, 255);
+    cv::Scalar dark_green(0, 180, 0, 200);
+
+    // 1. 绘制底座 (椭圆)
+    cv::ellipse(overlay, cv::Point(hud_w/2, hud_h - 20), cv::Size(50, 15), 0, 0, 360, dark_green, 1);
+
+    // 2. 绘制支架 (根据水平旋转 web_rotation_x 偏移)
+    int pan_offset = (camera->web_rotation_x / 360.0) * 60 - 30; // 映射到 -30 到 +30 像素偏移
+    cv::Point stand_bottom(hud_w/2, hud_h - 20);
+    cv::Point stand_top(hud_w/2 + pan_offset, 50);
+    cv::line(overlay, stand_bottom, stand_top, green, 2);
+
+    // 3. 绘制镜头 (根据垂直旋转 web_rotation_y 偏移)
+    int tilt_offset = (camera->web_rotation_y / 360.0) * 40 - 20;
+    cv::Point lens_center(stand_top.x, stand_top.y + tilt_offset);
+    cv::circle(overlay, lens_center, 12, green, 2);
+    cv::line(overlay, cv::Point(lens_center.x - 6, lens_center.y), cv::Point(lens_center.x + 6, lens_center.y), green, 1); // 镜头十字横
+    cv::line(overlay, cv::Point(lens_center.x, lens_center.y - 6), cv::Point(lens_center.x, lens_center.y + 6), green, 1); // 镜头十字竖
+
+    // 4. 绘制姿态文本
+    char pose_text[64];
+    snprintf(pose_text, sizeof(pose_text), "P:%03d T:%03d", camera->web_rotation_x, camera->web_rotation_y);
+    cv::putText(overlay, pose_text, cv::Point(10, 20), cv::FONT_HERSHEY_SIMPLEX, 0.4, green, 1);
+
+    // 5. 绘制运动方向箭头 (如果有运动指令)
+    if (!camera->posture_completed) {
+        cv::Point arrow_start(hud_w/2, hud_h/2);
+        cv::Point arrow_end(arrow_start.x + 1 * 2, arrow_start.y + 1 * 2);
+        cv::arrowedLine(overlay, arrow_start, arrow_end, cv::Scalar(0, 255, 255, 255), 2, cv::LINE_AA, 0, 0.2); // 黄色箭头
+    }
+
+    // 6. 将 HUD 贴图混合到原始帧
+    cv::Rect roi(x_offset, y_offset, hud_w, hud_h);
+    if (roi.x >= 0 && roi.y >= 0 && roi.x + roi.width <= frame.cols && roi.y + roi.height <= frame.rows) {
+        cv::Mat frame_roi = frame(roi);
+        // 使用 Alpha 混合
+        for (int y = 0; y < hud_h; ++y) {
+            for (int x = 0; x < hud_w; ++x) {
+                float alpha = overlay.at<cv::Vec4b>(y, x)[3] / 255.0f;
+                if (alpha > 0) {
+                    frame_roi.at<cv::Vec3b>(y, x) = frame_roi.at<cv::Vec3b>(y, x) * (1 - alpha) +
+                                                      cv::Vec3b(overlay.at<cv::Vec4b>(y, x)[0],
+                                                                overlay.at<cv::Vec4b>(y, x)[1],
+                                                                overlay.at<cv::Vec4b>(y, x)[2]) * alpha;
+                }
+            }
+        }
+    }
+
+}
 
 void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y)
 {
@@ -449,6 +506,8 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
     text_x = 10;
     text_y = image.rows - 30; // 距离底部60像素，避免与点位信息重叠
     cv::putText(image, channel_name, cv::Point(text_x, text_y), font_face, font_scale, cv::Scalar(139, 0, 0), text_thickness);
+
+    draw_ptz_hud(image, cam, offset_x, offset_y);
 
     if (!cam || !cam->is_patroling()) return; // 非巡逻状态不绘制以下内容
 

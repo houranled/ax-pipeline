@@ -109,6 +109,12 @@ public:
     std::string orga_name; //风场名称
     char pic_dirname[160] = {0}; //巡检保存的图片路径
 
+    int web_rotation_x=0;  // 当前水平角度
+    int rotation_x = 0;
+
+    int web_rotation_y=0; // 当前垂直角度
+    int rotation_y=0;
+
     Camera();
     ~Camera();
     int start(); // 启动相机
@@ -157,11 +163,6 @@ private:
     int id;
     std::string name; // 相机名称
     std::string camera_rtsp_url; // 相机rtsp地址
-    int web_rotation_x=0;  // 当前水平角度
-    int rotation_x = 0;
-
-    int web_rotation_y=0; // 当前垂直角度
-    int rotation_y=0;
 
     int zoom=0; // 当前焦距
     int focus=0;   // 当前聚焦
