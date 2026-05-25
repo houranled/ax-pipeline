@@ -439,8 +439,41 @@ int CameraController::load_config_from_file(const std::string& config_file_path)
             orga_name = config["org_name"];
         }
 
-        // 遍历相机列表
-        if (config.contains("chl_list") && config["chl_list"].is_array()) {
+        // mp4文件模拟URL
+        std::ifstream test_config_file("/wt_tech/app/ax-pipeline/config/wt_rtsp.json");
+        if (!test_config_file.is_open()) {
+            std::cerr << "Failed to open config file: " << std::endl;
+            return -1;
+        }
+        nlohmann::json test_config;
+        test_config_file >> test_config;
+        int camera_test_id = 1;
+        if (test_config.contains("RTSP_LIST") && test_config["RTSP_LIST"].is_array()) {
+            for (const auto& url_file : test_config["RTSP_LIST"]) {
+                Camera* camera = new Camera();
+                camera->set_camera_rtsp_url(url_file);
+                int camera_test_id2 = 1;
+                for (const auto& camera_config : config["chl_list"]) {
+                    auto type = camera_config["type"];
+                    auto enable = camera_config["enable"];
+                    if (type != "Webcam" || enable != "1") {//该通道不是相机或使能关闭 跳过该设备解析
+                        WTALOGI("不是相机或使能关闭 跳过该设备解析");
+                        continue;
+                    }
+                    if (camera_test_id == camera_test_id2) {
+                        camera->id = std::stoi(camera_config["id"].get<std::string>());
+                        camera->name = camera_config["name"];
+                        if (camera_config.contains("ip")) {
+                            camera->ip = camera_config["ip"];
+                        }
+                    }
+                    camera_test_id2++;
+                }
+                cameras[camera->id] = camera; // 将相机实例添加到相机列表中
+                camera_test_id++;
+            }
+
+        } else if (config.contains("chl_list") && config["chl_list"].is_array()) { // 遍历相机列表
             for (const auto& camera_config : config["chl_list"]) {
                 auto type = camera_config["type"];
                 auto enable = camera_config["enable"];
@@ -493,8 +526,8 @@ int CameraController::load_config_from_file(const std::string& config_file_path)
 
                 // 将相机添加到控制器
                 cameras[camera->id] = camera;
-                WTALOGI("点位数量为:%d", camera->preset_positions.size());
-                WTALOGI("相机[id:%d]构造完成:ip:%s, ptz_ip:%s",camera->id, camera->ip.c_str(), camera->ptz_ip.c_str());
+                WTALOGI("相机[id:%d]构造完成:ip:%s, ptz_ip:%s, 点位数量为:%d",camera->id, camera->ip.c_str(),
+                  camera->ptz_ip.c_str(), camera->preset_positions.size());
             }
         }
         WTALOGI("完成配置加载!");
