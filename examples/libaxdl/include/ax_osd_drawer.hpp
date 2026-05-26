@@ -263,6 +263,28 @@ public:
         vRgns[get_cur_rgn_id()].arrDisp[get_cur_rgn_idx()].uDisp.tOSD.pBitmap = canvas.data;
     }
 
+    // 直接挂一张外部 RGBA(BGRA in memory) 位图作为 OSD 区域。
+    // 注意：bitmap 数据生命周期需由调用方保证（在 AX_IVPS_RGN_Update 完成前不可释放）。
+    void add_bitmap(axdl_point_t pos, const cv::Mat &bgra)
+    {
+        if (bgra.empty() || bgra.type() != CV_8UC4)
+        {
+            return;
+        }
+        if (!add_index())
+        {
+            return;
+        }
+        vRgns[get_cur_rgn_id()].arrDisp[get_cur_rgn_idx()].bShow = AX_TRUE;
+        vRgns[get_cur_rgn_id()].arrDisp[get_cur_rgn_idx()].eType = AX_IVPS_RGN_TYPE_OSD;
+        vRgns[get_cur_rgn_id()].arrDisp[get_cur_rgn_idx()].uDisp.tOSD.enRgbFormat = AX_FORMAT_RGBA8888;
+        vRgns[get_cur_rgn_id()].arrDisp[get_cur_rgn_idx()].uDisp.tOSD.u32BmpWidth = bgra.cols;
+        vRgns[get_cur_rgn_id()].arrDisp[get_cur_rgn_idx()].uDisp.tOSD.u32BmpHeight = bgra.rows;
+        vRgns[get_cur_rgn_id()].arrDisp[get_cur_rgn_idx()].uDisp.tOSD.u32DstXoffset = MAX(0, int(pos.x * nWidth));
+        vRgns[get_cur_rgn_id()].arrDisp[get_cur_rgn_idx()].uDisp.tOSD.u32DstYoffset = MAX(0, int(pos.y * nHeight));
+        vRgns[get_cur_rgn_id()].arrDisp[get_cur_rgn_idx()].uDisp.tOSD.pBitmap = bgra.data;
+    }
+
     void add_line(axdl_point_t pt0, axdl_point_t pt1, ax_abgr_t color, int linewidth)
     {
         if (!add_index())

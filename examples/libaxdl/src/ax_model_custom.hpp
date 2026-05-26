@@ -88,5 +88,9 @@ private:
     std::string generate_face_record_filename();
     void trigger_camera_record(bool start);
 
+    // 启动时一次性 FreeType 渲染：车牌号 + 通道名 -> RGBA 位图
+    void build_static_label();
+    cv::Mat m_static_label_bmp; // 缓存：每帧作为 OSD 叠加层使用
+
 };
 REGISTER(MT_CUSTOM_MODEL, ax_model_custom)

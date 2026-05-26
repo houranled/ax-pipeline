@@ -353,7 +353,8 @@ int ax_model_single_base_t::preprocess(axdl_image_t *srcFrame, axdl_bbox_t *crop
 
 #if 0
     cv::Mat image(srcFrame->nHeight, srcFrame->nWidth, CV_8UC3, srcFrame->pVir);
-    cv::imwrite("/wt_tech/app/preprocess.png", image); // test:保存图像
+    auto name = "/wt_tech/app/preprocess_" + this->channel_name + ".jpg";
+    cv::imwrite(name.c_str(), image); // test:保存图像
 #endif
 
     return 0;

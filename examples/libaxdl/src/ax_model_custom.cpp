@@ -9,6 +9,7 @@
 #include <time.h>
 #include <sys/stat.h>
 #include "ax_model_base.hpp"
+#include "ax_freetype_overlay.hpp"
 
 
 // 初始化静态成员
@@ -151,13 +152,28 @@ void ax_model_custom::draw_custom(cv::Mat &image, axdl_results_t *results, float
     int point_y = static_cast<int>(cad.occlusion_pixel_height);
     cv::circle(image, cv::Point(point_x, point_y), 2, cv::Scalar(255, 0, 255, 255), -1);
 
-    // 视频左上角绘制车牌号水印 carNo 与时间戳
+    // 视频左上角绘制车牌号 + 通道名水印（启动时已用 FreeType 预渲染）
     int text_y = 30;  // 起始Y位置
-    if (car_no != "") {
-       cv::putText(image, car_no, cv::Point(10, text_y),
-                   cv::FONT_HERSHEY_SIMPLEX, fontscale * 2,
-                   cv::Scalar(255, 0, 0, 255), thickness * 2);
-       text_y += 40;
+    if (!m_static_label_bmp.empty()) {
+        int w = std::min(m_static_label_bmp.cols, image.cols - 10);
+        int h = std::min(m_static_label_bmp.rows, image.rows - 10);
+        if (w > 0 && h > 0) {
+            cv::Mat roi = image(cv::Rect(10, 10, w, h));
+            // alpha 合成（image 是 BGRA）
+            for (int y = 0; y < h; ++y) {
+                const cv::Vec4b* src = m_static_label_bmp.ptr<cv::Vec4b>(y);
+                cv::Vec4b* dst = roi.ptr<cv::Vec4b>(y);
+                for (int x = 0; x < w; ++x) {
+                    uint8_t a = src[x][3];
+                    if (!a) continue;
+                    float fa = a / 255.f;
+                    for (int c = 0; c < 3; ++c)
+                        dst[x][c] = cv::saturate_cast<uint8_t>(src[x][c] * fa + dst[x][c] * (1 - fa));
+                    dst[x][3] = std::max(dst[x][3], a);
+                }
+            }
+            text_y = 10 + h + 10;
+        }
     }
 
     // 获取当前时间
@@ -169,7 +185,7 @@ void ax_model_custom::draw_custom(cv::Mat &image, axdl_results_t *results, float
     time_stream << std::put_time(&tm_now, "%Y-%m-%d %H:%M:%S");
 
     // 在车牌号下方显示时间戳
-    cv::putText(image, time_stream.str(), cv::Point(10, text_y),
+    cv::putText(image, time_stream.str(), cv::Point(10, text_y+20),
                cv::FONT_HERSHEY_SIMPLEX, fontscale * 2, cv::Scalar(255, 255, 255, 255), thickness * 2);
 
     // 绘制遮罩框
@@ -260,9 +276,9 @@ void ax_model_custom::draw_custom(int chn, axdl_results_t *results, float fontsc
     axdl_point_t pos = {cad.origin_x_no_uniform/m_drawers[chn].get_width(), cad.occlusion_pixel_height/m_drawers[chn].get_height()};
     m_drawers[chn].add_point(&pos, {255, 0, 0, 255}, 6);  //添加初始位置坐标
 
-    //视频左上角绘制车牌号水印 carNo 与时间戳
-    if (car_no != "") {
-        m_drawers[chn].add_text(car_no, {0, 0}, {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
+    // 视频左上角绘制车牌号 + 通道名水印（启动时已用 FreeType 预渲染）
+    if (!m_static_label_bmp.empty()) {
+        m_drawers[chn].add_bitmap({0, 0}, m_static_label_bmp);
     }
     // 获取当前时间
     auto now = std::chrono::system_clock::now();
@@ -274,8 +290,10 @@ void ax_model_custom::draw_custom(int chn, axdl_results_t *results, float fontsc
     std::ostringstream time_stream;
     time_stream << std::put_time(&tm_now, "%Y-%m-%d %H:%M:%S");
 
-    // 在车牌号下方显示时间戳
-    m_drawers[chn].add_text(time_stream.str(), {0, 0.05}, {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
+    // 在车牌号下方显示时间戳（位置根据预渲染位图高度动态计算，避免重叠）
+    float ts_y = m_static_label_bmp.empty() ? 0.0f
+                                            : float(m_static_label_bmp.rows) / m_drawers[chn].get_height();
+    m_drawers[chn].add_text(time_stream.str(), {0, ts_y}, {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
 
     // 绘制遮罩(矩形)
     axdl_bbox_t mask = {0, 0, 1, cad.occlusion_pixel_height/m_drawers[chn].get_height()};
@@ -458,6 +476,44 @@ void ax_model_custom::set_channel_init_info(const std::string name, const int id
         } else {
             channel_amplitude_data.occlusion_pixel_height = 190.0f;
         }
+    }
+
+    // 启动时一次性 FreeType 渲染中文水印（车牌号 + 通道名）
+    build_static_label();
+}
+
+void ax_model_custom::build_static_label()
+{
+    auto& ft = FreeTypeOverlay::instance();
+    if (!ft.ready()) {
+        // 默认字体路径，板上提供
+        ft.init("/wt_tech/conf/simsun.ttc", 20);
+    }
+    if (!ft.ready()) {
+        WTALOGI("[FreeType] not ready, static label skipped (chn=%s)", channel_name.c_str());
+        m_static_label_bmp.release();
+        return;
+    }
+
+    std::string text;
+    if (!car_no.empty())    text += car_no;
+    if (!channel_name.empty()) {
+        if (!text.empty()) text += "  ";
+        text += channel_name;
+    }
+    if (text.empty()) {
+        m_static_label_bmp.release();
+        return;
+    }
+
+    // 白色文字，透明背景
+    m_static_label_bmp = ft.renderTextRGBA(text, cv::Scalar(255, 255, 255, 255), 2);
+    if (m_static_label_bmp.empty()) {
+        WTALOGI("[FreeType] renderTextRGBA empty, text='%s'", text.c_str());
+    } else {
+        WTALOGI("[FreeType] static label ready: chn=%s text='%s' size=%dx%d",
+                channel_name.c_str(), text.c_str(),
+                m_static_label_bmp.cols, m_static_label_bmp.rows);
     }
 }
 
