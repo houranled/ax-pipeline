@@ -238,6 +238,27 @@ extern "C"
 
         // 保留互斥锁用于保护 frame_list
         pthread_mutex_t buffer_mutex;  // 缓冲区互斥锁
+
+        // ====== 损伤片段独立录像 ======
+        // 状态机：0=IDLE，1=STAYING（到位后停留期间），2=POST（离开后再录3秒）
+        int damage_state;
+
+        // 3秒滚动预录缓冲（与 frame_list 独立，无论巡检主录像是否在进行都维护）
+        std::vector<std::vector<uint8_t>> damage_pre_buf;
+        std::vector<uint8_t>              damage_pre_keyflag; // 0/1 与 damage_pre_buf 等长
+        size_t damage_pre_max_frames;     // = fps * 3
+        size_t damage_pre_total_size;
+
+        // 触发后帧累积
+        bool   damage_seen;               // 当前停留期间是否检测到损伤
+        int    damage_post_remaining;     // POST 状态下剩余帧数
+        char   damage_clip_filename[256]; // 损伤片段 MP4 输出文件全路径
+        std::vector<std::vector<uint8_t>> damage_clip_frames;
+        size_t damage_clip_total_size;
+
+        pthread_mutex_t damage_mutex;     // 保护 damage_* 字段
+        pthread_t       damage_writer_thread;
+        bool            damage_writer_running;
     } pipeline_t;
 
     int create_pipeline(pipeline_t *pipe);

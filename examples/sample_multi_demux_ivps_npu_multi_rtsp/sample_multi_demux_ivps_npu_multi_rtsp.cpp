@@ -56,6 +56,24 @@ typedef struct {
 void* batch_write_thread(void* arg);
 void cleanup_frame_buffer(pipeline_t *pipe);
 
+// ===== 损伤片段独立录像 =====
+// 状态值（与 pipeline_t::damage_state 对应）
+#define DC_IDLE     0
+#define DC_STAYING  1
+#define DC_POST     2
+
+static bool is_hevc_keyframe(const uint8_t* data, size_t size);
+static void damage_push_pre_buf(pipeline_t* pipe, const uint8_t* data, size_t size, bool is_key);
+static void damage_append_clip_locked(pipeline_t* pipe, const uint8_t* data, size_t size);
+static void* damage_writer_thread_fn(void* arg);
+static void damage_finalize_clip(pipeline_t* pipe); // 必须在持有 damage_mutex 时调用
+void cleanup_damage_buffer(pipeline_t *pipe);
+
+// 由 Camera 类在巡检过程中调用（在 camera_controller.cpp 中通过 extern 引用）
+void damage_pipeline_on_arrived(pipeline_t* pipe, const char* clip_filename);
+void damage_pipeline_on_leaving(pipeline_t* pipe);
+void damage_pipeline_mark_seen(pipeline_t* pipe);
+
 #ifdef AXERA_TARGET_CHIP_AX620
 #define rtsp_max_count 2
 #elif defined(AXERA_TARGET_CHIP_AX650)
@@ -183,10 +201,6 @@ void h265_save_func(pipeline_buffer_t *buff)
 
     pipeline_t *pipe = (pipeline_t *)buff->p_pipe;
 
-    if (!pipe->IsRecordVideo && pipe->writer_running) { //结束录制，且已经在执行存储写入过程了
-        return;
-    }
-
     // 检查buff指针有效性
     if (buff == NULL || pipe == NULL) {
         WTALOGI("无效的缓冲区或管道指针");
@@ -195,6 +209,39 @@ void h265_save_func(pipeline_buffer_t *buff)
 
     size_t one_frame_size = buff->n_size;
     void *one_frame_data = buff->p_vir;
+
+    // ===== 损伤片段：与巡检主录像并行的状态机 =====
+    // 不论 IsRecordVideo 是否为真，都维护 3 秒 H.265 滚动预录缓冲与状态机
+    if (one_frame_data != NULL && one_frame_size > 0) {
+        bool is_key = is_hevc_keyframe((const uint8_t*)one_frame_data, one_frame_size);
+
+        pthread_mutex_lock(&pipe->damage_mutex);
+        // 始终维护预录缓冲（首次进入时按 fps 计算 max_frames）
+        if (pipe->damage_pre_max_frames == 0) {
+            int fps = pipe->m_ivps_attr.n_ivps_fps > 0 ? pipe->m_ivps_attr.n_ivps_fps : 25;
+            pipe->damage_pre_max_frames = (size_t)(fps * 3);
+        }
+        damage_push_pre_buf(pipe, (const uint8_t*)one_frame_data, one_frame_size, is_key);
+
+        // 状态机：STAYING / POST 期间累积到 damage_clip_frames
+        if (pipe->damage_state == DC_STAYING || pipe->damage_state == DC_POST) {
+            damage_append_clip_locked(pipe, (const uint8_t*)one_frame_data, one_frame_size);
+
+            if (pipe->damage_state == DC_POST) {
+                if (pipe->damage_post_remaining > 0) {
+                    pipe->damage_post_remaining--;
+                }
+                if (pipe->damage_post_remaining <= 0) {
+                    damage_finalize_clip(pipe);
+                }
+            }
+        }
+        pthread_mutex_unlock(&pipe->damage_mutex);
+    }
+
+    if (!pipe->IsRecordVideo && pipe->writer_running) { //结束录制，且已经在执行存储写入过程了
+        return;
+    }
 
     // 录制期间：只缓存到内存，不写入 ffmpeg
     if (pipe->IsRecordVideo) {
@@ -363,6 +410,258 @@ void cleanup_frame_buffer(pipeline_t *pipe)
     pipe->writer_running = false;
 
     pthread_mutex_unlock(&pipe->buffer_mutex);
+}
+
+// ============================================================
+// 损伤片段独立录像实现
+// ============================================================
+
+/**
+ * @brief 检测 H.265 / HEVC 一帧码流是否为关键帧（IRAP：BLA/IDR/CRA, NAL 类型 16~21）
+ * 通过扫描起始码 0x000001 / 0x00000001 后的 NAL header，提取 nal_unit_type。
+ */
+static bool is_hevc_keyframe(const uint8_t* data, size_t size)
+{
+    if (data == NULL || size < 5) return false;
+    for (size_t i = 0; i + 3 < size; ++i) {
+        bool sc4 = (data[i] == 0 && data[i+1] == 0 && data[i+2] == 0 && data[i+3] == 1);
+        bool sc3 = (data[i] == 0 && data[i+1] == 0 && data[i+2] == 1);
+        if (!sc3 && !sc4) continue;
+        size_t nalu_pos = i + (sc4 ? 4 : 3);
+        if (nalu_pos >= size) break;
+        int nal_type = (data[nalu_pos] & 0x7E) >> 1;
+        if (nal_type >= 16 && nal_type <= 21) return true; // IRAP
+        i = nalu_pos; // 跳过本 NAL 头继续扫描
+    }
+    return false;
+}
+
+/**
+ * @brief 将一帧追加到 3 秒滚动预录缓冲，保持首帧为关键帧。
+ * 必须在持有 pipe->damage_mutex 时调用。
+ */
+static void damage_push_pre_buf(pipeline_t* pipe, const uint8_t* data, size_t size, bool is_key)
+{
+    std::vector<uint8_t> v(data, data + size);
+    pipe->damage_pre_buf.emplace_back(std::move(v));
+    pipe->damage_pre_keyflag.push_back(is_key ? 1 : 0);
+    pipe->damage_pre_total_size += size;
+
+    // 超过 max_frames 时丢弃旧帧，并保证首帧仍是关键帧
+    while (pipe->damage_pre_buf.size() > pipe->damage_pre_max_frames) {
+        pipe->damage_pre_total_size -= pipe->damage_pre_buf.front().size();
+        pipe->damage_pre_buf.erase(pipe->damage_pre_buf.begin());
+        pipe->damage_pre_keyflag.erase(pipe->damage_pre_keyflag.begin());
+    }
+    // 进一步把首帧前的非关键帧丢掉（直到首帧是 key 或缓冲为空）
+    while (!pipe->damage_pre_keyflag.empty() && pipe->damage_pre_keyflag.front() == 0) {
+        pipe->damage_pre_total_size -= pipe->damage_pre_buf.front().size();
+        pipe->damage_pre_buf.erase(pipe->damage_pre_buf.begin());
+        pipe->damage_pre_keyflag.erase(pipe->damage_pre_keyflag.begin());
+    }
+}
+
+/**
+ * @brief 将一帧追加到当前损伤片段累积缓冲（带 100MB 上限保护）。
+ * 必须在持有 pipe->damage_mutex 时调用。
+ */
+static void damage_append_clip_locked(pipeline_t* pipe, const uint8_t* data, size_t size)
+{
+    const size_t kCap = 100 * 1024 * 1024;
+    if (pipe->damage_clip_total_size + size > kCap) {
+        // 内存饱和：放弃后续累积（保留已有数据，便于后续 flush）
+        static int s_warn_count = 0;
+        if ((s_warn_count++ % 60) == 0) {
+            WTALOGI("损伤片段缓存达到上限 %zu MB，停止继续累积!", kCap / (1024*1024));
+        }
+        return;
+    }
+    std::vector<uint8_t> v(data, data + size);
+    pipe->damage_clip_frames.emplace_back(std::move(v));
+    pipe->damage_clip_total_size += size;
+}
+
+/**
+ * @brief 收尾损伤片段：根据 damage_seen 决定写文件或丢弃。重置状态机为 IDLE。
+ * 必须在持有 pipe->damage_mutex 时调用。
+ */
+static void damage_finalize_clip(pipeline_t* pipe)
+{
+    bool should_save = pipe->damage_seen && !pipe->damage_clip_frames.empty() && pipe->damage_clip_filename[0] != '\0';
+
+    if (should_save && !pipe->damage_writer_running) {
+        writer_thread_args_t* args = new writer_thread_args_t;
+        args->pipe = pipe;
+        args->frames = std::move(pipe->damage_clip_frames);
+        strncpy(args->filename, pipe->damage_clip_filename, sizeof(args->filename) - 1);
+        args->filename[sizeof(args->filename) - 1] = '\0';
+        sprintf(args->ffmpeg_cmd, "ffmpeg -y -loglevel quiet -f hevc -i - -c:v copy -f mp4 %s 2>/dev/null", args->filename);
+
+        size_t total_frames = args->frames.size();
+        size_t total_size = pipe->damage_clip_total_size;
+        WTALOGI("损伤片段触发落盘 %zu 帧 (%.2f MB) -> %s",
+                total_frames, total_size / (1024.0 * 1024.0), args->filename);
+
+        pipe->damage_writer_running = true;
+        if (pthread_create(&pipe->damage_writer_thread, NULL, damage_writer_thread_fn, args) != 0) {
+            WTALOGI("创建损伤片段写入线程失败");
+            pipe->damage_writer_running = false;
+            delete args;
+        }
+    } else {
+        if (!pipe->damage_seen) {
+            WTALOGI("点位停留期间未检出损伤，丢弃片段 %zu 帧", pipe->damage_clip_frames.size());
+        }
+        pipe->damage_clip_frames.clear();
+    }
+
+    // 重置状态
+    pipe->damage_clip_frames.clear();
+    pipe->damage_clip_total_size = 0;
+    pipe->damage_state = DC_IDLE;
+    pipe->damage_seen = false;
+    pipe->damage_post_remaining = 0;
+    pipe->damage_clip_filename[0] = '\0';
+}
+
+/**
+ * @brief 损伤片段写入线程：与 batch_write_thread 同构，但更新 damage_writer_running。
+ */
+static void* damage_writer_thread_fn(void* arg)
+{
+    writer_thread_args_t* args = (writer_thread_args_t*)arg;
+    std::vector<std::vector<uint8_t>>& frames = args->frames;
+    pipeline_t* pipe = args->pipe;
+
+    FILE* ffmpeg_pipe = popen(args->ffmpeg_cmd, "w");
+    if (!ffmpeg_pipe) {
+        WTALOGI("创建 ffmpeg 管道失败(损伤): %s", args->ffmpeg_cmd);
+        delete args;
+        pipe->damage_writer_running = false;
+        return NULL;
+    }
+
+    size_t total_written = 0;
+    size_t frame_count = frames.size();
+    for (size_t i = 0; i < frame_count; i++) {
+        const std::vector<uint8_t>& frame = frames[i];
+        size_t written = fwrite(frame.data(), 1, frame.size(), ffmpeg_pipe);
+        if (written != frame.size()) {
+            WTALOGI("损伤片段写入帧 %zu/%zu 失败: 期望 %zu, 实际 %zu", i + 1, frame_count, frame.size(), written);
+        }
+        total_written += written;
+    }
+    fflush(ffmpeg_pipe);
+    int ret = pclose(ffmpeg_pipe);
+    if (ret == -1) {
+        WTALOGI("关闭 ffmpeg 管道失败(损伤)");
+    }
+    WTALOGI("损伤片段写入完成: %zu 帧, %zu 字节", frame_count, total_written);
+
+    delete args;
+
+    pthread_mutex_lock(&pipe->damage_mutex);
+    pipe->damage_writer_running = false;
+    pthread_mutex_unlock(&pipe->damage_mutex);
+    return NULL;
+}
+
+/**
+ * @brief 清理损伤片段相关缓存与线程（在 pipeline 销毁时调用）。
+ */
+void cleanup_damage_buffer(pipeline_t *pipe)
+{
+    if (pipe == NULL) return;
+
+    if (pipe->damage_writer_running) {
+        ALOGI("等待损伤片段写入线程完成...");
+        pthread_join(pipe->damage_writer_thread, NULL);
+    }
+
+    pthread_mutex_lock(&pipe->damage_mutex);
+    pipe->damage_pre_buf.clear();
+    pipe->damage_pre_buf.shrink_to_fit();
+    pipe->damage_pre_keyflag.clear();
+    pipe->damage_pre_keyflag.shrink_to_fit();
+    pipe->damage_pre_total_size = 0;
+
+    pipe->damage_clip_frames.clear();
+    pipe->damage_clip_frames.shrink_to_fit();
+    pipe->damage_clip_total_size = 0;
+
+    pipe->damage_state = DC_IDLE;
+    pipe->damage_seen = false;
+    pipe->damage_post_remaining = 0;
+    pipe->damage_clip_filename[0] = '\0';
+    pipe->damage_writer_running = false;
+    pthread_mutex_unlock(&pipe->damage_mutex);
+}
+
+/**
+ * @brief 进入"到位"状态：将预录缓冲整体搬到 clip_frames 作为片段开头。
+ * 由 camera_controller.cpp 在到位时调用。
+ */
+void damage_pipeline_on_arrived(pipeline_t* pipe, const char* clip_filename)
+{
+    if (pipe == NULL || clip_filename == NULL) return;
+    pthread_mutex_lock(&pipe->damage_mutex);
+    // 上一次的残留若未落盘，丢弃（理论上不会发生，保险起见）
+    if (pipe->damage_state != DC_IDLE) {
+        WTALOGI("on_arrived 时状态非 IDLE(%d)，强制重置丢弃 %zu 帧",
+                pipe->damage_state, pipe->damage_clip_frames.size());
+        pipe->damage_clip_frames.clear();
+        pipe->damage_clip_total_size = 0;
+    }
+
+    strncpy(pipe->damage_clip_filename, clip_filename, sizeof(pipe->damage_clip_filename) - 1);
+    pipe->damage_clip_filename[sizeof(pipe->damage_clip_filename) - 1] = '\0';
+
+    // 把预录缓冲拷入 clip_frames（首帧已保证是关键帧）
+    for (size_t i = 0; i < pipe->damage_pre_buf.size(); ++i) {
+        pipe->damage_clip_frames.push_back(pipe->damage_pre_buf[i]);
+        pipe->damage_clip_total_size += pipe->damage_pre_buf[i].size();
+    }
+    pipe->damage_seen = false;
+    pipe->damage_post_remaining = 0;
+    pipe->damage_state = DC_STAYING;
+    WTALOGI("损伤片段进入 STAYING，预录起点 %zu 帧(%.2f MB), file=%s",
+            pipe->damage_clip_frames.size(),
+            pipe->damage_clip_total_size / (1024.0 * 1024.0),
+            pipe->damage_clip_filename);
+    pthread_mutex_unlock(&pipe->damage_mutex);
+}
+
+/**
+ * @brief 进入"离开"状态：从 STAYING 切换到 POST，再录 3 秒后由 h265_save_func 触发落盘。
+ */
+void damage_pipeline_on_leaving(pipeline_t* pipe)
+{
+    if (pipe == NULL) return;
+    pthread_mutex_lock(&pipe->damage_mutex);
+    if (pipe->damage_state == DC_STAYING) {
+        int fps = pipe->m_ivps_attr.n_ivps_fps > 0 ? pipe->m_ivps_attr.n_ivps_fps : 25;
+        pipe->damage_post_remaining = fps * 3;
+        pipe->damage_state = DC_POST;
+        WTALOGI("损伤片段进入 POST，再录 %d 帧, damage_seen=%d", pipe->damage_post_remaining, (int)pipe->damage_seen);
+    } else if (pipe->damage_state == DC_POST) {
+        // 已经在 POST 状态，忽略重复调用
+    } else {
+        // IDLE: 无需处理
+    }
+    pthread_mutex_unlock(&pipe->damage_mutex);
+}
+
+/**
+ * @brief 由损伤检测模型在检出目标时调用，标记当前停留期间存在损伤。
+ */
+void damage_pipeline_mark_seen(pipeline_t* pipe)
+{
+    if (pipe == NULL) return;
+    pthread_mutex_lock(&pipe->damage_mutex);
+    if (pipe->damage_state == DC_STAYING || pipe->damage_state == DC_POST) {
+        pipe->damage_seen = true;
+    }
+    pthread_mutex_unlock(&pipe->damage_mutex);
 }
 
 
@@ -641,6 +940,20 @@ int main(int argc, char *argv[])
             pipe0.max_memory_limit = 0;
             pipe0.writer_running = false;
             pipe0.ffmpeg_cmd[0] = '\0';
+
+            // 损伤片段相关字段初始化
+            if (pthread_mutex_init(&pipe0.damage_mutex, NULL) != 0) {
+                WTALOGI("初始化损伤片段互斥锁失败");
+                return -1;
+            }
+            pipe0.damage_state = DC_IDLE;
+            pipe0.damage_pre_max_frames = 0; // 由 h265_save_func 首次按 fps 初始化
+            pipe0.damage_pre_total_size = 0;
+            pipe0.damage_seen = false;
+            pipe0.damage_post_remaining = 0;
+            pipe0.damage_clip_filename[0] = '\0';
+            pipe0.damage_clip_total_size = 0;
+            pipe0.damage_writer_running = false;
             {
                 pipeline_ivps_config_t &config0 = pipe0.m_ivps_attr;
                 config0.n_ivps_grp = pipe_count * i + 2; // 重复的会创建失败
@@ -763,7 +1076,9 @@ int main(int argc, char *argv[])
             for (size_t j = 0; j < pipelines.size(); j++)
             {
                 cleanup_frame_buffer(&pipelines[j]);
+                cleanup_damage_buffer(&pipelines[j]);
                 pthread_mutex_destroy(&pipelines[j].buffer_mutex);// 销毁互斥锁
+                pthread_mutex_destroy(&pipelines[j].damage_mutex);// 销毁损伤片段互斥锁
             }
         }
 

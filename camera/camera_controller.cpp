@@ -748,6 +748,36 @@ bool Camera::stop_record_video()
     return false;
 }
 
+// ===== 损伤片段独立录像：转发到 pipeline 状态机 =====
+// 这些符号定义在 sample_multi_demux_ivps_npu_multi_rtsp.cpp，由链接器解析
+extern void damage_pipeline_on_arrived(pipeline_t* pipe, const char* clip_filename);
+extern void damage_pipeline_on_leaving(pipeline_t* pipe);
+extern void damage_pipeline_mark_seen(pipeline_t* pipe);
+
+void Camera::mark_damage_seen()
+{
+    if (!m_pipeline) return;
+    damage_pipeline_mark_seen(m_pipeline);
+}
+
+void Camera::on_arrived_at_point()
+{
+    if (!m_pipeline) return;
+    // 生成损伤片段输出文件路径，写入 pipeline，再驱动状态机切到 STAYING
+    std::string clip_path = generateCustomVideoPath(VideoPathType::DAMAGE_CLIP);
+    if (clip_path.empty()) {
+        WTALOGI("[Camera-%d] 生成损伤片段路径失败，跳过本点位损伤录像", id);
+        return;
+    }
+    damage_pipeline_on_arrived(m_pipeline, clip_path.c_str());
+}
+
+void Camera::on_leaving_point()
+{
+    if (!m_pipeline) return;
+    damage_pipeline_on_leaving(m_pipeline);
+}
+
 //0:不拍 1：标定 2：巡检
 bool Camera::start_take_a_picture(int kind)
 {
@@ -841,6 +871,14 @@ std::string Camera::generateCustomVideoPath(VideoPathType type= VideoPathType::V
         sprintf(filename, "%s/%s-%d-%02d-%02d_%02d%02d%02d.mp4", dirname.c_str(), name.c_str(),
             t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
 
+    } else if (type == VideoPathType::DAMAGE_CLIP) {
+        // 损伤片段视频：按 风场/年月日/小时/damage 分目录，文件名含通道、点位、时分秒
+        base_path = "/wt_tech/data/";
+        dirname = base_path + orga_name.c_str() + "/" + std::string(dateStr) + "/" + std::string(dateStr) + "_"
+            + std::to_string(t->tm_hour) + "/damage";
+
+        sprintf(filename, "%s/%s_point%d_%02d%02d%02d.mp4", dirname.c_str(),
+            name.c_str(), now_point_id, t->tm_hour, t->tm_min, t->tm_sec);
     } else {
         base_path = "/wt_tech/data/";
         dirname = base_path + orga_name.c_str() + "/" + std::string(dateStr) + "/" + std::string(dateStr) + "_"
@@ -851,8 +889,11 @@ std::string Camera::generateCustomVideoPath(VideoPathType type= VideoPathType::V
             t->tm_mon + 1, t->tm_mday, t->tm_hour, orga_name.c_str(), name.c_str());
     }
 
-    strncpy(m_pipeline->video_filename, filename, sizeof(this->m_pipeline->video_filename)-1);
-    m_pipeline->video_filename[sizeof(m_pipeline->video_filename)-1] = '\0';
+    // 仅巡检主录像和人物视频写回 video_filename；损伤片段路径由调用方单独保存到 damage_clip_filename
+    if (type != VideoPathType::DAMAGE_CLIP) {
+        strncpy(m_pipeline->video_filename, filename, sizeof(this->m_pipeline->video_filename)-1);
+        m_pipeline->video_filename[sizeof(m_pipeline->video_filename)-1] = '\0';
+    }
 
 
     // 创建目录
@@ -944,10 +985,20 @@ int Camera::patrol_with_calibration_loop(bool is_calibrate, bool enable_light) /
             start_take_a_picture(2); // 巡检时也拍照 0:不拍 1：标定 2：巡检
         }
 
+        // 进入"到位"状态：启动损伤片段录制状态机（仅巡检模式且成功到位）
+        if (!is_calibrate && posture_completed) {
+            on_arrived_at_point();
+        }
+
         if (is_calibrate)
             std::this_thread::sleep_for(std::chrono::seconds(2)); //进行标定的话可以快速切换点位
         else
             std::this_thread::sleep_for(std::chrono::seconds(position->duration));  // 每隔duration切换下一次点位
+
+        // 进入"离开"状态：再录 3 秒后由 pipeline 状态机自动落盘
+        if (!is_calibrate) {
+            on_leaving_point();
+        }
     }
 
     //完成最后一个点位， 回到首个点位， 并关闭灯

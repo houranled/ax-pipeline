@@ -452,6 +452,12 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
 
     if (!cam || !cam->is_patroling()) return; // 非巡逻状态不绘制以下内容
 
+    // 每帧都尝试标记"本次停留检出损伤"，覆盖整个停留期间的任意时刻
+    // （pipeline 状态机仅在 STAYING/POST 时接受此标记，IDLE 状态会忽略）
+    if (cam->posture_completed && results->nObjSize > 0) {
+        cam->mark_damage_seen();
+    }
+
     // 绘制点位文字背景及文字
     cv::Size point_size = cv::getTextSize(point_str, font_face, font_scale, text_thickness, &baseline);
     // 计算画面下方的居中位置
@@ -486,6 +492,8 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
     // 触发新增点位告警
     if (results->nObjSize > 0) {
         CameraController::getInstance()->early_warning_process(camera_id);
+        // 标记当前停留期间检出损伤：pipeline 状态机会在离开点位 3 秒后落盘 MP4
+        if (cam) cam->mark_damage_seen();
         WTALOGI("[damage] 点位[%d] 已拍照并告警: %s", cur_point, saved_path.c_str());
     }
 

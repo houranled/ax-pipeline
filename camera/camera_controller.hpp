@@ -86,8 +86,9 @@ class Camera {
 
 public:
     enum class VideoPathType {
-        PERSON,  // 人物识别视频路径
-        VIDEO    // 普通视频路径
+        PERSON,       // 人物识别视频路径
+        VIDEO,        // 普通巡检视频路径
+        DAMAGE_CLIP   // 损伤目标点位 ±停留段 视频路径
     };
 
     struct PresetPosition {
@@ -143,6 +144,14 @@ public:
     std::string get_pic_path() const; // 获取当前录制图片路径
     std::string get_camera_rtsp_url();
     std::string generateCustomVideoPath(VideoPathType); // 生成自定义视频路径
+
+    // ===== 损伤片段独立录像（与巡检主录像并行） =====
+    // 由损伤检测模型在检出损伤目标时调用，标记当前停留期间存在损伤
+    void mark_damage_seen();
+    // 进入"到位"：把 3 秒预录缓冲固化为片段起点，开始累积停留期间帧
+    void on_arrived_at_point();
+    // 进入"离开"：再录 3 秒后由 pipeline 状态机自动落盘（如果期间检出过损伤）
+    void on_leaving_point();
 
     // 获取相机rtsp url
     void set_camera_rtsp_url(const std::string& url); // 设置相机rtsp url
