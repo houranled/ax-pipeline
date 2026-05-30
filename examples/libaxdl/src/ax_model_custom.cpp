@@ -17,8 +17,10 @@ std::string ax_model_custom::car_no = "";
 
 int ax_model_custom::preprocess(axdl_image_t *srcFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results)
 {
+    auto ret = this->ax_model_single_base_t::preprocess(srcFrame, crop_resize_box, results); // 保留原有逻辑
+
     // 在图像上方绘制红色遮罩框
-    if (srcFrame && srcFrame->pVir) {
+    if (srcFrame && dstFrame.pVir) {
         // 根据图像格式直接操作
         if (srcFrame->eDtype == axdl_color_space_nv12) {
             // NV12格式直接操作YUV分量
@@ -26,7 +28,7 @@ int ax_model_custom::preprocess(axdl_image_t *srcFrame, axdl_bbox_t *crop_resize
             int height = channel_amplitude_data.occlusion_pixel_height; // 遮罩高度
 
             // 直接操作Y分量，设置为暗色
-            unsigned char* y_plane = (unsigned char*)srcFrame->pVir;
+            unsigned char* y_plane = (unsigned char*)dstFrame.pVir;
             for (int y = 0; y < height; y++) {
                 for (int x = 0; x < width; x++) {
                     y_plane[y * width + x] = 76; // Y=76对应较暗的颜色
@@ -34,7 +36,7 @@ int ax_model_custom::preprocess(axdl_image_t *srcFrame, axdl_bbox_t *crop_resize
             }
 
             // 操作UV分量，设置为红色
-            unsigned char* uv_plane = (unsigned char*)srcFrame->pVir + width * srcFrame->nHeight;
+            unsigned char* uv_plane = (unsigned char*)dstFrame.pVir + width * srcFrame->nHeight;
             for (int y = 0; y < height / 2; y++) {
                 for (int x = 0; x < width; x += 2) {
                     uv_plane[y * width + x] = 85; // U=85
@@ -43,7 +45,7 @@ int ax_model_custom::preprocess(axdl_image_t *srcFrame, axdl_bbox_t *crop_resize
             }
         } else if (srcFrame->eDtype == axdl_color_space_bgr || srcFrame->eDtype == axdl_color_space_rgb) {
             // BGR或RGB格式，创建cv::Mat对象但不复制数据
-            cv::Mat image(srcFrame->nHeight, srcFrame->nWidth, CV_8UC3, srcFrame->pVir);
+            cv::Mat image(srcFrame->nHeight, srcFrame->nWidth, CV_8UC3, dstFrame.pVir);
 
             // 绘制红色遮罩框
             auto real_pixel = srcFrame->nHeight - 140*2; //上下有各140像素的黑色填充:letterbox
@@ -58,7 +60,7 @@ int ax_model_custom::preprocess(axdl_image_t *srcFrame, axdl_bbox_t *crop_resize
 
         }
     }
-    auto ret = this->ax_model_single_base_t::preprocess(srcFrame, crop_resize_box, results); // 保留原有逻辑
+
     return ret;
 }
 
