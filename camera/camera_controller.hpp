@@ -6,6 +6,7 @@
 #include <map>
 #include <vector>
 #include <string>
+#include <mutex>
 #include <modbus/modbus.h>
 #include <ctime>
 #include <fstream>
@@ -107,6 +108,7 @@ public:
     std::string ptz_ip; // 云台ip地址
     int now_point_id=0; // 当前所在点位id
     bool posture_completed = true; // 是否到达指定位置
+    bool light_phase_changed = false; // 灯光状态变更标志，用于同一点位触发两次拍照
     std::string orga_name; //风场名称
     char pic_dirname[160] = {0}; //巡检保存的图片路径
 
@@ -162,6 +164,20 @@ public:
         return preset_positions;
     }
 
+    // 当前补光灯是否开启（brightness>0）。供"点位前后对比"算法判定 light_flag 用。
+    bool is_light_on() const { return brightness > 0; }
+
+    // ---- 点位前后对比（同光照↔同光照）：巡检结束后批量处理 ----
+    struct PendingDiffTask {
+        int         point_id;       // 点位号
+        int         light_flag;     // 0=未开灯, 1=开灯
+        std::string snapshot_path;  // captureSnapshot 落盘的 PNG 绝对路径
+    };
+    // 在 draw_custom 拍照成功后入队（不做重型计算，仅排队元数据）
+    void enqueue_diff_task(int point_id, int light_flag, const std::string& snapshot_path);
+    // 取走并清空当前队列；由 patrol_with_calibration_loop 末尾的批量处理消费
+    std::vector<PendingDiffTask> drain_diff_queue();
+
 private:
     int id;
     std::string name; // 相机名称
@@ -190,11 +206,14 @@ private:
     CURL *curl_handle;  // 持久化的curl句柄
     modbus_t *modbus_ctx = nullptr;
 
-    int patrol_with_calibration_loop(bool is_calibrate, bool enable_light=true);  // 摄像机巡检(可伴随标定)
+    int patrol_with_calibration_loop(bool is_calibrate);  // 摄像机巡检(可伴随标定)
     void update_posture_state(int x, int y); // 判断是否到达指定位置
     void setPipe(pipeline_t * pipe); // 绑定pipeline
     bool connect_modbus(); // 重连modbus
 
+    // 点位前后对比的待处理队列（每轮巡检独立累积，巡检结束后被 drain）
+    std::vector<PendingDiffTask> m_diff_queue;
+    std::mutex                   m_diff_queue_mtx;
 };
 
 #endif // _CAMERA_CONTROLLER_H_

@@ -8,6 +8,10 @@
 #include <unistd.h>
 #include <pthread.h>
 
+// 巡检结束后的"点位前后对比"批量处理函数（实现位于 examples/libaxdl/src/ax_model_damage.cpp）
+// 这里前置声明，链接期解析。把重型 OpenCV 计算从渲染热路径移到巡检结束后统一执行。
+void run_post_patrol_diff(class Camera* cam);
+
 
 void CameraController::addCamera(int id, std::string channel_name, std::string rtsp_url)
 {
@@ -268,6 +272,7 @@ int CameraController::receive_input_loop() {
                 if (currentCameraId > 0 && cameras.find(currentCameraId) != cameras.end()) {
 
                     Camera* camera = getCamera(currentCameraId);
+                    // 一次巡检：每个点位内部分为无灯照和有灯照两阶段拍照
                     camera->patrol_with_calibration_loop(false);
                     auto warnstr = alarm_manager.output_alarms(currentCameraId);
 
@@ -386,6 +391,7 @@ int CameraController::all_cameras_patrol()
             continue;
 
         threads.emplace_back([camera = pair.second, &res]() {
+            // 一次巡检：每个点位内部分为无灯照和有灯照两阶段拍照
             res = camera->patrol_with_calibration_loop(false);
         });
     }
@@ -824,6 +830,21 @@ std::string Camera::getName()
     return name;
 }
 
+void Camera::enqueue_diff_task(int point_id, int light_flag, const std::string& snapshot_path)
+{
+    if (snapshot_path.empty()) return;
+    std::lock_guard<std::mutex> lk(m_diff_queue_mtx);
+    m_diff_queue.push_back({point_id, light_flag, snapshot_path});
+}
+
+std::vector<Camera::PendingDiffTask> Camera::drain_diff_queue()
+{
+    std::lock_guard<std::mutex> lk(m_diff_queue_mtx);
+    std::vector<PendingDiffTask> tmp;
+    tmp.swap(m_diff_queue);
+    return tmp;
+}
+
 void Camera::connectPipes(pipeline_t *pipe1, pipeline_t *pipe2)
 {
     this->setPipe(pipe1);
@@ -912,7 +933,7 @@ void Camera::set_camera_rtsp_url(const std::string& url)
     camera_rtsp_url = url;
 }
 
-int Camera::patrol_with_calibration_loop(bool is_calibrate, bool enable_light) //return 0表示正常 非0表示异常
+int Camera::patrol_with_calibration_loop(bool is_calibrate) //return 0表示正常 非0表示异常
 {
     patrolling = true; // 标识进入巡逻模式
     WTALOGI("开始巡逻...");
@@ -936,6 +957,7 @@ int Camera::patrol_with_calibration_loop(bool is_calibrate, bool enable_light) /
 
     /* 这里实现点位切换逻辑
      * 例如：遍历预设点位列表，定期切换到下一个点位
+     * 每个点位分为无灯照和有灯照两种方式拍快照和分析损伤告警
      */
     now_point_id = 1; // 当前所在的预置点位ID记录
     for(auto position = first_pos; position != preset_positions.end(); ++position, now_point_id++) {
@@ -946,17 +968,15 @@ int Camera::patrol_with_calibration_loop(bool is_calibrate, bool enable_light) /
         auto px = (360+position->web_rotation_x)%360 * 100;
         auto py = (360+position->web_rotation_y)%360 * 100;
 
-        if (enable_light == true)
-            set_ptz(px, py, position->brightness); // 设置转向和亮度
-        else
-            set_ptz(px, py, 0);
+        // 第一阶段：无灯照拍照
+        set_ptz(px, py, 0); // 先不开灯，仅设置转向
 
         web_rotation_x = position->web_rotation_x;
         web_rotation_y = position->web_rotation_y;
 
         set_zoom_and_focus(position->zoom, position->focus); // 设置缩放级别
 
-        //轮询等待姿态完成或超时10秒
+        //轮询等待姿态完成或超时12秒
         auto start_time = std::chrono::steady_clock::now();
 
         int try_count = 0;
@@ -981,24 +1001,29 @@ int Camera::patrol_with_calibration_loop(bool is_calibrate, bool enable_light) /
 
         if (is_calibrate) { //标定模式
             start_take_a_picture(1); //标定拍 0:不拍 1：标定 2：巡检
-        } else  { //巡航模式
-            start_take_a_picture(2); // 巡检时也拍照 0:不拍 1：标定 2：巡检
-        }
-
-        // 进入"到位"状态：启动损伤片段录制状态机（仅巡检模式且成功到位）
-        if (!is_calibrate && posture_completed) {
+        } else if (posture_completed) { //巡航模式且到位成功
+            // 进入"到位"状态：启动损伤片段录制状态机
             on_arrived_at_point();
+
+            // 无灯照拍照：等待 draw_custom 触发拍照（duration/2 秒）
+            int half_duration = std::max(1, position->duration / 2);
+            std::this_thread::sleep_for(std::chrono::seconds(half_duration));
+
+            // 第二阶段：开灯拍照
+            // 标记灯光状态变更，让 draw_custom 知道需要再拍一次
+            light_phase_changed = true;
+            set_brighten(position->brightness); // 开灯
+            WTALOGI("摄像机[%d] 点位[%d] 切换到有灯照模式", id, now_point_id);
+
+            // 有灯照拍照：等待 draw_custom 触发拍照（duration/2 秒）
+            std::this_thread::sleep_for(std::chrono::seconds(half_duration));
+
+            // 进入"离开"状态：再录 3 秒后由 pipeline 状态机自动落盘
+            on_leaving_point();
         }
 
         if (is_calibrate)
             std::this_thread::sleep_for(std::chrono::seconds(2)); //进行标定的话可以快速切换点位
-        else
-            std::this_thread::sleep_for(std::chrono::seconds(position->duration));  // 每隔duration切换下一次点位
-
-        // 进入"离开"状态：再录 3 秒后由 pipeline 状态机自动落盘
-        if (!is_calibrate) {
-            on_leaving_point();
-        }
     }
 
     //完成最后一个点位， 回到首个点位， 并关闭灯
@@ -1022,6 +1047,9 @@ END:
     // 结束录像
     if (!is_calibrate) {
         stop_record_video();
+        // 巡检结束后批量做点位前后对比（同光照↔同光照），
+        // 命中差异即生成告警 + 标注对比图，避免占用 OSD/录像热路径
+        run_post_patrol_diff(this);
     }
 
     finish_patrolling(); // 巡逻结束

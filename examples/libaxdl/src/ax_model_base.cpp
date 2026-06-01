@@ -15,9 +15,16 @@
 #define MAX(a, b) ((a) < (b) ? (b) : (a))
 #endif
 
-std::map<std::string, int> ModelTypeTable = {
-    {"MT_UNKNOWN", MT_UNKNOWN},
-};
+// Meyers Singleton：避开跨 TU 静态初始化顺序灾难。
+// 由 object_register.hpp 中 RegisterAction 的全局对象在初始化阶段调用，
+// C++11 起函数局部 static 的初始化是首次调用时执行且线程安全。
+std::map<std::string, int>& GetModelTypeTable()
+{
+    static std::map<std::string, int> table = {
+        {"MT_UNKNOWN", MT_UNKNOWN},
+    };
+    return table;
+}
 #include "ax_model_det.hpp"
 #include "ax_model_crowdcount.hpp"
 #include "ax_model_seg.hpp"
@@ -60,8 +67,9 @@ int ax_model_base::get_model_type(void *json_obj, std::string &strModelType)
         {
             int mt = -1;
             mt = jsondata["MODEL_TYPE"];
-            auto it = ModelTypeTable.begin();
-            for (size_t i = 0; i < ModelTypeTable.size(); i++)
+            auto& table = GetModelTypeTable();
+            auto it = table.begin();
+            for (size_t i = 0; i < table.size(); i++)
             {
                 if (it->second == mt)
                 {
@@ -74,11 +82,12 @@ int ax_model_base::get_model_type(void *json_obj, std::string &strModelType)
         {
             strModelType = jsondata["MODEL_TYPE"];
 
-            auto item = ModelTypeTable.find(strModelType);
+            auto& table = GetModelTypeTable();
+            auto item = table.find(strModelType);
 
-            if (item != ModelTypeTable.end())
+            if (item != table.end())
             {
-                m_model_type = (MODEL_TYPE_E)ModelTypeTable[strModelType];
+                m_model_type = (MODEL_TYPE_E)table[strModelType];
             }
         }
     }
@@ -95,8 +104,9 @@ int ax_model_base::get_runner_type(void *json_obj, std::string &strRunnerType)
         {
             int mt = -1;
             mt = jsondata["RUNNER_TYPE"];
-            auto it = ModelTypeTable.begin();
-            for (size_t i = 0; i < ModelTypeTable.size(); i++)
+            auto& table = GetModelTypeTable();
+            auto it = table.begin();
+            for (size_t i = 0; i < table.size(); i++)
             {
                 if (it->second == mt)
                 {
@@ -109,11 +119,12 @@ int ax_model_base::get_runner_type(void *json_obj, std::string &strRunnerType)
         {
             strRunnerType = jsondata["RUNNER_TYPE"];
 
-            auto item = ModelTypeTable.find(strRunnerType);
+            auto& table = GetModelTypeTable();
+            auto item = table.find(strRunnerType);
 
-            if (item != ModelTypeTable.end())
+            if (item != table.end())
             {
-                m_runner_type = (RUNNER_TYPE_E)ModelTypeTable[strRunnerType];
+                m_runner_type = (RUNNER_TYPE_E)table[strRunnerType];
             }
         }
     }

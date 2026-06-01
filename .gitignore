@@ -34,3 +34,7 @@
 # Folder
 build*
 .vscode
+
+
+.clangd
+

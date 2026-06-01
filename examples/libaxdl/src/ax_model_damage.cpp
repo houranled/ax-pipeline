@@ -4,9 +4,10 @@
 #include <numeric>  // 添加此行以使用 std::accumulate
 #include <algorithm>
 #include <unistd.h>
+#include <sys/stat.h>
 #include <ctime>
-#include "../../camera/camera_controller.hpp"
 #include "../../utilities/json.hpp"
+#include "../../camera/camera_controller.hpp"
 
 //int ax_model_damage::inference(axdl_image_t *pstFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results)
 //{
@@ -14,6 +15,150 @@
 
 //    return 0;
 //}
+
+// ---------- 点位前后对比（同光照↔同光照）小工具 ----------
+namespace {
+    // 基线图永久路径：/wt_tech/data/<orga>/baseline/<camera>/point<id>_L<flag>.png
+    static std::string make_baseline_path(const std::string& orga,
+                                          const std::string& cam_name,
+                                          int point_id, int light_flag)
+    {
+        char p[320] = {0};
+        snprintf(p, sizeof(p),
+            "/wt_tech/data/%s/baseline/%s/point%d_L%d.png",
+            orga.c_str(), cam_name.c_str(), point_id, light_flag);
+        return p;
+    }
+
+    static void ensure_parent_dir(const std::string& path)
+    {
+        size_t pos = path.find_last_of('/');
+        if (pos == std::string::npos) return;
+        std::string dir = path.substr(0, pos);
+        if (access(dir.c_str(), 0) != 0) {
+            std::string cmd = "mkdir -p " + dir;
+            int rc = system(cmd.c_str());
+            (void)rc;
+        }
+    }
+
+    // CLAHE 光照规范化（缓解同光照下的细微亮度漂移）
+    static cv::Mat clahe_bgr(const cv::Mat& bgr)
+    {
+        cv::Mat lab; cv::cvtColor(bgr, lab, cv::COLOR_BGR2Lab);
+        std::vector<cv::Mat> ch; cv::split(lab, ch);
+        auto clahe = cv::createCLAHE(2.0, cv::Size(8, 8));
+        clahe->apply(ch[0], ch[0]);
+        cv::merge(ch, lab);
+        cv::Mat out; cv::cvtColor(lab, out, cv::COLOR_Lab2BGR);
+        return out;
+    }
+
+    // phaseCorrelate 平移对齐：抗云台机械重复定位的像素级漂移
+    static cv::Mat align_translation(const cv::Mat& cur_gray, const cv::Mat& base_gray)
+    {
+        try {
+            cv::Mat cF, bF;
+            cur_gray.convertTo(cF, CV_32F);
+            base_gray.convertTo(bF, CV_32F);
+            cv::Point2d sh = cv::phaseCorrelate(cF, bF);
+            if (std::abs(sh.x) > base_gray.cols * 0.1 ||
+                std::abs(sh.y) > base_gray.rows * 0.1) {
+                return cur_gray.clone();
+            }
+            cv::Mat warp = (cv::Mat_<float>(2, 3) <<
+                1, 0, (float)sh.x, 0, 1, (float)sh.y);
+            cv::Mat aligned;
+            cv::warpAffine(cur_gray, aligned, warp, base_gray.size(),
+                           cv::INTER_LINEAR, cv::BORDER_REPLICATE);
+            return aligned;
+        } catch (const cv::Exception&) {
+            return cur_gray.clone();
+        }
+    }
+
+    // 近似 SSIM 图（基于均值/方差，避免引入 contrib）
+    static cv::Mat ssim_map(const cv::Mat& i1, const cv::Mat& i2)
+    {
+        const double C1 = 6.5025, C2 = 58.5225;
+        cv::Mat I1, I2;
+        i1.convertTo(I1, CV_32F);
+        i2.convertTo(I2, CV_32F);
+        cv::Mat I1_2 = I1.mul(I1), I2_2 = I2.mul(I2), I1_I2 = I1.mul(I2);
+        cv::Mat mu1, mu2;
+        cv::GaussianBlur(I1, mu1, cv::Size(11, 11), 1.5);
+        cv::GaussianBlur(I2, mu2, cv::Size(11, 11), 1.5);
+        cv::Mat mu1_2 = mu1.mul(mu1), mu2_2 = mu2.mul(mu2), mu12 = mu1.mul(mu2);
+        cv::Mat s1, s2, s12;
+        cv::GaussianBlur(I1_2, s1, cv::Size(11, 11), 1.5); s1 -= mu1_2;
+        cv::GaussianBlur(I2_2, s2, cv::Size(11, 11), 1.5); s2 -= mu2_2;
+        cv::GaussianBlur(I1_I2, s12, cv::Size(11, 11), 1.5); s12 -= mu12;
+        cv::Mat t1 = 2 * mu12 + C1, t2 = 2 * s12 + C2, t3 = t1.mul(t2);
+        cv::Mat d = (mu1_2 + mu2_2 + C1).mul(s1 + s2 + C2);
+        cv::Mat ssim; cv::divide(t3, d, ssim);
+        return ssim;
+    }
+
+    struct DiffRegion { cv::Rect bbox; float score; };
+
+    // 当前帧 vs 基线帧 → 差异区域（基线坐标系）
+    static std::vector<DiffRegion> diff_against_baseline(
+        const cv::Mat& cur_bgr, const cv::Mat& base_bgr)
+    {
+        std::vector<DiffRegion> out;
+        if (cur_bgr.empty() || base_bgr.empty()) return out;
+
+        const float SSIM_TH   = 0.65f;
+        const float ABSD_RATIO = 0.06f;
+        const int   BLOCK     = 64;
+        const int   MIN_AREA  = 600;
+
+        cv::Mat cur = cur_bgr;
+        if (cur.size() != base_bgr.size())
+            cv::resize(cur, cur, base_bgr.size());
+
+        cv::Mat curN  = clahe_bgr(cur);
+        cv::Mat baseN = clahe_bgr(base_bgr);
+
+        cv::Mat curG, baseG;
+        cv::cvtColor(curN, curG, cv::COLOR_BGR2GRAY);
+        cv::cvtColor(baseN, baseG, cv::COLOR_BGR2GRAY);
+        curG = align_translation(curG, baseG);
+
+        cv::Mat ssim = ssim_map(curG, baseG);
+        cv::Mat absd; cv::absdiff(curG, baseG, absd);
+
+        const int H = baseG.rows, W = baseG.cols;
+        cv::Mat susp = cv::Mat::zeros(H, W, CV_8U);
+        for (int y = 0; y < H; y += BLOCK) {
+            for (int x = 0; x < W; x += BLOCK) {
+                cv::Rect r(x, y, std::min(BLOCK, W - x), std::min(BLOCK, H - y));
+                float s = (float)cv::mean(ssim(r))[0];
+                float d = (float)cv::mean(absd(r))[0] / 255.f;
+                if (s < SSIM_TH && d > ABSD_RATIO) susp(r).setTo(255);
+            }
+        }
+        cv::Mat k = cv::getStructuringElement(cv::MORPH_RECT, {5, 5});
+        cv::morphologyEx(susp, susp, cv::MORPH_CLOSE, k);
+        cv::morphologyEx(susp, susp, cv::MORPH_OPEN,  k);
+
+        std::vector<std::vector<cv::Point>> contours;
+        cv::findContours(susp, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+        for (auto& c : contours) {
+            cv::Rect b = cv::boundingRect(c);
+            if (b.area() < MIN_AREA) continue;
+            b &= cv::Rect(0, 0, W, H);
+            if (b.area() <= 0) continue;
+            float s = (float)cv::mean(ssim(b))[0];
+            float d = (float)cv::mean(absd(b))[0] / 255.f;
+            float score = std::max(0.f, std::min(1.f, (1.f - s) * 0.5f + d * 0.5f));
+            out.push_back({b, score});
+        }
+        std::sort(out.begin(), out.end(),
+                  [](const DiffRegion& a, const DiffRegion& b){ return a.score > b.score; });
+        return out;
+    }
+}
 
 // ---------- YOLO11-OBB helper functions ----------
 namespace {
@@ -476,11 +621,29 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
     cv::putText(image, point_str, cv::Point(text_x, text_y + baseline), font_face, font_scale*2, point_color, text_thickness);
 
 
-    // 每个点位仅触发一次拍照+告警：point_id 变化才视为"新点位"
-    static std::map<int, int> last_fired_point; // camera_id -> 上次已触发的点位
-    auto it = last_fired_point.find(camera_id);
-    if (it != last_fired_point.end() && it->second == cur_point) {
-        return; // 同点位已触发过，跳过
+    // 每个点位触发两次拍照（无灯照+有灯照）：
+    // - point_id 变化视为"新点位"，重置灯光阶段
+    // - light_phase_changed 标志表示同一点位内灯光状态变更，需要再拍一次
+    struct PointPhaseState {
+        int point_id;
+        int light_flag; // 0=无灯照已拍, 1=有灯照已拍
+    };
+    static std::map<int, PointPhaseState> last_fired; // camera_id -> 上次拍照状态
+
+    int cur_light_flag = cam->is_light_on() ? 1 : 0;
+    auto it = last_fired.find(camera_id);
+
+    if (it != last_fired.end()) {
+        if (it->second.point_id == cur_point) {
+            // 同一点位：检查是否灯光阶段变更
+            if (cam->light_phase_changed && it->second.light_flag != cur_light_flag) {
+                // 灯光状态变更，允许再拍一次
+                cam->light_phase_changed = false; // 消费掉标志
+            } else if (it->second.light_flag == cur_light_flag) {
+                return; // 同点位同灯光状态已触发过，跳过
+            }
+        }
+        // 点位变化，继续拍照
     }
 
     if (!cam->posture_completed)
@@ -494,12 +657,111 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
         CameraController::getInstance()->early_warning_process(camera_id);
         // 标记当前停留期间检出损伤：pipeline 状态机会在离开点位 3 秒后落盘 MP4
         if (cam) cam->mark_damage_seen();
-        WTALOGI("[damage] 点位[%d] 已拍照并告警: %s", cur_point, saved_path.c_str());
+        WTALOGI("[damage] 点位[%d] L%d 已拍照并告警: %s", cur_point, cur_light_flag, saved_path.c_str());
     }
 
-    // 标记该点位已处理
-    last_fired_point[camera_id] = cur_point;
+    // 点位前后对比（同光照↔同光照）：仅在此处入队，重型 OpenCV 计算延迟到巡检结束后统一执行。
+    // 入队元数据：当前点位、当前灯光标志、刚刚落盘的快照路径
+    if (!saved_path.empty()) {
+        cam->enqueue_diff_task(cur_point, cur_light_flag, saved_path);
+    }
 
+    // 标记该点位+灯光状态已处理
+    last_fired[camera_id] = {cur_point, cur_light_flag};
+
+}
+
+// ============================================================================
+// 巡检结束后批量执行点位前后对比（同光照↔同光照）
+//   - 由 Camera::patrol_with_calibration_loop 在录像停止后调用
+//   - 命中差异：生成告警（early_warning_process），并在快照同目录下写一张
+//                带紫框的 diff_<原文件名>.png 标注复核图
+//   - 无告警（模型 + diff 都为空）时才覆盖基线，避免把已损伤"洗成"正常基线
+// ============================================================================
+void run_post_patrol_diff(Camera* cam)
+{
+    if (!cam) return;
+
+    auto tasks = cam->drain_diff_queue();
+    if (tasks.empty()) return;
+
+    WTALOGI("[damage-diff] 摄像机[%s] 巡检结束，开始批量对比 %zu 个点位快照",
+            cam->getName().c_str(), tasks.size());
+
+    int hit_count = 0;
+    for (const auto& t : tasks) {
+        cv::Mat cur_bgr = cv::imread(t.snapshot_path, cv::IMREAD_COLOR);
+        if (cur_bgr.empty()) {
+            WTALOGI("[damage-diff] 快照读取失败，跳过: %s", t.snapshot_path.c_str());
+            continue;
+        }
+
+        std::string base_path = make_baseline_path(cam->orga_name, cam->getName(),
+                                                   t.point_id, t.light_flag);
+        cv::Mat base_bgr = cv::imread(base_path, cv::IMREAD_COLOR);
+
+        bool hit = false;
+
+        if (!base_bgr.empty()) {
+            auto regions = diff_against_baseline(cur_bgr, base_bgr);
+            if (!regions.empty()) {
+                hit = true;
+                ++hit_count;
+
+                // 在当前快照尺寸坐标系下绘制紫框（基线 → 快照尺寸映射）
+                const float sx = (float)cur_bgr.cols / (float)base_bgr.cols;
+                const float sy = (float)cur_bgr.rows / (float)base_bgr.rows;
+                const int   max_draw = std::min<int>((int)regions.size(), 8);
+
+                cv::Mat annotated = cur_bgr.clone();
+                for (int i = 0; i < max_draw; ++i) {
+                    const auto& r = regions[i];
+                    cv::Rect rr(cvRound(r.bbox.x * sx), cvRound(r.bbox.y * sy),
+                                cvRound(r.bbox.width * sx), cvRound(r.bbox.height * sy));
+                    rr &= cv::Rect(0, 0, annotated.cols, annotated.rows);
+                    if (rr.area() <= 0) continue;
+                    cv::rectangle(annotated, rr, cv::Scalar(255, 0, 255), 2);
+                    char tag[32] = {0};
+                    snprintf(tag, sizeof(tag), "diff %.2f", r.score);
+                    cv::putText(annotated, tag, cv::Point(rr.x, std::max(15, rr.y - 5)),
+                                cv::FONT_HERSHEY_SIMPLEX, 0.5,
+                                cv::Scalar(255, 0, 255), 1);
+                }
+
+                // 写入"对比检阅图"：与原快照同目录、文件名加 diff_ 前缀
+                size_t slash = t.snapshot_path.find_last_of('/');
+                std::string dir  = (slash == std::string::npos) ? "" : t.snapshot_path.substr(0, slash + 1);
+                std::string name = (slash == std::string::npos) ? t.snapshot_path : t.snapshot_path.substr(slash + 1);
+                std::string review_path = dir + "diff_" + name;
+                if (!cv::imwrite(review_path, annotated)) {
+                    WTALOGI("[damage-diff] 标注图写入失败: %s", review_path.c_str());
+                }
+
+                // 触发告警（与点位巡检告警走同一管道）
+                CameraController::getInstance()->early_warning_process(cam->get_id());
+                WTALOGI("[damage-diff] 摄像机[%d] 点位[%d] L%d 检出 %zu 处差异 -> %s",
+                        cam->get_id(), t.point_id, t.light_flag,
+                        regions.size(), review_path.c_str());
+            } else {
+                WTALOGI("[damage-diff] 摄像机[%d] 点位[%d] L%d 与基线一致",
+                        cam->get_id(), t.point_id, t.light_flag);
+            }
+        } else {
+            WTALOGI("[damage-diff] 摄像机[%d] 点位[%d] L%d 基线不存在，本次入库为基线",
+                    cam->get_id(), t.point_id, t.light_flag);
+        }
+
+        // 基线更新：仅当本次未命中差异时覆盖（基线不存在的首次也走这条路径）
+        if (!hit) {
+            ensure_parent_dir(base_path);
+            if (!cv::imwrite(base_path, cur_bgr)) {
+                WTALOGI("[damage-diff] 基线写入失败: %s", base_path.c_str());
+            }
+        }
+    }
+
+    WTALOGI("[damage-diff] 摄像机[%s] 批量对比结束，命中 %d 处",
+            cam->getName().c_str(), hit_count);
 }
 
 int ax_model_damage::sub_init(void *json_obj)

@@ -83,10 +83,12 @@ public:
     //????????????????????????
     void registClass(int clsid, std::string name, create_fun fun)
     {
-        extern std::map<std::string, int> ModelTypeTable;
+        // 通过 Meyers Singleton 访问，避开跨翻译单元的静态初始化顺序灾难（SIOF）。
+        // 实现位于 ax_model_base.cpp。
+        extern std::map<std::string, int>& GetModelTypeTable();
         m_name_map[name] = fun;
         m_id_map[clsid] = fun;
-        ModelTypeTable[name] = clsid;
+        GetModelTypeTable()[name] = clsid;
     }
 
     //??????
