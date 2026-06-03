@@ -135,11 +135,10 @@ public:
     /**
      * @brief 保存当前帧为图片，并更新 pipeline 的图片路径
      * @param image 要保存的 OpenCV 图像
-     * @param channel_name 通道名称
-     * @param point_id 点位ID
+     * @param light_flag 灯光状态：0=无灯照，1=有灯照
      * @return 保存的图片完整路径，失败返回空字符串
      */
-    std::string captureSnapshot(const cv::Mat& image);
+    std::string captureSnapshot(const cv::Mat& image, int light_flag = -1);
 
 
     std::string getName(); // 获取相机名称

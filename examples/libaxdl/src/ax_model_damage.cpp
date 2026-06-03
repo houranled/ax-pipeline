@@ -390,6 +390,25 @@ namespace {
 
 int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results)
 {
+    // 缓存原图用于快照合成（将 NV12/RGB/BGR 转换为 BGR）
+    if (pstFrame && pstFrame->pVir) {
+        std::lock_guard<std::mutex> lk(m_frame_mutex);
+        try {
+            if (pstFrame->eDtype == axdl_color_space_nv12) {
+                cv::Mat nv12(pstFrame->nHeight * 3 / 2, pstFrame->nWidth, CV_8UC1, pstFrame->pVir);
+                cv::cvtColor(nv12, m_cached_frame_bgr, cv::COLOR_YUV2BGR_NV12);
+            } else if (pstFrame->eDtype == axdl_color_space_rgb) {
+                cv::Mat rgb(pstFrame->nHeight, pstFrame->nWidth, CV_8UC3, pstFrame->pVir);
+                cv::cvtColor(rgb, m_cached_frame_bgr, cv::COLOR_RGB2BGR);
+            } else if (pstFrame->eDtype == axdl_color_space_bgr) {
+                cv::Mat bgr(pstFrame->nHeight, pstFrame->nWidth, CV_8UC3, pstFrame->pVir);
+                m_cached_frame_bgr = bgr.clone();
+            }
+        } catch (...) {
+            // 转换失败时保持旧缓存
+        }
+    }
+
     // 获取模型输出
     const ax_runner_tensor_t *pOutputsInfo = m_runner->get_outputs_ptr();
     int num_outputs = m_runner->get_num_outputs();
@@ -649,8 +668,49 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
     if (!cam->posture_completed)
         return; //未到点位，跳过
 
-    // 调用 Camera 类的opencv方法保存图片 TODO: 保存的图片是不带原图的仅叠加层的内容×
-    std::string saved_path = cam->captureSnapshot(image);
+    // 合并原图与叠加层后保存
+    cv::Mat merged_image;
+    {
+        std::lock_guard<std::mutex> lk(m_frame_mutex);
+        if (!m_cached_frame_bgr.empty()) {
+            // 将原图转换为 BGRA（4通道）
+            cv::Mat base_bgra;
+            cv::cvtColor(m_cached_frame_bgr, base_bgra, cv::COLOR_BGR2BGRA);
+
+            // 如果叠加层尺寸与原图不同，需要缩放
+            cv::Mat overlay = image;
+            if (overlay.cols != base_bgra.cols || overlay.rows != base_bgra.rows) {
+                cv::resize(overlay, overlay, cv::Size(base_bgra.cols, base_bgra.rows));
+            }
+
+            // Alpha 混合：将 RGBA 叠加层合并到原图上
+            // image 是 RGBA 格式（CV_8UC4），需要转换为 BGRA
+            cv::Mat overlay_bgra;
+            cv::cvtColor(overlay, overlay_bgra, cv::COLOR_RGBA2BGRA);
+
+            // 逐像素 Alpha 混合
+            merged_image = base_bgra.clone();
+            for (int y = 0; y < merged_image.rows; ++y) {
+                for (int x = 0; x < merged_image.cols; ++x) {
+                    cv::Vec4b& dst = merged_image.at<cv::Vec4b>(y, x);
+                    const cv::Vec4b& src = overlay_bgra.at<cv::Vec4b>(y, x);
+                    float alpha = src[3] / 255.0f;
+                    if (alpha > 0.01f) {
+                        dst[0] = cv::saturate_cast<uchar>(src[0] * alpha + dst[0] * (1 - alpha));
+                        dst[1] = cv::saturate_cast<uchar>(src[1] * alpha + dst[1] * (1 - alpha));
+                        dst[2] = cv::saturate_cast<uchar>(src[2] * alpha + dst[2] * (1 - alpha));
+                    }
+                }
+            }
+            // 转换回 BGR 用于保存
+            cv::cvtColor(merged_image, merged_image, cv::COLOR_BGRA2BGR);
+        } else {
+            // 没有缓存原图时，直接使用叠加层（转换为 BGR）
+            cv::cvtColor(image, merged_image, cv::COLOR_RGBA2BGR);
+        }
+    }
+
+    std::string saved_path = cam->captureSnapshot(merged_image, cur_light_flag);
 
     // 触发新增点位告警
     if (results->nObjSize > 0) {

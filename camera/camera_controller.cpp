@@ -791,7 +791,7 @@ bool Camera::start_take_a_picture(int kind)
     return false;
 }
 
-std::string Camera::captureSnapshot(const cv::Mat& image)
+std::string Camera::captureSnapshot(const cv::Mat& image, int light_flag)
 {
     // 生成路径（沿用 record_ffmpeg_pipe_jpg 的目录方案）
     time_t now = time(nullptr) + 8 * 3600;
@@ -807,8 +807,14 @@ std::string Camera::captureSnapshot(const cv::Mat& image)
     }
 
     char filepath[320] = {0};
-    snprintf(filepath, sizeof(filepath), "%s/%s_%02d_%s_%s_%d.png", pic_dirname, ymd, t->tm_hour,
-        orga_name.c_str(), name.c_str(), now_point_id);
+    // 文件名加入灯光状态 L0（无灯照）或 L1（有灯照）
+    if (light_flag >= 0) {
+        snprintf(filepath, sizeof(filepath), "%s/%s_%02d_%s_%s_%d_L%d.png", pic_dirname, ymd, t->tm_hour,
+            orga_name.c_str(), name.c_str(), now_point_id, light_flag);
+    } else {
+        snprintf(filepath, sizeof(filepath), "%s/%s_%02d_%s_%s_%d.png", pic_dirname, ymd, t->tm_hour,
+            orga_name.c_str(), name.c_str(), now_point_id);
+    }
 
     std::vector<int> jpg_params = { cv::IMWRITE_JPEG_QUALITY, 90 };
     if (!cv::imwrite(filepath, image, jpg_params)) {

@@ -8,6 +8,7 @@
 #include <opencv2/opencv.hpp>
 #include <map>
 #include <string>
+#include <mutex>
 #include "base/detection.hpp"
 #include "../include/ax_model_base.hpp"
 
@@ -47,6 +48,10 @@ protected:
 private:
     //AlarmGenerator m_alarm_generator; //告警检测器
     std::string model_type; // 模型类型（A、B、C等）
+
+    // 缓存原图用于快照合成（在 post_process 中更新）
+    cv::Mat m_cached_frame_bgr;
+    std::mutex m_frame_mutex;
 
     // Helper method to extract type from filename
     std::string extract_type_from_filename(const std::string& model_path);
