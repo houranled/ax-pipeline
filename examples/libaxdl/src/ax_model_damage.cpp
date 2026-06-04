@@ -616,12 +616,6 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
 
     if (!cam || !cam->is_patroling()) return; // 非巡逻状态不绘制以下内容
 
-    // 每帧都尝试标记"本次停留检出损伤"，覆盖整个停留期间的任意时刻
-    // （pipeline 状态机仅在 STAYING/POST 时接受此标记，IDLE 状态会忽略）
-    if (cam->posture_completed && results->nObjSize > 0) {
-        cam->mark_damage_seen();
-    }
-
     // 绘制点位文字背景及文字
     cv::Size point_size = cv::getTextSize(point_str, font_face, font_scale, text_thickness, &baseline);
     // 计算画面下方的居中位置
@@ -668,11 +662,24 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
     if (!cam->posture_completed)
         return; //未到点位，跳过
 
-    // 合并原图与叠加层后保存
-    cv::Mat merged_image;
+    // 重新获取点位ID，确保与 posture_completed 检查一致
+    cur_point = cam->now_point_id;
+
+    // 点位ID必须有效（>=1），防止巡检未开始时误拍
+    if (cur_point < 1)
+        return;
+
+    // 保存两份图片：
+    // 1. 原图（不带检测框）→ _raw.png，用于 diff 对比
+    // 2. 带框图（原图+叠加层）→ .png，用于展示告警
+    cv::Mat raw_image;      // 不带框的原图
+    cv::Mat merged_image;   // 带框的合并图
     {
         std::lock_guard<std::mutex> lk(m_frame_mutex);
         if (!m_cached_frame_bgr.empty()) {
+            // 保存不带框的原图副本
+            raw_image = m_cached_frame_bgr.clone();
+
             // 将原图转换为 BGRA（4通道）
             cv::Mat base_bgra;
             cv::cvtColor(m_cached_frame_bgr, base_bgra, cv::COLOR_BGR2BGRA);
@@ -684,7 +691,6 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
             }
 
             // Alpha 混合：将 RGBA 叠加层合并到原图上
-            // image 是 RGBA 格式（CV_8UC4），需要转换为 BGRA
             cv::Mat overlay_bgra;
             cv::cvtColor(overlay, overlay_bgra, cv::COLOR_RGBA2BGRA);
 
@@ -702,28 +708,37 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
                     }
                 }
             }
-            // 转换回 BGR 用于保存
             cv::cvtColor(merged_image, merged_image, cv::COLOR_BGRA2BGR);
         } else {
-            // 没有缓存原图时，直接使用叠加层（转换为 BGR）
-            cv::cvtColor(image, merged_image, cv::COLOR_RGBA2BGR);
+            cv::cvtColor(image, raw_image, cv::COLOR_RGBA2BGR);
+            merged_image = raw_image.clone();
         }
     }
 
-    std::string saved_path = cam->captureSnapshot(merged_image, cur_light_flag);
+    // 保存带框图（用于展示告警），使用当前点位 cur_point 而非可能已变化的 now_point_id
+    std::string saved_path = cam->captureSnapshot(merged_image, cur_point, cur_light_flag);
 
-    // 触发新增点位告警
+    // 标记拍照完成（通知巡检线程可以继续）
+    if (cur_light_flag == 0) {
+        cam->l0_captured.store(true);
+    } else {
+        cam->l1_captured.store(true);
+    }
+
+    // 触发新增点位告警（只有真正生成告警时才标记损伤）
     if (results->nObjSize > 0) {
-        CameraController::getInstance()->early_warning_process(camera_id);
-        // 标记当前停留期间检出损伤：pipeline 状态机会在离开点位 3 秒后落盘 MP4
-        if (cam) cam->mark_damage_seen();
-        WTALOGI("[damage] 点位[%d] L%d 已拍照并告警: %s", cur_point, cur_light_flag, saved_path.c_str());
+        bool alarm_generated = CameraController::getInstance()->early_warning_process(camera_id);
+        if (alarm_generated) {
+            // 标记当前停留期间检出损伤：pipeline 状态机会在离开点位 3 秒后落盘 MP4
+            cam->mark_damage_seen();
+            WTALOGI("[damage] 点位[%d] L%d 已拍照并告警: %s", cur_point, cur_light_flag, saved_path.c_str());
+        }
     }
 
     // 点位前后对比（同光照↔同光照）：仅在此处入队，重型 OpenCV 计算延迟到巡检结束后统一执行。
-    // 入队元数据：当前点位、当前灯光标志、刚刚落盘的快照路径
-    if (!saved_path.empty()) {
-        cam->enqueue_diff_task(cur_point, cur_light_flag, saved_path);
+    // 入队元数据：当前点位、当前灯光标志、原图（内存）和带框图路径
+    if (!saved_path.empty() && !raw_image.empty()) {
+        cam->enqueue_diff_task(cur_point, cur_light_flag, raw_image, saved_path);
     }
 
     // 标记该点位+灯光状态已处理
@@ -750,11 +765,12 @@ void run_post_patrol_diff(Camera* cam, bool update_baseline)
 
     int hit_count = 0;
     for (const auto& t : tasks) {
-        cv::Mat cur_bgr = cv::imread(t.snapshot_path, cv::IMREAD_COLOR);
-        if (cur_bgr.empty()) {
-            WTALOGI("[damage-diff] 快照读取失败，跳过: %s", t.snapshot_path.c_str());
+        // 使用不带检测框的原图进行 diff 对比（直接从内存获取）
+        if (t.raw_image.empty()) {
+            WTALOGI("[damage-diff] 原图为空，跳过点位[%d] L%d", t.point_id, t.light_flag);
             continue;
         }
+        const cv::Mat& raw_bgr = t.raw_image;
 
         std::string base_path = make_baseline_path(cam->orga_name, cam->getName(),
                                                    t.point_id, t.light_flag);
@@ -763,58 +779,67 @@ void run_post_patrol_diff(Camera* cam, bool update_baseline)
         bool hit = false;
 
         if (!base_bgr.empty()) {
-            auto regions = diff_against_baseline(cur_bgr, base_bgr);
+            auto regions = diff_against_baseline(raw_bgr, base_bgr);
             if (!regions.empty()) {
                 hit = true;
                 ++hit_count;
 
-                // 在当前快照尺寸坐标系下绘制紫框（基线 → 快照尺寸映射）
-                const float sx = (float)cur_bgr.cols / (float)base_bgr.cols;
-                const float sy = (float)cur_bgr.rows / (float)base_bgr.rows;
+                // 读取带检测框的展示图，在其上绘制紫色差异框
+                cv::Mat display_bgr = cv::imread(t.display_path, cv::IMREAD_COLOR);
+                if (display_bgr.empty()) {
+                    display_bgr = raw_bgr.clone(); // 回退到原图
+                }
+
+                // 在展示图尺寸坐标系下绘制紫框（基线 → 展示图尺寸映射）
+                const float sx = (float)display_bgr.cols / (float)base_bgr.cols;
+                const float sy = (float)display_bgr.rows / (float)base_bgr.rows;
                 const int   max_draw = std::min<int>((int)regions.size(), 8);
 
-                cv::Mat annotated = cur_bgr.clone();
                 for (int i = 0; i < max_draw; ++i) {
                     const auto& r = regions[i];
                     cv::Rect rr(cvRound(r.bbox.x * sx), cvRound(r.bbox.y * sy),
                                 cvRound(r.bbox.width * sx), cvRound(r.bbox.height * sy));
-                    rr &= cv::Rect(0, 0, annotated.cols, annotated.rows);
+                    rr &= cv::Rect(0, 0, display_bgr.cols, display_bgr.rows);
                     if (rr.area() <= 0) continue;
-                    cv::rectangle(annotated, rr, cv::Scalar(255, 0, 255), 2);
+                    cv::rectangle(display_bgr, rr, cv::Scalar(255, 0, 255), 2);
                     char tag[32] = {0};
                     snprintf(tag, sizeof(tag), "diff %.2f", r.score);
-                    cv::putText(annotated, tag, cv::Point(rr.x, std::max(15, rr.y - 5)),
+                    cv::putText(display_bgr, tag, cv::Point(rr.x, std::max(15, rr.y - 5)),
                                 cv::FONT_HERSHEY_SIMPLEX, 0.5,
                                 cv::Scalar(255, 0, 255), 1);
                 }
 
-                // 写入"对比检阅图"：与原快照同目录、文件名加 diff_ 前缀
-                size_t slash = t.snapshot_path.find_last_of('/');
-                std::string dir  = (slash == std::string::npos) ? "" : t.snapshot_path.substr(0, slash + 1);
-                std::string name = (slash == std::string::npos) ? t.snapshot_path : t.snapshot_path.substr(slash + 1);
-                std::string review_path = dir + "diff_" + name;
-                if (!cv::imwrite(review_path, annotated)) {
-                    WTALOGI("[damage-diff] 标注图写入失败: %s", review_path.c_str());
+                // 将带 AI 检测框 + 紫色差异框的图片覆盖展示图
+                if (!cv::imwrite(t.display_path, display_bgr)) {
+                    WTALOGI("[damage-diff] 标注图写入失败: %s", t.display_path.c_str());
                 }
 
                 // 触发告警（与点位巡检告警走同一管道）
                 CameraController::getInstance()->early_warning_process(cam->get_id());
                 WTALOGI("[damage-diff] 摄像机[%d] 点位[%d] L%d 检出 %zu 处差异 -> %s",
                         cam->get_id(), t.point_id, t.light_flag,
-                        regions.size(), review_path.c_str());
+                        regions.size(), t.display_path.c_str());
             } else {
                 WTALOGI("[damage-diff] 摄像机[%d] 点位[%d] L%d 与基线一致",
                         cam->get_id(), t.point_id, t.light_flag);
             }
         } else {
-            WTALOGI("[damage-diff] 摄像机[%d] 点位[%d] L%d 基线不存在，本次入库为基线",
-                    cam->get_id(), t.point_id, t.light_flag);
+            // 基线不存在时，无论标定还是巡检模式都需要生成基线
+            ensure_parent_dir(base_path);
+            if (!cv::imwrite(base_path, raw_bgr)) {
+                WTALOGI("[damage-diff] 摄像机[%d] 点位[%d] L%d 基线不存在，写入失败: %s",
+                        cam->get_id(), t.point_id, t.light_flag, base_path.c_str());
+            } else {
+                WTALOGI("[damage-diff] 摄像机[%d] 点位[%d] L%d 基线不存在，已生成基线: %s",
+                        cam->get_id(), t.point_id, t.light_flag, base_path.c_str());
+            }
+            continue; // 首次生成基线，无需后续更新逻辑
         }
 
-        // 基线更新：仅在标定模式覆盖
+        // 基线更新：仅在标定模式覆盖（使用不带检测框的原图作为基线）
         if (update_baseline) {
             ensure_parent_dir(base_path);
-            if (!cv::imwrite(base_path, cur_bgr)) {
+            if (!cv::imwrite(base_path, raw_bgr)) {
                 WTALOGI("[damage-diff] 基线写入失败: %s", base_path.c_str());
             } else {
                 WTALOGI("[damage-diff] 基线已更新: %s", base_path.c_str());

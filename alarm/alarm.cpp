@@ -1,9 +1,9 @@
 #include "alarm.hpp"
 #include <ctime>
 
-#include "../camera/camera_controller.hpp"
 #include "../examples/utilities/json.hpp"
 #include "../examples/utilities/sample_log.h"
+#include "../camera/camera_controller.hpp"
 
 uint32_t AlarmManager::cooldown = 5;  // 默认冷却 5 秒
 

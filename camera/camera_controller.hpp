@@ -7,17 +7,16 @@
 #include <vector>
 #include <string>
 #include <mutex>
-#include <modbus/modbus.h>
+#include <atomic>
 #include <ctime>
 #include <fstream>
 #include <sys/stat.h>
 #include "../alarm/alarm.hpp"
 #include <curl/curl.h>
 #include <functional>
-
 #include "../examples/common/common_pipeline/common_pipeline.h"
-
 #include "../examples/libaxdl/include/ax_model_base.hpp"
+#include <modbus/modbus.h>
 
 #define CONFIG_FILE_PATH "/wt_tech/conf/rt.json"
 
@@ -38,7 +37,7 @@ public:
 
     int start();
     int stop(); // 关闭处理线程
-    void early_warning_process(int camera_id); // 对摄像机id为camera_id触发预警
+    bool early_warning_process(int camera_id); // 对摄像机id为camera_id触发预警，返回是否真正生成告警
     Camera* getCamera(int camera_id); // 根据id获取相机对象
     std::vector<Camera*> getAllCameras(); // 获取所有摄像机实例
     void forEachCamera(std::function<void(Camera*)> func)
@@ -109,6 +108,8 @@ public:
     int now_point_id=0; // 当前所在点位id
     bool posture_completed = true; // 是否到达指定位置
     bool light_phase_changed = false; // 灯光状态变更标志，用于同一点位触发两次拍照
+    std::atomic<bool> l0_captured{false}; // L0（无灯照）拍照完成标志
+    std::atomic<bool> l1_captured{false}; // L1（有灯照）拍照完成标志
     std::string orga_name; //风场名称
     char pic_dirname[160] = {0}; //巡检保存的图片路径
 
@@ -135,10 +136,11 @@ public:
     /**
      * @brief 保存当前帧为图片，并更新 pipeline 的图片路径
      * @param image 要保存的 OpenCV 图像
+     * @param point_id 点位ID（避免使用可能已变化的 now_point_id）
      * @param light_flag 灯光状态：0=无灯照，1=有灯照
      * @return 保存的图片完整路径，失败返回空字符串
      */
-    std::string captureSnapshot(const cv::Mat& image, int light_flag = -1);
+    std::string captureSnapshot(const cv::Mat& image, int point_id, int light_flag = -1);
 
 
     std::string getName(); // 获取相机名称
@@ -170,10 +172,11 @@ public:
     struct PendingDiffTask {
         int         point_id;       // 点位号
         int         light_flag;     // 0=未开灯, 1=开灯
-        std::string snapshot_path;  // captureSnapshot 落盘的 PNG 绝对路径
+        cv::Mat     raw_image;      // 不带检测框的原图（内存中，用于 diff 对比）
+        std::string display_path;   // 带检测框的图片路径（用于展示告警）
     };
     // 在 draw_custom 拍照成功后入队（不做重型计算，仅排队元数据）
-    void enqueue_diff_task(int point_id, int light_flag, const std::string& snapshot_path);
+    void enqueue_diff_task(int point_id, int light_flag, const cv::Mat& raw_image, const std::string& display_path);
     // 取走并清空当前队列；由 patrol_with_calibration_loop 末尾的批量处理消费
     std::vector<PendingDiffTask> drain_diff_queue();
 
