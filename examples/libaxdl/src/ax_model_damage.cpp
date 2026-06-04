@@ -738,7 +738,7 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
 //                带紫框的 diff_<原文件名>.png 标注复核图
 //   - 无告警（模型 + diff 都为空）时才覆盖基线，避免把已损伤"洗成"正常基线
 // ============================================================================
-void run_post_patrol_diff(Camera* cam)
+void run_post_patrol_diff(Camera* cam, bool update_baseline)
 {
     if (!cam) return;
 
@@ -811,11 +811,13 @@ void run_post_patrol_diff(Camera* cam)
                     cam->get_id(), t.point_id, t.light_flag);
         }
 
-        // 基线更新：仅当本次未命中差异时覆盖（基线不存在的首次也走这条路径）
-        if (!hit) {
+        // 基线更新：仅在标定模式覆盖
+        if (update_baseline) {
             ensure_parent_dir(base_path);
             if (!cv::imwrite(base_path, cur_bgr)) {
                 WTALOGI("[damage-diff] 基线写入失败: %s", base_path.c_str());
+            } else {
+                WTALOGI("[damage-diff] 基线已更新: %s", base_path.c_str());
             }
         }
     }

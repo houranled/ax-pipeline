@@ -10,7 +10,8 @@
 
 // 巡检结束后的"点位前后对比"批量处理函数（实现位于 examples/libaxdl/src/ax_model_damage.cpp）
 // 这里前置声明，链接期解析。把重型 OpenCV 计算从渲染热路径移到巡检结束后统一执行。
-void run_post_patrol_diff(class Camera* cam);
+// update_baseline: true=标定模式更新基线，false=巡检模式不更新基线
+void run_post_patrol_diff(class Camera* cam, bool update_baseline);
 
 
 void CameraController::addCamera(int id, std::string channel_name, std::string rtsp_url)
@@ -1053,10 +1054,11 @@ END:
     // 结束录像
     if (!is_calibrate) {
         stop_record_video();
-        // 巡检结束后批量做点位前后对比（同光照↔同光照），
-        // 命中差异即生成告警 + 标注对比图，避免占用 OSD/录像热路径
-        run_post_patrol_diff(this);
     }
+    // 巡检结束后批量做点位前后对比（同光照↔同光照），
+    // 命中差异即生成告警 + 标注对比图，避免占用 OSD/录像热路径
+    // 标定模式(is_calibrate=true)时更新基线，巡检模式时不更新
+    run_post_patrol_diff(this, is_calibrate);
 
     finish_patrolling(); // 巡逻结束
     return res;
