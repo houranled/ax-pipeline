@@ -212,7 +212,8 @@ void h265_save_func(pipeline_buffer_t *buff)
 
     // ===== 损伤片段：与巡检主录像并行的状态机 =====
     // 不论 IsRecordVideo 是否为真，都维护 3 秒 H.265 滚动预录缓冲与状态机
-    if (one_frame_data != NULL && one_frame_size > 0) {
+    bool need_damage_record = pipe->IsRecordVideo || pipe->damage_state != DC_IDLE;
+    if (need_damage_record && one_frame_data != NULL && one_frame_size > 0) {
         bool is_key = is_hevc_keyframe((const uint8_t*)one_frame_data, one_frame_size);
 
         pthread_mutex_lock(&pipe->damage_mutex);
@@ -450,14 +451,14 @@ static void damage_push_pre_buf(pipeline_t* pipe, const uint8_t* data, size_t si
     // 超过 max_frames 时丢弃旧帧，并保证首帧仍是关键帧
     while (pipe->damage_pre_buf.size() > pipe->damage_pre_max_frames) {
         pipe->damage_pre_total_size -= pipe->damage_pre_buf.front().size();
-        pipe->damage_pre_buf.erase(pipe->damage_pre_buf.begin());
-        pipe->damage_pre_keyflag.erase(pipe->damage_pre_keyflag.begin());
+        pipe->damage_pre_buf.pop_front();
+        pipe->damage_pre_keyflag.pop_front();
     }
     // 进一步把首帧前的非关键帧丢掉（直到首帧是 key 或缓冲为空）
     while (!pipe->damage_pre_keyflag.empty() && pipe->damage_pre_keyflag.front() == 0) {
         pipe->damage_pre_total_size -= pipe->damage_pre_buf.front().size();
-        pipe->damage_pre_buf.erase(pipe->damage_pre_buf.begin());
-        pipe->damage_pre_keyflag.erase(pipe->damage_pre_keyflag.begin());
+        pipe->damage_pre_buf.pop_front();
+        pipe->damage_pre_keyflag.pop_front();
     }
 }
 
@@ -889,7 +890,6 @@ int main(int argc, char *argv[])
 
         auto &pipelines = vpipelines[i];
         pipelines.resize(pipe_count);
-        memset(pipelines.data(), 0, pipe_count * sizeof(pipeline_t));
 
         // 创建pipeline
         {

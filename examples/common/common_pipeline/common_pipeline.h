@@ -28,6 +28,7 @@
 #include <stdio.h>
 #include <pthread.h>
 #include <vector>
+#include <deque>
 #include <stdint.h>
 
 class Camera;
@@ -244,8 +245,8 @@ extern "C"
         int damage_state;
 
         // 3秒滚动预录缓冲（与 frame_list 独立，无论巡检主录像是否在进行都维护）
-        std::vector<std::vector<uint8_t>> damage_pre_buf;
-        std::vector<uint8_t>              damage_pre_keyflag; // 0/1 与 damage_pre_buf 等长
+        std::deque<std::vector<uint8_t>> damage_pre_buf;
+        std::deque<uint8_t>              damage_pre_keyflag; // 0/1 与 damage_pre_buf 等长
         size_t damage_pre_max_frames;     // = fps * 3
         size_t damage_pre_total_size;
 
