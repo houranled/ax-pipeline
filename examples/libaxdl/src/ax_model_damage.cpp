@@ -608,6 +608,7 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
     cv::putText(image, channel_name, cv::Point(text_x, text_y), font_face, font_scale, cv::Scalar(139, 0, 0, 255), text_thickness);
 
     if (!cam || !cam->is_patroling()) return; // 非巡逻状态不绘制以下内容
+    if (cur_point <= 0) return; // 回位中不显示点位信息
 
     // 绘制点位文字背景及文字
     cv::Size point_size = cv::getTextSize(point_str, font_face, font_scale, text_thickness, &baseline);
@@ -636,18 +637,18 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
     };
     static std::map<int, PointPhaseState> last_fired; // camera_id -> 上次拍照状态
 
-    int cur_light_flag = cam->is_light_on() ? 1 : 0;
+    // 灯光状态：light_phase_changed 由巡检线程在灯光稳定后设置
+    // L0 拍照时 light_phase_changed=false，L1 拍照时 light_phase_changed=true
+    int cur_light_flag = cam->light_phase_changed ? 1 : 0;
     auto it = last_fired.find(camera_id);
 
     if (it != last_fired.end()) {
         if (it->second.point_id == cur_point) {
-            // 同一点位：检查是否灯光阶段变更
-            if (cam->light_phase_changed && it->second.light_flag != cur_light_flag) {
-                // 灯光状态变更，允许再拍一次
-                cam->light_phase_changed = false; // 消费掉标志
-            } else if (it->second.light_flag == cur_light_flag) {
+            // 同一点位：检查灯光阶段
+            if (it->second.light_flag == cur_light_flag) {
                 return; // 同点位同灯光状态已触发过，跳过
             }
+            // 灯光阶段变更（L0→L1），允许再拍一次
         }
         // 点位变化，继续拍照
     }
@@ -752,6 +753,11 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
     // 标记该点位+灯光状态已处理
     last_fired[camera_id] = {cur_point, cur_light_flag};
 
+    // L1 拍照完成后消费掉标志（必须在拍照成功后才消费，避免提前消费导致状态错乱）
+    if (cur_light_flag == 1) {
+        cam->light_phase_changed = false;
+    }
+
 }
 
 // ============================================================================
@@ -822,8 +828,8 @@ void run_post_patrol_diff(Camera* cam, bool update_baseline)
                     WTALOGI("[damage-diff] 标注图写入失败: %s", t.display_path.c_str());
                 }
 
-                // 触发告警（与点位巡检告警走同一管道）
-                CameraController::getInstance()->early_warning_process(cam->get_id());
+                // 触发告警（使用差异对比专用接口，不检查posture_completed）
+                CameraController::getInstance()->diff_warning_process(cam->get_id(), t.point_id, t.display_path);
                 WTALOGI("[damage-diff] 摄像机[%d] 点位[%d] L%d 检出 %zu 处差异 -> %s",
                         cam->get_id(), t.point_id, t.light_flag,
                         regions.size(), t.display_path.c_str());

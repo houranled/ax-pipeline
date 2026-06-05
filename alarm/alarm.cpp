@@ -37,6 +37,28 @@ bool AlarmManager::generateAlarm(AlarmType type, const std::string& message, flo
     return true;
 }
 
+bool AlarmManager::generateDiffAlarm(Camera *camera, int point_id, const std::string& pic_path)
+{
+    if (camera == nullptr || !camera->is_patroling())
+        return false;
+
+    Alarm alarm;
+    alarm.cameraId = camera->get_id();
+    WTALOGI("为摄像头id[%d]生成差异对比告警!", alarm.cameraId);
+
+    alarm.channel_name = camera->getName();
+    alarm.point_id = point_id;
+    alarm.type = AlarmType::LINE_CROSSING;
+    alarm.timestamp = time(nullptr);
+    alarm.confidence = 1.0f;
+    alarm.picPath = pic_path;
+
+    std::lock_guard<std::mutex> lock(queueMutex);
+    alarm_map_datas[alarm.cameraId].push(alarm);
+
+    queueCondition.notify_one();
+    return true;
+}
 
 std::string AlarmManager::output_alarms(int camera_id)
 {
