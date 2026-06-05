@@ -9,23 +9,16 @@
 #include "../../utilities/json.hpp"
 #include "../../camera/camera_controller.hpp"
 
-//int ax_model_damage::inference(axdl_image_t *pstFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results)
-//{
-//    this->ax_model_single_base_t::inference(pstFrame, crop_resize_box, results); // 调用基类推理函数 后续重写推理逻辑:使用多模型
-
-//    return 0;
-//}
-
 // ---------- 点位前后对比（同光照↔同光照）小工具 ----------
 namespace {
-    // 基线图永久路径：/wt_tech/data/<orga>/baseline/<camera>/point<id>_L<flag>.png
+    // 基线图永久路径：/wt_tech/conf/baseline/<orga>/<camera>/point<id>_L<flag>.png
     static std::string make_baseline_path(const std::string& orga,
                                           const std::string& cam_name,
                                           int point_id, int light_flag)
     {
         char p[320] = {0};
         snprintf(p, sizeof(p),
-            "/wt_tech/data/%s/baseline/%s/point%d_L%d.png",
+            "/wt_tech/conf/baseline/%s/%s/point%d_L%d.png",
             orga.c_str(), cam_name.c_str(), point_id, light_flag);
         return p;
     }

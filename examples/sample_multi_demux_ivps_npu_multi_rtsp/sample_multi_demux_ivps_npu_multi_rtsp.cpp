@@ -22,6 +22,7 @@
 #include "../libaxdl/include/ax_osd_helper.hpp"
 #include "../common/common_func.h"
 #include "common_pipeline.h"
+#include "git_version.h"
 
 #include "../utilities/sample_log.h"
 
