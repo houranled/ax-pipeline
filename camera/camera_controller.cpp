@@ -1228,7 +1228,7 @@ int Camera::getPhotosensitive()
     regs[0] = 0;
     rc = modbus_read_registers(modbus_ctx, MODBUSPTHRESHOLD, 1, regs);
     if (rc == -1) {
-        WTALOGI("Failed to read photosensitivet register");
+        WTALOGI("Failed to read photosensitive threshold register");
     }
     photosensitiveThreshold = regs[0]; // 更新内部状态
 
@@ -1247,7 +1247,7 @@ int Camera::setphotosensitiveThreshold(int threshold)
     reg = threshold;
     int rc = modbus_write_register(modbus_ctx, MODBUSPTHRESHOLD, reg);
     if (rc == -1) {
-        WTALOGI("Failed to read photosensitive register");
+        WTALOGI("Failed to write photosensitive threshold register");
         return -1;
     }
     photosensitiveThreshold = threshold;
@@ -1426,7 +1426,7 @@ int Camera::fetch_remote_status()
             WTALOGI("摄像机[%d]同步当前姿态: x=%d, y=%d",id, web_rotation_x, web_rotation_y);
         }
 
-        rc = modbus_read_registers(modbus_ctx, 0x44A5, 2, regs); // 读取远光灯亮度
+        rc = modbus_read_registers(modbus_ctx, 0x44A5, 2, regs); // 读取补光灯亮度
         if (rc == -1) {
             res2 = -1;
         } else {

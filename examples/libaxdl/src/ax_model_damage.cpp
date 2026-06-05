@@ -603,16 +603,16 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
     int text_thickness = 2;
     int baseline = 0;
 
-    // 绘制时间文字背景及文字
+    // 绘制时间文字背景及文字（RGBA 格式需要设置 Alpha=255 才能在混合时显示）
     cv::Size time_size = cv::getTextSize(time_str, font_face, font_scale, text_thickness, &baseline);
     cv::rectangle(image, cv::Point(text_x, text_y - time_size.height - baseline),
-                  cv::Point(text_x + time_size.width, text_y + baseline), cv::Scalar(255, 255, 255), -1);
-    cv::putText(image, time_str, cv::Point(text_x, text_y), font_face, font_scale, cv::Scalar(139, 0, 0), text_thickness);
+                  cv::Point(text_x + time_size.width, text_y + baseline), cv::Scalar(255, 255, 255, 255), -1);
+    cv::putText(image, time_str, cv::Point(text_x, text_y), font_face, font_scale, cv::Scalar(139, 0, 0, 255), text_thickness);
 
     // 在画面左下角绘制通道名称/摄像机名称
     text_x = 10;
-    text_y = image.rows - 30; // 距离底部60像素，避免与点位信息重叠
-    cv::putText(image, channel_name, cv::Point(text_x, text_y), font_face, font_scale, cv::Scalar(139, 0, 0), text_thickness);
+    text_y = image.rows - 30; // 距离底部30像素，避免与点位信息重叠
+    cv::putText(image, channel_name, cv::Point(text_x, text_y), font_face, font_scale, cv::Scalar(139, 0, 0, 255), text_thickness);
 
     if (!cam || !cam->is_patroling()) return; // 非巡逻状态不绘制以下内容
 
@@ -631,7 +631,7 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
     int point_color_val = is_moving ? static_cast<int>(139 * breath_factor) : 139;
     cv::Scalar point_color = cv::Scalar(point_color_val, 0, 0);
 
-    cv::putText(image, point_str, cv::Point(text_x, text_y + baseline), font_face, font_scale*2, point_color, text_thickness);
+    cv::putText(image, point_str, cv::Point(text_x, text_y + baseline), font_face, font_scale*2, cv::Scalar(point_color[0], point_color[1], point_color[2], 255), text_thickness);
 
 
     // 每个点位触发两次拍照（无灯照+有灯照）：
@@ -672,27 +672,42 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
     // 保存两份图片：
     // 1. 原图（不带检测框）→ _raw.png，用于 diff 对比
     // 2. 带框图（原图+叠加层）→ .png，用于展示告警
-    cv::Mat raw_image;      // 不带框的原图
+    cv::Mat raw_image;      // 不带框的原图（裁剪 letterbox 黑边后 resize）
     cv::Mat merged_image;   // 带框的合并图
     {
         std::lock_guard<std::mutex> lk(m_frame_mutex);
         if (!m_cached_frame_bgr.empty()) {
-            // 保存不带框的原图副本
-            raw_image = m_cached_frame_bgr.clone();
+            // m_cached_frame_bgr 是 letterbox 填充后的图像（如 640×640 带黑边）
+            // 需要裁剪掉黑边，只保留有效图像区域，再 resize 到 overlay 尺寸
+            int src_h = m_cached_frame_bgr.rows;
+            int src_w = m_cached_frame_bgr.cols;
+            int dst_h = HEIGHT_DET_BBOX_RESTORE;
+            int dst_w = WIDTH_DET_BBOX_RESTORE;
 
-            // 将原图转换为 BGRA（4通道）
+            // 计算 letterbox 的缩放比例和 padding
+            float scale = std::min((float)src_w / dst_w, (float)src_h / dst_h);
+            int new_w = (int)(dst_w * scale);
+            int new_h = (int)(dst_h * scale);
+            int pad_x = (src_w - new_w) / 2;
+            int pad_y = (src_h - new_h) / 2;
+
+            // 裁剪有效区域（去除黑边）
+            cv::Rect valid_roi(pad_x, pad_y, new_w, new_h);
+            valid_roi &= cv::Rect(0, 0, src_w, src_h); // 确保不越界
+            cv::Mat cropped = m_cached_frame_bgr(valid_roi);
+
+            // resize 到与 overlay (IVPS) 相同尺寸
+            cv::Mat base_resized;
+            cv::resize(cropped, base_resized, cv::Size(image.cols, image.rows));
+            raw_image = base_resized.clone();
+
+            // 将 resize 后的原图转换为 BGRA（4通道）
             cv::Mat base_bgra;
-            cv::cvtColor(m_cached_frame_bgr, base_bgra, cv::COLOR_BGR2BGRA);
-
-            // 如果叠加层尺寸与原图不同，需要缩放
-            cv::Mat overlay = image;
-            if (overlay.cols != base_bgra.cols || overlay.rows != base_bgra.rows) {
-                cv::resize(overlay, overlay, cv::Size(base_bgra.cols, base_bgra.rows));
-            }
+            cv::cvtColor(base_resized, base_bgra, cv::COLOR_BGR2BGRA);
 
             // Alpha 混合：将 RGBA 叠加层合并到原图上
             cv::Mat overlay_bgra;
-            cv::cvtColor(overlay, overlay_bgra, cv::COLOR_RGBA2BGRA);
+            cv::cvtColor(image, overlay_bgra, cv::COLOR_RGBA2BGRA);
 
             // 逐像素 Alpha 混合
             merged_image = base_bgra.clone();

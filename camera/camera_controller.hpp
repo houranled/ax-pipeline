@@ -156,8 +156,8 @@ public:
     // 进入"离开"：再录 3 秒后由 pipeline 状态机自动落盘（如果期间检出过损伤）
     void on_leaving_point();
 
-    // 获取相机rtsp url
-    void set_camera_rtsp_url(const std::string& url); // 设置相机rtsp url
+    // 设置相机rtsp url
+    void set_camera_rtsp_url(const std::string& url);
     void connectPipes(pipeline_t *pipe1, pipeline_t *pipe2);
     pipeline_t* get_pipeline() const; // 获取绑定的pipeline
 
