@@ -109,8 +109,7 @@ public:
     int now_point_id=0; // 当前所在点位id
     bool posture_completed = true; // 是否到达指定位置
     bool light_phase_changed = false; // 灯光状态变更标志，用于同一点位触发两次拍照
-    std::atomic<bool> l0_captured{false}; // L0（无灯照）拍照完成标志
-    std::atomic<bool> l1_captured{false}; // L1（有灯照）拍照完成标志
+    std::atomic<bool> photo_captured{false}; // 拍照完成标志（L0/L1 复用）
     std::string orga_name; //风场名称
     char pic_dirname[160] = {0}; //巡检保存的图片路径
 

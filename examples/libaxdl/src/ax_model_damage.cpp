@@ -728,11 +728,7 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
     std::string saved_path = cam->captureSnapshot(merged_image, cur_point, cur_light_flag);
 
     // 标记拍照完成（通知巡检线程可以继续）
-    if (cur_light_flag == 0) {
-        cam->l0_captured.store(true);
-    } else {
-        cam->l1_captured.store(true);
-    }
+    cam->photo_captured.store(true);
 
     // 触发新增点位告警（只有真正生成告警时才标记损伤）
     if (results->nObjSize > 0) {
