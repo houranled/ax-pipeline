@@ -794,6 +794,9 @@ void run_post_patrol_diff(Camera* cam, bool update_baseline)
                 hit = true;
                 ++hit_count;
 
+                // ★ 对比检出损伤时标记 damage_seen，确保损伤片段落盘
+                cam->mark_damage_seen();
+
                 // 读取带检测框的展示图，在其上绘制紫色差异框
                 cv::Mat display_bgr = cv::imread(t.display_path, cv::IMREAD_COLOR);
                 if (display_bgr.empty()) {
