@@ -595,16 +595,16 @@ int CameraController::stop()
     return 0;
 }
 
-bool CameraController::early_warning_process(int camera_id)
+bool CameraController::early_warning_process(int camera_id, int point_id, int light_flag)
 {
     auto camera = getCamera(camera_id);
-    return alarm_manager.generateAlarm(AlarmType::LINE_CROSSING, "", 1, camera);
+    return alarm_manager.generateAlarm(AlarmType::LINE_CROSSING, "", 1, camera, point_id, light_flag);
 }
 
-bool CameraController::diff_warning_process(int camera_id, int point_id, const std::string& pic_path)
+bool CameraController::diff_warning_process(int camera_id, int point_id, int light_flag, const std::string& pic_path)
 {
     auto camera = getCamera(camera_id);
-    return alarm_manager.generateDiffAlarm(camera, point_id, pic_path);
+    return alarm_manager.generateDiffAlarm(camera, point_id, light_flag, pic_path);
 }
 
 Camera *CameraController::getCamera(int camera_id)

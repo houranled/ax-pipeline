@@ -26,6 +26,7 @@ struct Alarm {
     int cameraId;           // 摄像头ID
     std::string channel_name;       // 摄像头名称
     int point_id;           // 告警点id
+    int light_flag;         // 灯光状态：0=开灯(L0)，1=关灯(L1)，-1=diff对比
     AlarmType type;         // 告警类型
     std::string message;    // 告警消息
     time_t timestamp;       // 时间戳
@@ -43,8 +44,8 @@ public:
     bool isAlarmTriggered(AlarmType type, const std::string& message, int cameraId, float confidence);
 
 
-    bool generateAlarm(AlarmType type, const std::string& message, float confidence, Camera *camera); // 生成告警
-    bool generateDiffAlarm(Camera *camera, int point_id, const std::string& pic_path); // 批量差异对比专用告警（不检查posture_completed）
+    bool generateAlarm(AlarmType type, const std::string& message, float confidence, Camera *camera, int point_id, int light_flag); // 生成告警
+    bool generateDiffAlarm(Camera *camera, int point_id, int light_flag, const std::string& pic_path); // 批量差异对比专用告警（不检查posture_completed）
     std::string output_alarms(int camera_id); // 输出对应id的摄像机的告警信息
 
     static uint32_t cooldown;  // 同(相机,类型)告警冷却时间(秒)

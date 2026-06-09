@@ -732,7 +732,7 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
 
     // 触发新增点位告警（只有真正生成告警时才标记损伤）
     if (results->nObjSize > 0) {
-        bool alarm_generated = CameraController::getInstance()->early_warning_process(camera_id);
+        bool alarm_generated = CameraController::getInstance()->early_warning_process(camera_id, cur_point, cur_light_flag);
         if (alarm_generated) {
             // 标记当前停留期间检出损伤：pipeline 状态机会在离开点位 3 秒后落盘 MP4
             cam->mark_damage_seen();
@@ -828,7 +828,7 @@ void run_post_patrol_diff(Camera* cam, bool update_baseline)
                 }
 
                 // 触发告警（使用差异对比专用接口，不检查posture_completed）
-                CameraController::getInstance()->diff_warning_process(cam->get_id(), t.point_id, t.display_path);
+                CameraController::getInstance()->diff_warning_process(cam->get_id(), t.point_id, t.light_flag, t.display_path);
                 WTALOGI("[damage-diff] 摄像机[%d] 点位[%d] L%d 检出 %zu 处差异 -> %s",
                         cam->get_id(), t.point_id, t.light_flag,
                         regions.size(), t.display_path.c_str());

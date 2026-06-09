@@ -12,49 +12,92 @@ bool AlarmManager::isAlarmTriggered(AlarmType type, const std::string &message, 
     return false;
 }
 
-bool AlarmManager::generateAlarm(AlarmType type, const std::string& message, float confidence, Camera *camera)
+bool AlarmManager::generateAlarm(AlarmType type, const std::string& message, float confidence, Camera *camera, int point_id, int light_flag)
 {
     if (camera == nullptr || !camera->is_patroling() || !camera->posture_completed)
         return false;
 
-    Alarm alarm;
-    alarm.cameraId = camera->get_id();
-    WTALOGI("为摄像头id[%d]生成告警!", alarm.cameraId);
-
-    alarm.channel_name = camera->getName();
-    alarm.point_id = camera->now_point_id;
-    alarm.type = type;
-    alarm.timestamp = time(nullptr);  // 获取当前时间戳
-    alarm.confidence = confidence;
-    alarm.picPath = camera->get_pic_path();
+    int cameraId = camera->get_id();
 
     // 使用互斥锁保护队列操作
     std::lock_guard<std::mutex> lock(queueMutex);
-    alarm_map_datas[alarm.cameraId].push(alarm);
 
-    // 通知等待的线程有新的告警
+    // ★ 入队前去重：检查是否已存在相同 camera_id + point_id + light_flag 的告警
+    auto& q = alarm_map_datas[cameraId];
+    std::queue<Alarm> temp_q;
+    bool exists = false;
+    while (!q.empty()) {
+        Alarm& a = q.front();
+        if (a.point_id == point_id && a.light_flag == light_flag) {
+            exists = true;
+        }
+        temp_q.push(std::move(a));
+        q.pop();
+    }
+    alarm_map_datas[cameraId] = std::move(temp_q);
+
+    if (exists) {
+        WTALOGI("摄像头[%d] 点位[%d] L%d 告警已存在，跳过重复入队", cameraId, point_id, light_flag);
+        return false;
+    }
+
+    Alarm alarm;
+    alarm.cameraId = cameraId;
+    alarm.channel_name = camera->getName();
+    alarm.point_id = point_id;
+    alarm.light_flag = light_flag;
+    alarm.type = type;
+    alarm.timestamp = time(nullptr);
+    alarm.confidence = confidence;
+    alarm.picPath = camera->get_pic_path();
+
+    alarm_map_datas[cameraId].push(alarm);
+    WTALOGI("为摄像头[%d] 点位[%d] L%d 生成告警!", cameraId, point_id, light_flag);
+
     queueCondition.notify_one();
     return true;
 }
 
-bool AlarmManager::generateDiffAlarm(Camera *camera, int point_id, const std::string& pic_path)
+bool AlarmManager::generateDiffAlarm(Camera *camera, int point_id, int light_flag, const std::string& pic_path)
 {
     if (camera == nullptr || !camera->is_patroling())
         return false;
 
-    Alarm alarm;
-    alarm.cameraId = camera->get_id();
-    WTALOGI("为摄像头id[%d]生成差异对比告警!", alarm.cameraId);
+    int cameraId = camera->get_id();
 
+    std::lock_guard<std::mutex> lock(queueMutex);
+
+    // ★ 入队前去重：检查是否已存在相同 camera_id + point_id + light_flag 的告警
+    auto& q = alarm_map_datas[cameraId];
+    std::queue<Alarm> temp_q;
+    bool exists = false;
+    while (!q.empty()) {
+        Alarm& a = q.front();
+        if (a.point_id == point_id && a.light_flag == light_flag) {
+            exists = true;
+        }
+        temp_q.push(std::move(a));
+        q.pop();
+    }
+    alarm_map_datas[cameraId] = std::move(temp_q);
+
+    if (exists) {
+        WTALOGI("摄像头[%d] 点位[%d] L%d 差异告警已存在，跳过重复入队", cameraId, point_id, light_flag);
+        return false;
+    }
+
+    Alarm alarm;
+    alarm.cameraId = cameraId;
     alarm.channel_name = camera->getName();
     alarm.point_id = point_id;
+    alarm.light_flag = light_flag;
     alarm.type = AlarmType::LINE_CROSSING;
     alarm.timestamp = time(nullptr);
     alarm.confidence = 1.0f;
     alarm.picPath = pic_path;
 
-    std::lock_guard<std::mutex> lock(queueMutex);
-    alarm_map_datas[alarm.cameraId].push(alarm);
+    alarm_map_datas[cameraId].push(alarm);
+    WTALOGI("为摄像头[%d] 点位[%d] L%d 生成差异对比告警!", cameraId, point_id, light_flag);
 
     queueCondition.notify_one();
     return true;
