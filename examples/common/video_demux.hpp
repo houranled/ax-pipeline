@@ -67,8 +67,12 @@ private:
     volatile int gLoopExit = 0;
 
     std::shared_ptr<std::thread> th_h264_demux = nullptr;
+    std::shared_ptr<std::thread> th_rtsp_monitor = nullptr;  // RTSP 重连监控线程
     RTSPClient *rtspClient = nullptr;
     mp4_handle_t mp4_handle = nullptr;
+    volatile bool rtsp_connected = false;  // RTSP 连接状态
+    int reconnect_interval = 60;  // 重连间隔（秒）
+    int max_retry_on_start = 5;  // 启动时最大重试次数
 
     // 匹配函数：endswith与startwith的内部调用函数
     static int _string_tailmatch(const std::string &self, const std::string &substr, int start, int end, int direction)
@@ -335,6 +339,7 @@ private:
         switch (frame_type)
         {
         case FRAME_TYPE_VIDEO:
+            demux->rtsp_connected = true;  // 收到帧表示连接正常
             for (size_t i = 0; i < demux->cbs.size(); i++)
             {
                 demux->cbs[i].first(buf, len, demux->cbs[i].second);
@@ -353,6 +358,63 @@ private:
         // demux->frame_rater_.sleep();
     }
 
+    // RTSP 重连监控线程：检测断线并自动重连
+    static void _rtsp_monitor_thread(VideoDemux *demux)
+    {
+        ALOGI("rtsp monitor thread started: %s", demux->url.c_str());
+
+        time_t last_frame_time = time(nullptr);
+        const int timeout_sec = 10;  // 10秒无帧视为断线
+
+        while (!demux->gLoopExit)
+        {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+
+            if (demux->rtsp_connected)
+            {
+                last_frame_time = time(nullptr);
+                demux->rtsp_connected = false;  // 重置，等待下一帧确认
+            }
+            else
+            {
+                // 检查是否超时
+                if (time(nullptr) - last_frame_time > timeout_sec)
+                {
+                    ALOGW("rtsp timeout, reconnecting: %s", demux->url.c_str());
+
+                    // 关闭旧连接
+                    if (demux->rtspClient)
+                    {
+                        demux->rtspClient->closeURL();
+                    }
+
+                    // 尝试重连
+                    while (!demux->gLoopExit)
+                    {
+                        if (demux->rtspClient->openURL(demux->url.c_str(), 1, 2) == 0)
+                        {
+                            if (demux->rtspClient->playURL(_rtsp_frame_callback, demux, NULL, NULL) == 0)
+                            {
+                                ALOGI("rtsp reconnected: %s", demux->url.c_str());
+                                last_frame_time = time(nullptr);
+                                demux->rtsp_connected = true;
+                                break;
+                            }
+                            demux->rtspClient->closeURL();
+                        }
+                        ALOGW("rtsp reconnect failed, retry after %ds: %s",
+                              demux->reconnect_interval, demux->url.c_str());
+                        for (int i = 0; i < demux->reconnect_interval && !demux->gLoopExit; i++)
+                        {
+                            std::this_thread::sleep_for(std::chrono::seconds(1));
+                        }
+                    }
+                }
+            }
+        }
+        ALOGI("rtsp monitor thread stopped: %s", demux->url.c_str());
+    }
+
 public:
     VideoDemux(/* args */) {}
     ~VideoDemux() {}
@@ -364,6 +426,11 @@ public:
         {
             mp4_close(&mp4_handle);
             mp4_handle = nullptr;
+        }
+        if (th_rtsp_monitor.get())
+        {
+            th_rtsp_monitor->join();
+            th_rtsp_monitor = nullptr;
         }
         if (rtspClient)
         {
@@ -397,16 +464,38 @@ public:
         {
             ALOGI("rtsp demux");
             rtspClient = new RTSPClient;
-            if (rtspClient->openURL(url.c_str(), 1, 2) != 0)
+
+            // 启动时重试连接，支持摄像头延迟上电
+            bool connected = false;
+            for (int retry = 0; retry < max_retry_on_start && !gLoopExit; retry++)
             {
-                ALOGE("rtsp open failed");
-                return false;
+                if (rtspClient->openURL(url.c_str(), 1, 2) == 0)
+                {
+                    if (rtspClient->playURL(_rtsp_frame_callback, this, NULL, NULL) == 0)
+                    {
+                        connected = true;
+                        rtsp_connected = true;
+                        ALOGI("rtsp connected: %s", url.c_str());
+                        break;
+                    }
+                    rtspClient->closeURL();
+                }
+                ALOGW("rtsp open failed, retry %d/%d after %ds: %s",
+                      retry + 1, max_retry_on_start, reconnect_interval, url.c_str());
+                for (int i = 0; i < reconnect_interval && !gLoopExit; i++)
+                {
+                    std::this_thread::sleep_for(std::chrono::seconds(1));
+                }
             }
-            if (rtspClient->playURL(_rtsp_frame_callback, this, NULL, NULL) != 0)
+
+            if (!connected)
             {
-                ALOGE("rtsp play failed");
-                return false;
+                ALOGE("rtsp open failed after %d retries: %s", max_retry_on_start, url.c_str());
+                // 不返回 false，启动监控线程继续尝试重连
             }
+
+            // 启动 RTSP 重连监控线程
+            th_rtsp_monitor.reset(new std::thread(_rtsp_monitor_thread, this));
         }
         else if (endswith(url, ".mp4"))
         {
