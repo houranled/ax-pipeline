@@ -628,29 +628,16 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
     cv::putText(image, point_str, cv::Point(text_x, text_y + baseline), font_face, font_scale*2, cv::Scalar(point_color[0], point_color[1], point_color[2], 255), text_thickness);
 
 
-    // 每个点位触发两次拍照（无灯照+有灯照）：
-    // - point_id 变化视为"新点位"，重置灯光阶段
-    // - light_phase_changed 标志表示同一点位内灯光状态变更，需要再拍一次
-    struct PointPhaseState {
-        int point_id;
-        int light_flag; // 0=无灯照已拍, 1=有灯照已拍
-    };
-    static std::map<int, PointPhaseState> last_fired; // camera_id -> 上次拍照状态
-
+    // 每个点位触发两次拍照（有灯照+无灯照）：
+    // - 使用 photo_fired_keys 记录已拍照的 (point_id, light_flag) 组合
+    // - key = point_id * 10 + light_flag，巡检开始时清空
     // 灯光状态：light_phase_changed 由巡检线程在灯光稳定后设置
     // L0 拍照时 light_phase_changed=false，L1 拍照时 light_phase_changed=true
     int cur_light_flag = cam->light_phase_changed ? 1 : 0;
-    auto it = last_fired.find(camera_id);
+    int fired_key = cur_point * 10 + cur_light_flag;
 
-    if (it != last_fired.end()) {
-        if (it->second.point_id == cur_point) {
-            // 同一点位：检查灯光阶段
-            if (it->second.light_flag == cur_light_flag) {
-                return; // 同点位同灯光状态已触发过，跳过
-            }
-            // 灯光阶段变更（L0→L1），允许再拍一次
-        }
-        // 点位变化，继续拍照
+    if (cam->photo_fired_keys.count(fired_key)) {
+        return; // 同点位同灯光状态已触发过，跳过
     }
 
     if (!cam->posture_completed)
@@ -658,10 +645,16 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
 
     // 重新获取点位ID，确保与 posture_completed 检查一致
     cur_point = cam->now_point_id;
+    fired_key = cur_point * 10 + cur_light_flag; // 重新计算 key
 
     // 点位ID必须有效（>=1），防止巡检未开始时误拍
     if (cur_point < 1)
         return;
+
+    // 再次检查去重（防止 cur_point 变化后重复拍照）
+    if (cam->photo_fired_keys.count(fired_key)) {
+        return;
+    }
 
     // 保存两份图片：
     // 1. 原图（不带检测框）→ _raw.png，用于 diff 对比
@@ -747,7 +740,7 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
     }
 
     // 标记该点位+灯光状态已处理
-    last_fired[camera_id] = {cur_point, cur_light_flag};
+    cam->photo_fired_keys.insert(fired_key);
 
     // L1 拍照完成后消费掉标志（必须在拍照成功后才消费，避免提前消费导致状态错乱）
     if (cur_light_flag == 1) {

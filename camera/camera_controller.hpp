@@ -4,6 +4,7 @@
 #include <thread>
 #include <chrono>
 #include <map>
+#include <set>
 #include <vector>
 #include <string>
 #include <mutex>
@@ -110,6 +111,7 @@ public:
     bool posture_completed = true; // 是否到达指定位置
     bool light_phase_changed = false; // 灯光状态变更标志，用于同一点位触发两次拍照
     std::atomic<bool> photo_captured{false}; // 拍照完成标志（L0/L1 复用）
+    std::set<int> photo_fired_keys; // 已拍照点位+灯光状态（key = point_id * 10 + light_flag）
     std::string orga_name; //风场名称
     char pic_dirname[160] = {0}; //巡检保存的图片路径
 

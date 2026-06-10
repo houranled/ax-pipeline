@@ -948,6 +948,7 @@ void Camera::set_camera_rtsp_url(const std::string& url)
 int Camera::patrol_with_calibration_loop(bool is_calibrate) //return 0表示正常 非0表示异常
 {
     patrolling = true; // 标识进入巡逻模式
+    photo_fired_keys.clear(); // 清空拍照去重状态，避免跨轮次误判
     WTALOGI("开始巡逻...");
 
     int res = 0;
