@@ -857,12 +857,12 @@ std::vector<Camera::PendingDiffTask> Camera::drain_diff_queue()
     return tmp;
 }
 
-void Camera::connectPipes(pipeline_t *pipe1, pipeline_t *pipe2)
+void Camera::connectPipes(pipeline_t *pipe0, pipeline_t *pipe1)
 {
-    this->setPipe(pipe1);
+    this->setPipe(pipe0);
     // 设置两个管道为同一个相机指针
+    pipe0->m_pcamera = this;
     pipe1->m_pcamera = this;
-    pipe2->m_pcamera = this;
 }
 
 std::string Camera::get_pic_path() const
