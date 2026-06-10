@@ -606,6 +606,18 @@ void cleanup_damage_buffer(pipeline_t *pipe)
 void damage_pipeline_on_arrived(pipeline_t* pipe, const char* clip_filename)
 {
     if (pipe == NULL || clip_filename == NULL) return;
+
+    // 如果上一个点位正在 POST 状态（等待落盘），先等待其完成
+    int wait_count = 0;
+    const int max_wait = 100; // 最多等待 5 秒 (100 * 50ms)
+    while (pipe->damage_state == DC_POST && wait_count < max_wait) {
+        usleep(50 * 1000); // 50ms
+        wait_count++;
+    }
+    if (wait_count > 0) {
+        WTALOGI("on_arrived 等待上一点位落盘完成，等待了 %d ms", wait_count * 50);
+    }
+
     pthread_mutex_lock(&pipe->damage_mutex);
     // 上一次的残留若未落盘，丢弃（理论上不会发生，保险起见）
     if (pipe->damage_state != DC_IDLE) {
@@ -1059,7 +1071,7 @@ int main(int argc, char *argv[])
         }
 
         gLoopExit = 1;
-        sleep(1);
+        //sleep(1);
         pipeline_buffer_t end_buf = {0};
         for (size_t i = 0; i < vpipelines.size(); i++)
         {
@@ -1130,7 +1142,7 @@ EXIT_1:
     COMMON_SYS_DeInit();
     g_sample.Deinit();
 
-    ALOGN("sample end\n");
+    WTALOGI("sample end\n");
     fprintf(stderr, "exit");
     return 0;
 }
