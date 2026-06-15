@@ -260,6 +260,10 @@ extern "C"
         pthread_mutex_t damage_mutex;     // 保护 damage_* 字段
         pthread_t       damage_writer_thread;
         bool            damage_writer_running;
+
+        // ====== 人检测快照 ======
+        bool person_snapshot_requested;       // 是否请求保存快照（由模型设置）
+        char person_snapshot_filename[256];   // 快照输出文件完整路径
     } pipeline_t;
 
     int create_pipeline(pipeline_t *pipe);

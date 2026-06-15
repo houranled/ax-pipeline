@@ -315,6 +315,30 @@ void h265_save_func(pipeline_buffer_t *buff)
     if (pipe->whatPicture) {
         //record_ffmpeg_pipe_jpg(pipe, frame_data, frame_size);
     }
+
+    // 处理人检测快照请求：等到 I 帧后用 ffmpeg 解码保存为 PNG
+    if (pipe->person_snapshot_requested && one_frame_data != NULL && one_frame_size > 0) {
+        if (is_hevc_keyframe((const uint8_t*)one_frame_data, one_frame_size)) {
+            char cmd[512];
+            sprintf(cmd, "ffmpeg -y -loglevel quiet -f hevc -i - -vframes 1 %s 2>/dev/null",
+                    pipe->person_snapshot_filename);
+
+            FILE* fp = popen(cmd, "w");
+            if (fp) {
+                size_t written = fwrite(one_frame_data, 1, one_frame_size, fp);
+                fflush(fp);
+                pclose(fp);
+                if (written == one_frame_size) {
+                    WTALOGI("[PersonSnapshot] 通道[%s] 快照已保存: %s",
+                            pipe->channel_name, pipe->person_snapshot_filename);
+                }
+            } else {
+                WTALOGI("[PersonSnapshot] 创建 ffmpeg 管道失败");
+            }
+            pipe->person_snapshot_requested = false;
+            pipe->person_snapshot_filename[0] = '\0';
+        }
+    }
 }
 
 /**

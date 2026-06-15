@@ -75,6 +75,8 @@ private:
         std::chrono::system_clock::time_point last_face_detect_time;  // 最后一次检测到人脸的时间
         std::chrono::system_clock::time_point record_start_time;      // 录制开始时间
         int face_detect_count = 0;           // 当前录制周期内检测到人脸的帧数
+        std::string current_video_path;          // 当前录制的视频路径
+        bool snapshot_saved = false;             // 快照是否已保存
     } face_record_data;
 
     // 录制参数配置

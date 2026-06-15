@@ -206,7 +206,7 @@ void ax_model_custom::wt_amp_draw_face_bbox(cv::Mat &image, axdl_results_t *resu
 
     for (int i = 0; i < results->nObjSize; i++)
     {
-        if (strcmp(results->mObjects[i].objname, "face") != 0)
+        if (strcmp(results->mObjects[i].objname, "person") != 0)
             continue;
 
         cv::Rect rect(results->mObjects[i].bbox.x * image.cols + offset_x,
@@ -521,21 +521,21 @@ void ax_model_custom::build_static_label()
 
 void ax_model_custom::check_and_trigger_face_recording(axdl_results_t *results)
 {
-    bool face_detected = false;
+    bool person_detected = false;
 
     // 检查检测结果中是否包含人脸(face类别)
     for (int i = 0; i < results->nObjSize; i++) {
         auto &obj = results->mObjects[i];
         // person 通过 objname 判断
-        if (std::string(obj.objname).find("face") != std::string::npos) {
-            face_detected = true;
+        if (std::string(obj.objname).find("person") != std::string::npos) {
+            person_detected = true;
             break;
         }
     }
 
     auto now = std::chrono::system_clock::now();
 
-    if (face_detected) {
+    if (person_detected) {
         face_record_data.last_face_detect_time = now;
         face_record_data.face_detect_count++;
 
@@ -629,10 +629,23 @@ void ax_model_custom::trigger_camera_record(bool start)
         if (start) {
             // 生成并设置文件名
             auto fpath = camera->generateCustomVideoPath(Camera::VideoPathType::PERSON);
+            face_record_data.current_video_path = fpath;
+            face_record_data.snapshot_saved = false;
+
+            // 设置快照请求（h265_save_func 中等待 I 帧后保存全分辨率 PNG）
+            std::string snapshot_path = fpath;
+            auto pos = snapshot_path.rfind(".mp4");
+            if (pos != std::string::npos)
+                snapshot_path.replace(pos, 4, ".png");
+            strncpy(pipeline->person_snapshot_filename, snapshot_path.c_str(),
+                    sizeof(pipeline->person_snapshot_filename) - 1);
+            pipeline->person_snapshot_filename[sizeof(pipeline->person_snapshot_filename) - 1] = '\0';
+            pipeline->person_snapshot_requested = true;
 
             // 开始录制
             camera->start_record_video();
-            WTALOGI("[FaceRecord] 通道[%s] 开始录制，路径: %s", channel_name.c_str(), fpath.c_str());
+            WTALOGI("[FaceRecord] 通道[%s] 开始录制，路径: %s，快照: %s",
+                    channel_name.c_str(), fpath.c_str(), snapshot_path.c_str());
         } else {
             // 停止录制 - 直接设置 IsRecordVideo = false
             // h265_save_func 会检测到变化并关闭 ffmpeg 管道
