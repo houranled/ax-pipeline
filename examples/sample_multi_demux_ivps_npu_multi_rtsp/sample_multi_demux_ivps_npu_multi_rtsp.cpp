@@ -342,6 +342,54 @@ void h265_save_func(pipeline_buffer_t *buff)
 }
 
 /**
+ * @brief 从 H.265 帧缓冲中提取首个关键帧，用 ffmpeg 解码保存为 PNG 封面图
+ * @param frames 帧数据列表
+ * @param video_path 视频文件完整路径（.mp4），封面路径自动替换后缀为 .png
+ */
+static void generate_video_cover(const std::vector<std::vector<uint8_t>>& frames, const char* video_path)
+{
+    if (frames.empty() || video_path == NULL || video_path[0] == '\0') return;
+
+    // 生成封面路径：与视频同名，后缀替换为 .png
+    std::string cover_path(video_path);
+    size_t dot_pos = cover_path.rfind('.');
+    if (dot_pos != std::string::npos) {
+        cover_path = cover_path.substr(0, dot_pos) + ".png";
+    } else {
+        cover_path += ".png";
+    }
+
+    // 找到首个关键帧
+    const std::vector<uint8_t>* key_frame = nullptr;
+    for (const auto& frame : frames) {
+        if (is_hevc_keyframe(frame.data(), frame.size())) {
+            key_frame = &frame;
+            break;
+        }
+    }
+    if (!key_frame) {
+        WTALOGI("[封面] 未找到关键帧，跳过封面生成: %s", video_path);
+        return;
+    }
+
+    // 用 ffmpeg 将关键帧解码为 PNG
+    char cmd[640];
+    snprintf(cmd, sizeof(cmd),
+             "ffmpeg -y -loglevel quiet -f hevc -i - -vframes 1 %s 2>/dev/null",
+             cover_path.c_str());
+
+    FILE* fp = popen(cmd, "w");
+    if (!fp) {
+        WTALOGI("[封面] 创建 ffmpeg 管道失败: %s", cover_path.c_str());
+        return;
+    }
+    fwrite(key_frame->data(), 1, key_frame->size(), fp);
+    fflush(fp);
+    pclose(fp);
+    WTALOGI("[封面] 已生成: %s", cover_path.c_str());
+}
+
+/**
  * @brief 后台批量写入线程函数
  * 将缓存的所有帧数据一次性写入 ffmpeg 管道生成 mp4 文件
  */
@@ -387,6 +435,9 @@ void* batch_write_thread(void* arg)
     }
 
     WTALOGI("后台写入完成，总计 %zu 帧，%zu 字节写入文件.", frame_count, total_written);
+
+    // 生成首帧封面图
+    generate_video_cover(frames, args->filename);
 
     // 清理线程参数
     delete args;
@@ -583,6 +634,9 @@ static void* damage_writer_thread_fn(void* arg)
         WTALOGI("关闭 ffmpeg 管道失败(损伤)");
     }
     WTALOGI("损伤片段写入完成: %zu 帧, %zu 字节", frame_count, total_written);
+
+    // 生成首帧封面图
+    generate_video_cover(frames, args->filename);
 
     delete args;
 
