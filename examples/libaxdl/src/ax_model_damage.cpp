@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <fstream>
 #include <ctime>
 #include "../../utilities/json.hpp"
 #include "../../camera/camera_controller.hpp"
@@ -789,7 +790,7 @@ void run_post_patrol_diff(Camera* cam, bool update_baseline)
                 ++hit_count;
 
                 // ★ 对比检出损伤时标记 damage_seen，确保损伤片段落盘
-                cam->mark_damage_seen();
+                //cam->mark_damage_seen();
 
                 // 读取带检测框的展示图，在其上绘制紫色差异框
                 cv::Mat display_bgr = cv::imread(t.display_path, cv::IMREAD_COLOR);
@@ -909,10 +910,36 @@ int wt_damage_multi_model_recognize::scan_and_load_models(const std::string& pos
         // 损伤类型 = 文件名去掉 .axmodel 后缀
         std::string damage_type = fname.substr(0, fname.length() - 8);
         std::string model_path = position_dir + "/" + fname;
+        std::string config_path = position_dir + "/" + damage_type + ".json";
 
-        // 构造模型 JSON 配置（合并公共配置）
-        nlohmann::json model_json = m_common_config;
-        model_json["MODEL_TYPE"] = "MT_DAMAGE_MODEL";
+        // 尝试加载独立配置文件，不存在则使用默认配置
+        nlohmann::json model_json;
+        std::ifstream config_file(config_path);
+        if (config_file.good()) {
+            try {
+                model_json = nlohmann::json::parse(config_file);
+                WTALOGI("加载模型独立配置: %s", config_path.c_str());
+            } catch (const std::exception& e) {
+                WTALOGI("解析配置失败 %s: %s，退出", config_path.c_str(), e.what());
+                config_file.close();
+                closedir(dir);
+                return -1;
+            }
+            config_file.close();
+        } else {
+            // 默认配置：CLASS_NUM=1，CLASS_NAMES=模型文件名（损伤类型）
+            model_json["CLASS_NUM"] = 1;
+            model_json["CLASS_NAMES"] = nlohmann::json::array({damage_type});
+            model_json["PROB_THRESHOLD"] = 0.4;
+            model_json["NMS_THRESHOLD"] = 0.45;
+            WTALOGI("模型 '%s' 无独立配置，使用默认(CLASS_NUM=1, CLASS_NAMES=['%s'])",
+                    fname.c_str(), damage_type.c_str());
+        }
+
+        // 确保必要字段
+        if (!model_json.contains("MODEL_TYPE")) {
+            model_json["MODEL_TYPE"] = "MT_DAMAGE_MODEL";
+        }
         model_json["MODEL_PATH"] = model_path;
         model_json["DAMAGE_TYPE"] = damage_type;
 
@@ -963,17 +990,6 @@ int wt_damage_multi_model_recognize::init(void *json_obj)
         return -1;
     }
 
-    // 解析公共模型配置参数
-    if (jsondata.contains("MODEL_COMMON_CONFIG")) {
-        m_common_config = jsondata["MODEL_COMMON_CONFIG"];
-    } else {
-        // 默认公共配置
-        m_common_config["CLASS_NUM"] = 1;
-        m_common_config["CLASS_NAMES"] = nlohmann::json::array({"damage"});
-        m_common_config["PROB_THRESHOLD"] = 0.4;
-        m_common_config["NMS_THRESHOLD"] = 0.45;
-    }
-
     // 解析部位关键词映射
     if (jsondata.contains("POSITION_KEYWORDS")) {
         auto& kw_json = jsondata["POSITION_KEYWORDS"];
@@ -990,15 +1006,6 @@ int wt_damage_multi_model_recognize::init(void *json_obj)
         WTALOGI("配置中缺少 POSITION_KEYWORDS，将使用目录名作为关键词");
     }
 
-    // 解析顶部数据收集选项
-    if (jsondata.contains("TOP_DATA_COLLECT_ONLY")) {
-        m_top_data_collect_only = jsondata["TOP_DATA_COLLECT_ONLY"].get<bool>();
-    }
-    if (jsondata.contains("DATA_COLLECT_DIR")) {
-        m_data_collect_dir = jsondata["DATA_COLLECT_DIR"].get<std::string>();
-    } else {
-        m_data_collect_dir = "/wt_tech/data_collect";
-    }
 
     // 扫描 MODEL_ROOT_DIR 下的子目录（每个子目录名即为部位名）
     DIR *root_dir = opendir(m_model_root_dir.c_str());
@@ -1025,7 +1032,12 @@ int wt_damage_multi_model_recognize::init(void *json_obj)
         }
 
         // 扫描并加载该部位目录下的所有模型
-        scan_and_load_models(sub_path, position_name);
+        int ret = scan_and_load_models(sub_path, position_name);
+        if (ret != 0) {
+            WTALOGI("部位 '%s' 模型加载失败，退出初始化", position_name.c_str());
+            closedir(root_dir);
+            return -1;
+        }
     }
     closedir(root_dir);
 
@@ -1080,51 +1092,6 @@ std::string wt_damage_multi_model_recognize::find_position_for_point(const std::
     return "";
 }
 
-void wt_damage_multi_model_recognize::save_frame_for_collection(axdl_image_t *pstFrame, const std::string& point_name)
-{
-    if (!pstFrame || !pstFrame->pVir) return;
-
-    // 构造保存路径: DATA_COLLECT_DIR/camera_id/point_name/timestamp.jpg
-    time_t now = time(nullptr);
-    char time_str[64] = {0};
-    struct tm *t_info = localtime(&now);
-    snprintf(time_str, sizeof(time_str), "%04d%02d%02d_%02d%02d%02d",
-             t_info->tm_year + 1900, t_info->tm_mon + 1, t_info->tm_mday,
-             t_info->tm_hour, t_info->tm_min, t_info->tm_sec);
-
-    char save_dir[512] = {0};
-    snprintf(save_dir, sizeof(save_dir), "%s/%d/%s",
-             m_data_collect_dir.c_str(), camera_id, point_name.c_str());
-
-    // 确保目录存在
-    std::string mkdir_cmd = "mkdir -p " + std::string(save_dir);
-    int rc = system(mkdir_cmd.c_str());
-    (void)rc;
-
-    char save_path[640] = {0};
-    snprintf(save_path, sizeof(save_path), "%s/%s.jpg", save_dir, time_str);
-
-    try {
-        cv::Mat frame_bgr;
-        if (pstFrame->eDtype == axdl_color_space_nv12) {
-            cv::Mat nv12(pstFrame->nHeight * 3 / 2, pstFrame->nWidth, CV_8UC1, pstFrame->pVir);
-            cv::cvtColor(nv12, frame_bgr, cv::COLOR_YUV2BGR_NV12);
-        } else if (pstFrame->eDtype == axdl_color_space_rgb) {
-            cv::Mat rgb(pstFrame->nHeight, pstFrame->nWidth, CV_8UC3, pstFrame->pVir);
-            cv::cvtColor(rgb, frame_bgr, cv::COLOR_RGB2BGR);
-        } else if (pstFrame->eDtype == axdl_color_space_bgr) {
-            frame_bgr = cv::Mat(pstFrame->nHeight, pstFrame->nWidth, CV_8UC3, pstFrame->pVir).clone();
-        } else {
-            return;
-        }
-
-        cv::imwrite(save_path, frame_bgr);
-        WTALOGI("[数据收集] 顶部点位 '%s' 已保存: %s", point_name.c_str(), save_path);
-    } catch (...) {
-        WTALOGI("[数据收集] 保存失败: %s", save_path);
-    }
-}
-
 int wt_damage_multi_model_recognize::inference(axdl_image_t *pstFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results)
 {
     // 获取当前点位名称
@@ -1144,14 +1111,6 @@ int wt_damage_multi_model_recognize::inference(axdl_image_t *pstFrame, axdl_bbox
         return 0;
     }
 
-    // 顶部特殊处理：仅做数据收集，不跑推理
-    if (m_top_data_collect_only && position.find("顶部") != std::string::npos) {
-        save_frame_for_collection(pstFrame, current_point_name);
-        results->nObjSize = 0;
-        WTALOGI("顶部点位 '%s' 仅做数据收集", current_point_name.c_str());
-        return 0;
-    }
-
     // 获取该部位下所有损伤模型
     auto it = m_position_models.find(position);
     if (it == m_position_models.end() || it->second.empty()) {
@@ -1160,8 +1119,7 @@ int wt_damage_multi_model_recognize::inference(axdl_image_t *pstFrame, axdl_bbox
     }
 
     const auto& models_info = it->second;
-    WTALOGI("点位 '%s' -> 部位 '%s'，执行 %zu 个损伤模型",
-            current_point_name.c_str(), position.c_str(), models_info.size());
+    WTALOGI("点位 '%s' -> 部位 '%s'，执行 %zu 个损伤模型",current_point_name.c_str(), position.c_str(), models_info.size());
 
     // 并行推理：每个模型在独立线程中执行
     struct ModelResult {

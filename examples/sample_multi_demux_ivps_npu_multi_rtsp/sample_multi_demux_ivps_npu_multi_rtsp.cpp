@@ -955,7 +955,8 @@ int main(int argc, char *argv[])
         void *model1 = nullptr;
         AX_S32 s32Ret = axdl_parse_param_init(config_file, &model1, camera->getName().c_str(), camera->get_id());
         if (s32Ret != 0) {
-            WTALOGI("sample_parse_param_det failed,run joint skip");
+            WTALOGI("主模型初始化失败，退出程序");
+            goto EXIT_3;
         }
         else {
             g_sample.gModels[i].gModels.push_back(model1);
@@ -975,7 +976,13 @@ int main(int argc, char *argv[])
             s32Ret = axdl_get_ivps_width_height(g_sample.gModels[i].gModels[1], config_file_people, &width, &height);
             WTALOGI("IVPS AI channel width=%d height=%d", width, height);
         } else {
-            WTALOGI("sample_parse_param_det failed,run joint skip");
+            WTALOGI("人员识别模型初始化失败!!");
+        }
+
+        // 如果两个模型都加载失败，则退出程序
+        if (g_sample.gModels[i].gModels.empty()) {
+            WTALOGI("主模型和人员识别模型都初始化失败，退出程序");
+            goto EXIT_3;
         }
 
         // 如果至少有一个模型加载成功，则启用联合推理

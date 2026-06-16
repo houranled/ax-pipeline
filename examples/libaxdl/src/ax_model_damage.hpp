@@ -13,7 +13,6 @@
 #include <future>
 #include "base/detection.hpp"
 #include "../include/ax_model_base.hpp"
-#include "../../utilities/json.hpp"
 
 struct ScaleOutputs
 {
@@ -86,15 +85,6 @@ private:
     // 模型根目录
     std::string m_model_root_dir;
 
-    // 顶部是否仅做数据收集（不跑推理）
-    bool m_top_data_collect_only = true;
-
-    // 数据收集保存目录
-    std::string m_data_collect_dir;
-
-    // 模型公共配置参数
-    nlohmann::json m_common_config;
-
     // 获取当前点位名称
     std::string get_current_point_name();
 
@@ -103,8 +93,5 @@ private:
 
     // 扫描指定目录下的所有 .axmodel 文件并加载
     int scan_and_load_models(const std::string& position_dir, const std::string& position_name);
-
-    // 数据收集（顶部点位使用）
-    void save_frame_for_collection(axdl_image_t *pstFrame, const std::string& point_name);
 };
 REGISTER(WT_DAMAGE_MULTI_MODEL_RECOGNIZE, wt_damage_multi_model_recognize)
