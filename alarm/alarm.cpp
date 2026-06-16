@@ -124,7 +124,8 @@ std::string AlarmManager::output_alarms(int camera_id)
                 warning["camera_id"] = alarm.cameraId;
                 warning["name"] = alarm.channel_name;
                 warning["point_id"] = alarm.point_id;
-                warning["type"] = static_cast<int>(alarm.type);
+                warning["type"] = alarm.damage_type;
+                warning["damage_type"] = static_cast<int>(alarm.type);
                 warning["image"] = alarm.picPath.empty() ? "" : alarm.picPath;
 
                 result["warnings"].push_back(warning);
@@ -142,7 +143,8 @@ std::string AlarmManager::output_alarms(int camera_id)
                 one_warning["camera_id"] = alarm.cameraId;
                 one_warning["name"] = alarm.channel_name;
                 one_warning["point_id"] = alarm.point_id;
-                one_warning["type"] = static_cast<int>(alarm.type);
+                one_warning["type"] = alarm.damage_type;
+                one_warning["damage_type"] = static_cast<int>(alarm.type);
                 one_warning["image"] = alarm.picPath.empty() ? "" : alarm.picPath;
 
                 result["warnings"].push_back(one_warning);

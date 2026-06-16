@@ -610,7 +610,6 @@ void * ax_model_multi_base_t:: GetRunnerHandle()
 
 int wt_model_multi_base_t::init(void *json_obj)
 {
-    WTALOGI("初始化weiti多模型基类实例成员...");
     auto jsondata = *(nlohmann::json *)json_obj;
 
    // 解析json数据，获取模型类型

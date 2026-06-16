@@ -11,6 +11,7 @@
 #include <mutex>
 #include "base/detection.hpp"
 #include "../include/ax_model_base.hpp"
+#include "../../utilities/json.hpp"
 
 struct ScaleOutputs
 {
@@ -29,14 +30,14 @@ public:
     ax_model_damage()
     {
         WTALOGI("实例化一个ax_model_damage对象");
-        model_type = "default";
+        damage_type = "unknown";
     }
 
-    // Override sub_init to extract model type from filename (called after base init)
+    // Override sub_init to extract damage type from filename (called after base init)
     int sub_init(void *json_obj) override;
 
-    // Get model type
-    std::string get_model_type() const { return model_type; }
+    // Get damage type (损伤类型，即模型文件名去后缀)
+    std::string get_damage_type() const { return damage_type; }
 
 protected:
     // 在这里添加自定义属性
@@ -46,15 +47,11 @@ protected:
     //void draw_custom(int chn, axdl_results_t *results, float fontscale, int thickness) override;
 
 private:
-    //AlarmGenerator m_alarm_generator; //告警检测器
-    std::string model_type; // 模型类型（A、B、C等）
+    std::string damage_type; // 损伤类型（模型文件名，如"裂缝"、"腐蚀"等）
 
     // 缓存原图用于快照合成（在 post_process 中更新）
     cv::Mat m_cached_frame_bgr;
     std::mutex m_frame_mutex;
-
-    // Helper method to extract type from filename
-    std::string extract_type_from_filename(const std::string& model_path);
 
 };
 REGISTER(MT_DAMAGE_MODEL, ax_model_damage)
@@ -63,38 +60,49 @@ class wt_damage_multi_model_recognize : public wt_model_multi_base_t {
 public:
     wt_damage_multi_model_recognize();
 
-    // Add model type to point prefix mapping
-    int add_model_type_mapping(const std::string& point_prefix, const std::string& model_type);
-
-    // Override inference to select models based on point name prefix type
+    // Override inference to select models based on point name's position keyword
     int inference(axdl_image_t *pstFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results) override;
 
-    // Override init to parse model type mappings
+    // Override init to scan model directories by position
     int init(void *json_obj) override;
 
     void *GetRunnerHandle() override {return NULL;}
 
 private:
-    // Structure to hold model type information
-    struct ModelTypeInfo {
-        std::string type_name;
-        std::vector<std::shared_ptr<ax_model_base>> models;
+    // 单个损伤模型信息
+    struct DamageModelInfo {
+        std::string damage_type;  // 损伤类型（模型文件名去后缀，如"裂缝"）
+        std::shared_ptr<ax_model_base> model;
     };
 
-    // Map from model type to model info
-    std::map<std::string, ModelTypeInfo> m_model_types;
+    // 部位 → 该部位下所有损伤模型列表
+    std::map<std::string, std::vector<DamageModelInfo>> m_position_models;
 
-    // Map from point name prefix to model type
-    std::map<std::string, std::string> m_point_prefix_to_model_type;
+    // 部位 → 匹配关键词列表（用于从点位名称中识别部位）
+    std::map<std::string, std::vector<std::string>> m_position_keywords;
 
-    // Helper method to get current point name prefix
-    std::string get_current_point_prefix();
+    // 模型根目录
+    std::string m_model_root_dir;
 
-    // Helper method to find matching model type for point prefix
-    std::string find_model_type_for_point(const std::string& point_name);
+    // 顶部是否仅做数据收集（不跑推理）
+    bool m_top_data_collect_only = true;
 
-    // Helper method to get all models of a specific type
-    std::vector<std::shared_ptr<ax_model_base>> get_models_by_type(const std::string& model_type);
+    // 数据收集保存目录
+    std::string m_data_collect_dir;
 
-    };
+    // 模型公共配置参数
+    nlohmann::json m_common_config;
+
+    // 获取当前点位名称
+    std::string get_current_point_name();
+
+    // 从点位名称中匹配部位
+    std::string find_position_for_point(const std::string& point_name);
+
+    // 扫描指定目录下的所有 .axmodel 文件并加载
+    int scan_and_load_models(const std::string& position_dir, const std::string& position_name);
+
+    // 数据收集（顶部点位使用）
+    void save_frame_for_collection(axdl_image_t *pstFrame, const std::string& point_name);
+};
 REGISTER(WT_DAMAGE_MULTI_MODEL_RECOGNIZE, wt_damage_multi_model_recognize)

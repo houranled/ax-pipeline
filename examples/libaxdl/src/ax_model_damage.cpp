@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <dirent.h>
 #include <ctime>
 #include "../../utilities/json.hpp"
 #include "../../camera/camera_controller.hpp"
@@ -859,75 +860,28 @@ void run_post_patrol_diff(Camera* cam, bool update_baseline)
 
 int ax_model_damage::sub_init(void *json_obj)
 {
-    // Extract model type from configuration (called after base init)
+    // Extract damage type from configuration or model path
     auto jsondata = *(nlohmann::json *)json_obj;
-    if (jsondata.contains("MODEL_PATH")) {
-        std::string model_path = jsondata["MODEL_PATH"];
-        model_type = extract_type_from_filename(model_path);
-        WTALOGI("Model type extracted: '%s' from path '%s'", model_type.c_str(), model_path.c_str());
+
+    // 优先使用配置中显式指定的 DAMAGE_TYPE
+    if (jsondata.contains("DAMAGE_TYPE")) {
+        damage_type = jsondata["DAMAGE_TYPE"].get<std::string>();
+    } else if (jsondata.contains("MODEL_PATH")) {
+        // 从模型文件名中提取损伤类型（文件名去后缀即为损伤类型）
+        std::string model_path = jsondata["MODEL_PATH"].get<std::string>();
+        size_t last_slash = model_path.find_last_of("/\\");
+        std::string filename = (last_slash != std::string::npos)
+                               ? model_path.substr(last_slash + 1) : model_path;
+        size_t last_dot = filename.find_last_of(".");
+        if (last_dot != std::string::npos) {
+            damage_type = filename.substr(0, last_dot);
+        } else {
+            damage_type = filename;
+        }
     }
 
+    WTALOGI("Damage type: '%s'", damage_type.c_str());
     return 0;
-}
-
-std::string ax_model_damage::extract_type_from_filename(const std::string& model_path)
-{
-    // Extract filename from path
-    std::string filename = model_path;
-    size_t last_slash = model_path.find_last_of("/\\");
-    if (last_slash != std::string::npos) {
-        filename = model_path.substr(last_slash + 1);
-    }
-
-    // Remove file extension
-    size_t last_dot = filename.find_last_of(".");
-    if (last_dot != std::string::npos) {
-        filename = filename.substr(0, last_dot);
-    }
-
-    // Look for type prefix pattern (e.g., "damage_model_A1", "damage_model_B2")
-    // Expected format: <base_name>_<type><index>
-    size_t last_underscore = filename.find_last_of("_");
-    if (last_underscore != std::string::npos && last_underscore < filename.length() - 1) {
-        std::string suffix = filename.substr(last_underscore + 1);
-
-        // Check if suffix starts with a letter (type) followed by digits
-        if (!suffix.empty() && isalpha(suffix[0])) {
-            // Extract the type letter(s) before first digit
-            std::string type_prefix;
-            for (char c : suffix) {
-                if (isalpha(c)) {
-                    type_prefix += c;
-                } else {
-                    break; // Stop at first digit
-                }
-            }
-
-            if (!type_prefix.empty()) {
-                WTALOGI("Extracted model type '%s' from filename '%s'", type_prefix.c_str(), model_path.c_str());
-                return type_prefix;
-            }
-        }
-    }
-
-    // Fallback: try to find any uppercase letter sequence that could be a type
-    for (size_t i = 0; i < filename.length(); i++) {
-        if (isupper(filename[i])) {
-            size_t start = i;
-            while (i < filename.length() && isupper(filename[i])) {
-                i++;
-            }
-            std::string potential_type = filename.substr(start, i - start);
-            if (potential_type.length() >= 1 && potential_type.length() <= 3) {
-                WTALOGI("Extracted model type '%s' from filename '%s' (fallback method)", potential_type.c_str(), model_path.c_str());
-                return potential_type;
-            }
-        }
-    }
-
-    // Default type if no pattern matches
-    WTALOGI("Could not extract type from filename '%s', using default type 'default'", model_path.c_str());
-    return "default";
 }
 
 wt_damage_multi_model_recognize::wt_damage_multi_model_recognize()
@@ -935,208 +889,313 @@ wt_damage_multi_model_recognize::wt_damage_multi_model_recognize()
     WTALOGI("Instance wt_damage_multi_model_recognize object");
 }
 
+int wt_damage_multi_model_recognize::scan_and_load_models(const std::string& position_dir, const std::string& position_name)
+{
+    DIR *dir = opendir(position_dir.c_str());
+    if (!dir) {
+        WTALOGI("无法打开部位目录: %s", position_dir.c_str());
+        return -1;
+    }
+
+    struct dirent *entry;
+    int loaded_count = 0;
+    while ((entry = readdir(dir)) != nullptr) {
+        std::string fname = entry->d_name;
+        // 只加载 .axmodel 文件
+        if (fname.length() < 9) continue; // 至少 "x.axmodel"
+        std::string ext = fname.substr(fname.length() - 8);
+        if (ext != ".axmodel") continue;
+
+        // 损伤类型 = 文件名去掉 .axmodel 后缀
+        std::string damage_type = fname.substr(0, fname.length() - 8);
+        std::string model_path = position_dir + "/" + fname;
+
+        // 构造模型 JSON 配置（合并公共配置）
+        nlohmann::json model_json = m_common_config;
+        model_json["MODEL_TYPE"] = "MT_DAMAGE_MODEL";
+        model_json["MODEL_PATH"] = model_path;
+        model_json["DAMAGE_TYPE"] = damage_type;
+
+        // 创建模型实例
+        std::string strModelType;
+        int mt = get_model_type(&model_json, strModelType);
+        std::shared_ptr<ax_model_base> model((ax_model_base *)OBJFactory::getInstance().getObjectByID(mt));
+        if (!model) {
+            WTALOGI("创建模型实例失败: %s", model_path.c_str());
+            continue;
+        }
+
+        // 初始化模型
+        int ret = model->init((void *)&model_json);
+        if (ret != 0) {
+            WTALOGI("初始化模型失败: %s, ret=%d", model_path.c_str(), ret);
+            continue;
+        }
+        model->set_channel_init_info(channel_name, camera_id);
+
+        // 添加到部位模型列表
+        DamageModelInfo info;
+        info.damage_type = damage_type;
+        info.model = model;
+        m_position_models[position_name].push_back(info);
+        m_models.push_back(model); // 保持父类兼容
+
+        loaded_count++;
+        WTALOGI("加载模型: 部位='%s', 损伤类型='%s', 路径='%s'",
+                position_name.c_str(), damage_type.c_str(), model_path.c_str());
+    }
+    closedir(dir);
+
+    WTALOGI("部位 '%s' 共加载 %d 个损伤模型", position_name.c_str(), loaded_count);
+    return 0;
+}
+
 int wt_damage_multi_model_recognize::init(void *json_obj)
 {
-    // Parse JSON configuration first to get model types
+    WTALOGI("初始化 damage 多模型（按部位目录扫描）...");
     auto jsondata = *(nlohmann::json *)json_obj;
 
-    // Parse model list with type information
-    if (jsondata.contains("MODEL_LIST")) {
-        nlohmann::json json_model_list = jsondata["MODEL_LIST"];
-
-        for (int i = 0; i < json_model_list.size(); i++) {
-            auto& model_json = json_model_list[i];
-
-            // Create model instance
-            std::string strModelType;
-            int mt = get_model_type(&model_json, strModelType);
-            std::shared_ptr<ax_model_base> model((ax_model_base *)OBJFactory::getInstance().getObjectByID(mt));
-
-            if (!model) {
-                return -1;
-            }
-
-            // Initialize the model
-            int ret = model->init((void *)&model_json);
-            if (ret != 0) {
-                WTALOGI("Failed to initialize model, ret=%d", ret);
-                return ret;
-            }
-            model->set_channel_init_info(channel_name, camera_id);
-
-            // Get model type from the model instance (for ax_model_damage)
-            std::string actual_model_type = "default";
-            ax_model_damage* damage_model = dynamic_cast<ax_model_damage*>(model.get());
-            if (damage_model) {
-                actual_model_type = damage_model->get_model_type();
-            }
-
-            // Add model to type group
-            m_model_types[actual_model_type].type_name = actual_model_type;
-            m_model_types[actual_model_type].models.push_back(model);
-            m_models.push_back(model); // Keep parent class vector for compatibility
-
-            WTALOGI("Added model to type '%s': model index %d", actual_model_type.c_str(), i);
-        }
+    // 解析模型根目录
+    if (jsondata.contains("MODEL_ROOT_DIR")) {
+        m_model_root_dir = jsondata["MODEL_ROOT_DIR"].get<std::string>();
+    } else {
+        WTALOGI("配置中缺少 MODEL_ROOT_DIR");
+        return -1;
     }
 
-    // Parse point prefix to model type mappings
-    if (jsondata.contains("POINT_PREFIX_MAPPINGS")) {
-        nlohmann::json json_mappings = jsondata["POINT_PREFIX_MAPPINGS"];
+    // 解析公共模型配置参数
+    if (jsondata.contains("MODEL_COMMON_CONFIG")) {
+        m_common_config = jsondata["MODEL_COMMON_CONFIG"];
+    } else {
+        // 默认公共配置
+        m_common_config["CLASS_NUM"] = 1;
+        m_common_config["CLASS_NAMES"] = nlohmann::json::array({"damage"});
+        m_common_config["PROB_THRESHOLD"] = 0.4;
+        m_common_config["NMS_THRESHOLD"] = 0.45;
+    }
 
-        for (auto& mapping : json_mappings.items()) {
-            std::string point_prefix = mapping.key();
-            std::string model_type = mapping.value();
-
-            // Validate model type exists
-            if (m_model_types.find(model_type) != m_model_types.end()) {
-                m_point_prefix_to_model_type[point_prefix] = model_type;
-                WTALOGI("Added point prefix mapping: '%s' -> model type '%s'",
-                        point_prefix.c_str(), model_type.c_str());
-            } else {
-                WTALOGI("Model type '%s' not found for point prefix '%s'",
-                        model_type.c_str(), point_prefix.c_str());
+    // 解析部位关键词映射
+    if (jsondata.contains("POSITION_KEYWORDS")) {
+        auto& kw_json = jsondata["POSITION_KEYWORDS"];
+        for (auto& item : kw_json.items()) {
+            std::string position = item.key();
+            std::vector<std::string> keywords;
+            for (auto& k : item.value()) {
+                keywords.push_back(k.get<std::string>());
             }
+            m_position_keywords[position] = keywords;
+            WTALOGI("部位关键词: '%s' -> [%zu个关键词]", position.c_str(), keywords.size());
         }
     } else {
-        WTALOGI("No POINT_PREFIX_MAPPINGS found in configuration");
+        WTALOGI("配置中缺少 POSITION_KEYWORDS，将使用目录名作为关键词");
     }
 
-    // Log model type summary
-    for (const auto& type_pair : m_model_types) {
-        WTALOGI("Model type '%s' has %zu models",
-                type_pair.first.c_str(), type_pair.second.models.size());
+    // 解析顶部数据收集选项
+    if (jsondata.contains("TOP_DATA_COLLECT_ONLY")) {
+        m_top_data_collect_only = jsondata["TOP_DATA_COLLECT_ONLY"].get<bool>();
     }
+    if (jsondata.contains("DATA_COLLECT_DIR")) {
+        m_data_collect_dir = jsondata["DATA_COLLECT_DIR"].get<std::string>();
+    } else {
+        m_data_collect_dir = "/wt_tech/data_collect";
+    }
+
+    // 扫描 MODEL_ROOT_DIR 下的子目录（每个子目录名即为部位名）
+    DIR *root_dir = opendir(m_model_root_dir.c_str());
+    if (!root_dir) {
+        WTALOGI("无法打开模型根目录: %s", m_model_root_dir.c_str());
+        return -1;
+    }
+
+    struct dirent *entry;
+    while ((entry = readdir(root_dir)) != nullptr) {
+        std::string name = entry->d_name;
+        if (name == "." || name == "..") continue;
+
+        // 检查是否为目录
+        std::string sub_path = m_model_root_dir + "/" + name;
+        struct stat st;
+        if (stat(sub_path.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) continue;
+
+        std::string position_name = name; // 目录名即为部位名
+
+        // 如果 POSITION_KEYWORDS 中没有该部位，则用目录名本身作为关键词
+        if (m_position_keywords.find(position_name) == m_position_keywords.end()) {
+            m_position_keywords[position_name] = {position_name};
+        }
+
+        // 扫描并加载该部位目录下的所有模型
+        scan_and_load_models(sub_path, position_name);
+    }
+    closedir(root_dir);
+
+    // 输出加载摘要
+    WTALOGI("=== 多模型加载摘要 ===");
+    for (const auto& pair : m_position_models) {
+        WTALOGI("  部位 '%s': %zu 个模型", pair.first.c_str(), pair.second.size());
+        for (const auto& info : pair.second) {
+            WTALOGI("    - 损伤类型: '%s'", info.damage_type.c_str());
+        }
+    }
+    WTALOGI("共加载 %zu 个模型", m_models.size());
 
     return 0;
 }
 
-int wt_damage_multi_model_recognize::add_model_type_mapping(const std::string& point_prefix, const std::string& model_type)
+std::string wt_damage_multi_model_recognize::get_current_point_name()
 {
-    // Validate model type exists
-    if (m_model_types.find(model_type) != m_model_types.end()) {
-        m_point_prefix_to_model_type[point_prefix] = model_type;
-        WTALOGI("Added point prefix mapping: '%s' -> model type '%s'",
-                point_prefix.c_str(), model_type.c_str());
-        return 0;
-    } else {
-        WTALOGI("Model type '%s' not found for point prefix '%s'",
-                model_type.c_str(), point_prefix.c_str());
-        return -1;
-    }
-}
-
-std::string wt_damage_multi_model_recognize::get_current_point_prefix()
-{
-    // Get current point information from camera controller
+    // 从摄像机控制器获取当前点位名称
     CameraController* controller = CameraController::getInstance();
     auto camera = controller->getCamera(this->camera_id);
 
     int current_point_id = camera->now_point_id;
 
-    // Find preset position by ID
+    // 通过 ID 查找预置位
     for (const auto& pos : camera->getPresetPositions()) {
         if (pos.id == current_point_id) {
-            return pos.name; // Return full point name for prefix matching
+            return pos.name;
         }
     }
 
-    return ""; // Return empty string if not found
-}
-
-std::string wt_damage_multi_model_recognize::find_model_type_for_point(const std::string& point_name)
-{
-    // Find matching model type by point name prefix
-    for (const auto& mapping : m_point_prefix_to_model_type) {
-        const std::string& prefix = mapping.first;
-        const std::string& model_type = mapping.second;
-
-        // Check if point name starts with the prefix
-        if (point_name.find(prefix) == 0) {
-            WTALOGI("Found matching model type: point '%s' matches prefix '%s' -> model type '%s'",
-                    point_name.c_str(), prefix.c_str(), model_type.c_str());
-            return model_type;
-        }
-    }
-
-    // If no specific match found, return first available model type as fallback
-    if (!m_model_types.empty()) {
-        std::string fallback_type = m_model_types.begin()->first;
-        WTALOGI("No specific model type match for point '%s', using fallback type '%s'", point_name.c_str(),
-            fallback_type.c_str());
-        return fallback_type;
-    }
-
-    WTALOGI("No model types available for point '%s'", point_name.c_str());
     return "";
 }
 
-std::vector<std::shared_ptr<ax_model_base>> wt_damage_multi_model_recognize::get_models_by_type(const std::string& model_type)
+std::string wt_damage_multi_model_recognize::find_position_for_point(const std::string& point_name)
 {
-    auto it = m_model_types.find(model_type);
-    if (it != m_model_types.end()) {
-        return it->second.models;
+    // 在点位名称中查找包含的部位关键词（包含匹配，非前缀匹配）
+    for (const auto& pair : m_position_keywords) {
+        const std::string& position = pair.first;
+        const std::vector<std::string>& keywords = pair.second;
+
+        for (const auto& keyword : keywords) {
+            if (point_name.find(keyword) != std::string::npos) {
+                WTALOGI("点位 '%s' 匹配部位 '%s'（关键词: '%s'）",
+                        point_name.c_str(), position.c_str(), keyword.c_str());
+                return position;
+            }
+        }
     }
 
-    WTALOGI("Model type '%s' not found, returning empty vector", model_type.c_str());
-    return std::vector<std::shared_ptr<ax_model_base>>();
+    WTALOGI("点位 '%s' 未匹配到任何部位", point_name.c_str());
+    return "";
+}
+
+void wt_damage_multi_model_recognize::save_frame_for_collection(axdl_image_t *pstFrame, const std::string& point_name)
+{
+    if (!pstFrame || !pstFrame->pVir) return;
+
+    // 构造保存路径: DATA_COLLECT_DIR/camera_id/point_name/timestamp.jpg
+    time_t now = time(nullptr);
+    char time_str[64] = {0};
+    struct tm *t_info = localtime(&now);
+    snprintf(time_str, sizeof(time_str), "%04d%02d%02d_%02d%02d%02d",
+             t_info->tm_year + 1900, t_info->tm_mon + 1, t_info->tm_mday,
+             t_info->tm_hour, t_info->tm_min, t_info->tm_sec);
+
+    char save_dir[512] = {0};
+    snprintf(save_dir, sizeof(save_dir), "%s/%d/%s",
+             m_data_collect_dir.c_str(), camera_id, point_name.c_str());
+
+    // 确保目录存在
+    std::string mkdir_cmd = "mkdir -p " + std::string(save_dir);
+    int rc = system(mkdir_cmd.c_str());
+    (void)rc;
+
+    char save_path[640] = {0};
+    snprintf(save_path, sizeof(save_path), "%s/%s.jpg", save_dir, time_str);
+
+    try {
+        cv::Mat frame_bgr;
+        if (pstFrame->eDtype == axdl_color_space_nv12) {
+            cv::Mat nv12(pstFrame->nHeight * 3 / 2, pstFrame->nWidth, CV_8UC1, pstFrame->pVir);
+            cv::cvtColor(nv12, frame_bgr, cv::COLOR_YUV2BGR_NV12);
+        } else if (pstFrame->eDtype == axdl_color_space_rgb) {
+            cv::Mat rgb(pstFrame->nHeight, pstFrame->nWidth, CV_8UC3, pstFrame->pVir);
+            cv::cvtColor(rgb, frame_bgr, cv::COLOR_RGB2BGR);
+        } else if (pstFrame->eDtype == axdl_color_space_bgr) {
+            frame_bgr = cv::Mat(pstFrame->nHeight, pstFrame->nWidth, CV_8UC3, pstFrame->pVir).clone();
+        } else {
+            return;
+        }
+
+        cv::imwrite(save_path, frame_bgr);
+        WTALOGI("[数据收集] 顶部点位 '%s' 已保存: %s", point_name.c_str(), save_path);
+    } catch (...) {
+        WTALOGI("[数据收集] 保存失败: %s", save_path);
+    }
 }
 
 int wt_damage_multi_model_recognize::inference(axdl_image_t *pstFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results)
 {
-    // Get current point name prefix
-    std::string current_point_name = get_current_point_prefix();
-
-    std::vector<std::shared_ptr<ax_model_base>> models_to_run;
-    std::string model_type;
+    // 获取当前点位名称
+    std::string current_point_name = get_current_point_name();
     int result = 0;
+
     if (current_point_name.empty()) {
-        WTALOGI("Could not determine current point name！");
-    } else {
-        // Find appropriate model type for current point
-        model_type = find_model_type_for_point(current_point_name);
-
-        if (model_type.empty()) {
-            WTALOGI("No suitable model type found for point '%s'", current_point_name.c_str());
-        }
-
-        // 获取所有匹配类型的模型
-        models_to_run = get_models_by_type(model_type);
+        WTALOGI("无法获取当前点位名称");
+        return 0;
     }
 
-    // 如果没有对应类型的模型，则遍历使用所有模型
-    if (models_to_run.empty()) {
-        WTALOGI("未找到类型为 '%s' 的模型，应当遍历使用所有模型", model_type.c_str());
-        models_to_run = m_models;
-    } else {
-        WTALOGI("Running inference for point '%s' with %zu models of type '%s'",
-            current_point_name.c_str(), models_to_run.size(), model_type.c_str());
+    // 从点位名称中匹配部位
+    std::string position = find_position_for_point(current_point_name);
+
+    if (position.empty()) {
+        WTALOGI("点位 '%s' 未匹配到部位，跳过推理", current_point_name.c_str());
+        return 0;
     }
+
+    // 顶部特殊处理：仅做数据收集，不跑推理
+    if (m_top_data_collect_only && position.find("顶部") != std::string::npos) {
+        save_frame_for_collection(pstFrame, current_point_name);
+        results->nObjSize = 0;
+        WTALOGI("顶部点位 '%s' 仅做数据收集", current_point_name.c_str());
+        return 0;
+    }
+
+    // 获取该部位下所有损伤模型
+    auto it = m_position_models.find(position);
+    if (it == m_position_models.end() || it->second.empty()) {
+        WTALOGI("部位 '%s' 无可用模型", position.c_str());
+        return 0;
+    }
+
+    const auto& models_info = it->second;
+    WTALOGI("点位 '%s' -> 部位 '%s'，执行 %zu 个损伤模型",
+            current_point_name.c_str(), position.c_str(), models_info.size());
 
     results->nObjSize = 0;
-    for (auto& model : models_to_run) {
+    for (const auto& model_info : models_info) {
         axdl_results_t temp_results = {};
-        int model_result = model->inference(pstFrame, crop_resize_box, &temp_results);
+        int model_result = model_info.model->inference(pstFrame, crop_resize_box, &temp_results);
         if (model_result != 0) {
-            WTALOGI("Model inference failed, result=%d", model_result);
+            WTALOGI("模型 '%s' 推理失败, ret=%d", model_info.damage_type.c_str(), model_result);
             result = model_result;
             continue;
         }
 
-        // 合并当前模型的推理结果到主results中
+        // 将该模型检出的目标名称设为损伤类型（用于告警类型）
+        for (int i = 0; i < (int)temp_results.nObjSize; i++) {
+            strncpy(temp_results.mObjects[i].objname,
+                    model_info.damage_type.c_str(),
+                    sizeof(temp_results.mObjects[i].objname) - 1);
+            temp_results.mObjects[i].objname[sizeof(temp_results.mObjects[i].objname) - 1] = '\0';
+        }
+
+        // 合并当前模型的推理结果到主 results 中
         int space_left = SAMPLE_MAX_BBOX_COUNT - results->nObjSize;
         int to_copy = std::min((int)temp_results.nObjSize, space_left);
         if (to_copy > 0) {
-            memcpy(&(results->mObjects[results->nObjSize]), &(temp_results.mObjects[0]), to_copy * sizeof(results->mObjects[0]));
+            memcpy(&(results->mObjects[results->nObjSize]),
+                   &(temp_results.mObjects[0]),
+                   to_copy * sizeof(results->mObjects[0]));
             results->nObjSize += to_copy;
         }
 
         if (results->nObjSize >= SAMPLE_MAX_BBOX_COUNT) {
-            WTALOGI("Results buffer full, skipping remaining models");
+            WTALOGI("结果缓冲区已满，跳过剩余模型");
             break;
         }
     }
 
     return result;
-
 }
