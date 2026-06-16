@@ -140,13 +140,15 @@ void ax_model_custom::draw_custom(cv::Mat &image, axdl_results_t *results, float
 
     cv::Point pos_text_pt(static_cast<int>(0.3 * image_width), 20);
     std::string pos_text = "positive max:" + std::to_string(cad.amp_max_positive);
+    int pos_baseline = 0;
+    cv::Size pos_size = cv::getTextSize(pos_text, cv::FONT_HERSHEY_SIMPLEX, 1.0, 1, &pos_baseline);
     cv::putText(image, pos_text, pos_text_pt, cv::FONT_HERSHEY_SIMPLEX, 1.0,
-               cv::Scalar(255, 0, 0, UCHAR_MAX), 2);
+               cv::Scalar(255, 0, 0, UCHAR_MAX), 1);
 
-    cv::Point neg_text_pt(static_cast<int>(0.5 * image_width), 20);
+    cv::Point neg_text_pt(pos_text_pt.x + pos_size.width + 20, 20);
     std::string neg_text = "negative max:" + std::to_string(cad.amp_max_negative);
     cv::putText(image, neg_text, neg_text_pt, cv::FONT_HERSHEY_SIMPLEX, 1.0,
-               cv::Scalar(255, 0, 0, UCHAR_MAX), 2);
+               cv::Scalar(255, 0, 0, UCHAR_MAX), 1);
 
 
     // 添加初始位置坐标 (橙色点)
@@ -188,7 +190,7 @@ void ax_model_custom::draw_custom(cv::Mat &image, axdl_results_t *results, float
 
     // 在车牌号下方显示时间戳
     cv::putText(image, time_stream.str(), cv::Point(10, text_y+20),
-               cv::FONT_HERSHEY_SIMPLEX, fontscale * 2, cv::Scalar(255, 255, 255, 255), thickness * 2);
+               cv::FONT_HERSHEY_SIMPLEX, fontscale, cv::Scalar(255, 255, 255, 255), thickness);
 
     // 绘制遮罩框
     int mask_height = static_cast<int>(cad.occlusion_pixel_height);
@@ -472,12 +474,7 @@ void ax_model_custom::set_channel_init_info(const std::string name, const int id
     load_config(); // 加载配置
 
     if (channel_amplitude_data.occlusion_pixel_height == 0) {
-        // tc通道的occlusion_pixel_heigh默认值置为390; 其它通道的设置为190
-        if (channel_name == "tc") {
-            channel_amplitude_data.occlusion_pixel_height = 390.0f;
-        } else {
-            channel_amplitude_data.occlusion_pixel_height = 190.0f;
-        }
+        channel_amplitude_data.occlusion_pixel_height = 90.0f; // 通道的occlusion_pixel_heigh默认值置为390
     }
 
     // 启动时一次性 FreeType 渲染中文水印（车牌号 + 通道名）

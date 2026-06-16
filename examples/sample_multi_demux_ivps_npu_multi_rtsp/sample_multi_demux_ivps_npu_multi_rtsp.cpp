@@ -142,7 +142,7 @@ void ai_inference_func(pipeline_buffer_t *buff)
 {
     pipeline_t *pipe = (pipeline_t *)buff->p_pipe;
         if (g_sample.osd_target_map[pipe->pipeid]->bRunJoint) {
-            static std::map<int, axdl_results_t> mResults; //TODO: 打算改为全局变量
+            static std::map<int, axdl_results_t> mResults;
             axdl_image_t tSrcFrame = {0};
             switch (buff->d_type)
             {
@@ -837,12 +837,12 @@ int main(int argc, char *argv[])
             std::string tmp_url(rtsp_url);
 
             std::string channel_name; // 通道名称
-            if (first_f) {
-                CameraController::getInstance()->remove_all_cameras();
-                channel_name = "tc"; // 第一个通道名称是tc
-                first_f = false;
+            if (!first_f) {
+                channel_name = "tc"; // 除了第一个通道，其他通道名称都是tc
             } else {
+                CameraController::getInstance()->remove_all_cameras();
                 channel_name = "channel-" + std::to_string(debug_camera_id);
+                first_f = false;
             }
 
             CameraController::getInstance()->addCamera(debug_camera_id, channel_name, tmp_url); //添加相机
@@ -1059,8 +1059,8 @@ int main(int argc, char *argv[])
                 config0.n_ivps_grp = pipe_count * i + 2; // 重复的会创建失败
                 config0.n_ivps_rotate = 0;               // 旋转90度，现在rtsp流是竖着的画面了
                 config0.n_ivps_fps = s_sample_framerate;
-                config0.n_ivps_width = 1920;
-                config0.n_ivps_height = 1080;
+                config0.n_ivps_width = 1280;
+                config0.n_ivps_height = 720;
                 config0.n_osd_rgn = 2;
                 config0.n_fifo_count = 1; // 如果想要拿到数据并输出到回调 就设为1~4
             }
