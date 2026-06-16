@@ -9,6 +9,8 @@
 #include <map>
 #include <string>
 #include <mutex>
+#include <thread>
+#include <future>
 #include "base/detection.hpp"
 #include "../include/ax_model_base.hpp"
 #include "../../utilities/json.hpp"

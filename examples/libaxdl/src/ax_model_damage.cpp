@@ -1163,36 +1163,56 @@ int wt_damage_multi_model_recognize::inference(axdl_image_t *pstFrame, axdl_bbox
     WTALOGI("点位 '%s' -> 部位 '%s'，执行 %zu 个损伤模型",
             current_point_name.c_str(), position.c_str(), models_info.size());
 
-    results->nObjSize = 0;
+    // 并行推理：每个模型在独立线程中执行
+    struct ModelResult {
+        axdl_results_t results;
+        std::string damage_type;
+        int ret;
+    };
+
+    std::vector<std::future<ModelResult>> futures;
+    futures.reserve(models_info.size());
+
     for (const auto& model_info : models_info) {
-        axdl_results_t temp_results = {};
-        int model_result = model_info.model->inference(pstFrame, crop_resize_box, &temp_results);
-        if (model_result != 0) {
-            WTALOGI("模型 '%s' 推理失败, ret=%d", model_info.damage_type.c_str(), model_result);
-            result = model_result;
+        futures.push_back(std::async(std::launch::async,
+            [&model_info, pstFrame, crop_resize_box]() -> ModelResult {
+                ModelResult mr = {};
+                mr.damage_type = model_info.damage_type;
+                mr.ret = model_info.model->inference(pstFrame, crop_resize_box, &mr.results);
+                return mr;
+            }));
+    }
+
+    // 收集所有线程的推理结果并合并
+    results->nObjSize = 0;
+    for (auto& fut : futures) {
+        ModelResult mr = fut.get();
+        if (mr.ret != 0) {
+            WTALOGI("模型 '%s' 推理失败, ret=%d", mr.damage_type.c_str(), mr.ret);
+            result = mr.ret;
             continue;
         }
 
         // 将该模型检出的目标名称设为损伤类型（用于告警类型）
-        for (int i = 0; i < (int)temp_results.nObjSize; i++) {
-            strncpy(temp_results.mObjects[i].objname,
-                    model_info.damage_type.c_str(),
-                    sizeof(temp_results.mObjects[i].objname) - 1);
-            temp_results.mObjects[i].objname[sizeof(temp_results.mObjects[i].objname) - 1] = '\0';
+        for (int i = 0; i < (int)mr.results.nObjSize; i++) {
+            strncpy(mr.results.mObjects[i].objname,
+                    mr.damage_type.c_str(),
+                    sizeof(mr.results.mObjects[i].objname) - 1);
+            mr.results.mObjects[i].objname[sizeof(mr.results.mObjects[i].objname) - 1] = '\0';
         }
 
         // 合并当前模型的推理结果到主 results 中
         int space_left = SAMPLE_MAX_BBOX_COUNT - results->nObjSize;
-        int to_copy = std::min((int)temp_results.nObjSize, space_left);
+        int to_copy = std::min((int)mr.results.nObjSize, space_left);
         if (to_copy > 0) {
             memcpy(&(results->mObjects[results->nObjSize]),
-                   &(temp_results.mObjects[0]),
+                   &(mr.results.mObjects[0]),
                    to_copy * sizeof(results->mObjects[0]));
             results->nObjSize += to_copy;
         }
 
         if (results->nObjSize >= SAMPLE_MAX_BBOX_COUNT) {
-            WTALOGI("结果缓冲区已满，跳过剩余模型");
+            WTALOGI("结果缓冲区已满，跳过剩余模型结果");
             break;
         }
     }
