@@ -171,19 +171,21 @@ void ai_inference_func(pipeline_buffer_t *buff)
 
             if (pipe->m_pcamera && (pipe->m_pcamera->ptz_ip.empty() || pipe->m_pcamera->is_patroling())) {
                 // 使用所有模型对同一帧图像进行推理，并合并结果
+                int max_obj_per_model = SAMPLE_MAX_BBOX_COUNT / g_sample.osd_target_map[pipe->pipeid]->gModels.size();
                 for (auto each_model : g_sample.osd_target_map[pipe->pipeid]->gModels) {
                     axdl_results_t model_result;
                     memset(&model_result, 0, sizeof(axdl_results_t));
 
                     axdl_inference(each_model, &tSrcFrame, &model_result);
 
-                    // 合并模型结果到统一结果中
+                    // 合并模型结果到统一结果中（每个模型最多取[SAMPLE_MAX_BBOX_COUNT/模型总数]个目标）
                     for (int i = 0; i < model_result.nObjSize; i++) {
-                        if (mResults[pipe->pipeid].nObjSize < SAMPLE_MAX_BBOX_COUNT)
-                        {
-                            mResults[pipe->pipeid].mObjects[mResults[pipe->pipeid].nObjSize] = model_result.mObjects[i];
+                        if (mResults[pipe->pipeid].nObjSize < SAMPLE_MAX_BBOX_COUNT && i < max_obj_per_model) {
+                            memcpy(&mResults[pipe->pipeid].mObjects[mResults[pipe->pipeid].nObjSize],
+                                &model_result.mObjects[i], sizeof(axdl_object_t));
+
                             mResults[pipe->pipeid].nObjSize++;
-                        }
+                        } else break;
                     }
                     mResults[pipe->pipeid].niFps = model_result.niFps; // 保存推理FPS
                 }

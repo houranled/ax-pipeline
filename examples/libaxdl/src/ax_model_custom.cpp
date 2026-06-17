@@ -130,12 +130,17 @@ void ax_model_custom::draw_custom(cv::Mat &image, axdl_results_t *results, float
         }
 
         // 使用OpenCV绘制目标点内容
-        cv::Point obj_pt(static_cast<int>(obj.bbox.x * image_width),
-                        static_cast<int>(obj.bbox.y * image_height + 3));
+        cv::Point obj_pt(static_cast<int>(obj.bbox.x * image_width + offset_x),
+                        static_cast<int>(obj.bbox.y * image_height + offset_y + 3));
         std::string obj_text = std::to_string(distance_now);
-        cv::circle(image, obj_pt, 2, cv::Scalar(255, 0, 0, 0), 2);
+        // 绘制检测框
+        cv::Rect rect(obj.bbox.x * image_width + offset_x,
+                      obj.bbox.y * image_height + offset_y,
+                      obj.bbox.w * image_width,
+                      obj.bbox.h * image_height);
+        cv::rectangle(image, rect, cv::Scalar(255, 255, 0, 0), thickness);
         cv::putText(image, obj_text, obj_pt, cv::FONT_HERSHEY_SIMPLEX, fontscale,
-                   cv::Scalar(255, 255, 255, UCHAR_MAX), 2);
+                   cv::Scalar(255, 165, 42, 42), 1);
     }
 
     cv::Point pos_text_pt(static_cast<int>(0.3 * image_width), 20);
@@ -143,12 +148,12 @@ void ax_model_custom::draw_custom(cv::Mat &image, axdl_results_t *results, float
     int pos_baseline = 0;
     cv::Size pos_size = cv::getTextSize(pos_text, cv::FONT_HERSHEY_SIMPLEX, 1.0, 1, &pos_baseline);
     cv::putText(image, pos_text, pos_text_pt, cv::FONT_HERSHEY_SIMPLEX, 1.0,
-               cv::Scalar(255, 0, 0, UCHAR_MAX), 1);
+               cv::Scalar(255, 0, 0, UCHAR_MAX), 2);
 
     cv::Point neg_text_pt(pos_text_pt.x + pos_size.width + 20, 20);
     std::string neg_text = "negative max:" + std::to_string(cad.amp_max_negative);
     cv::putText(image, neg_text, neg_text_pt, cv::FONT_HERSHEY_SIMPLEX, 1.0,
-               cv::Scalar(255, 0, 0, UCHAR_MAX), 1);
+               cv::Scalar(255, 0, 0, UCHAR_MAX), 2);
 
 
     // 添加初始位置坐标 (橙色点)
@@ -190,7 +195,7 @@ void ax_model_custom::draw_custom(cv::Mat &image, axdl_results_t *results, float
 
     // 在车牌号下方显示时间戳
     cv::putText(image, time_stream.str(), cv::Point(10, text_y+20),
-               cv::FONT_HERSHEY_SIMPLEX, fontscale, cv::Scalar(255, 255, 255, 255), thickness);
+               cv::FONT_HERSHEY_SIMPLEX, fontscale, cv::Scalar(255, 0, 0, 0), thickness);
 
     // 绘制遮罩框
     int mask_height = static_cast<int>(cad.occlusion_pixel_height);
