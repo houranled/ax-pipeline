@@ -727,11 +727,12 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
 
     // 触发新增点位告警（只有真正生成告警时才标记损伤）
     if (results->nObjSize > 0) {
-        bool alarm_generated = CameraController::getInstance()->early_warning_process(camera_id, cur_point, cur_light_flag);
+        // 使用当前模型的损伤类型名称（模型文件名，如"裂缝"、"腐蚀"英文）
+        bool alarm_generated = CameraController::getInstance()->early_warning_process(camera_id, cur_point, cur_light_flag, damage_type);
         if (alarm_generated) {
             // 标记当前停留期间检出损伤：pipeline 状态机会在离开点位 3 秒后落盘 MP4
             cam->mark_damage_seen();
-            WTALOGI("[damage] 点位[%d] L%d 已拍照并告警: %s", cur_point, cur_light_flag, saved_path.c_str());
+            WTALOGI("[damage] 点位[%d] L%d 已拍照并告警: %s (损伤类型: %s)", cur_point, cur_light_flag, saved_path.c_str(), damage_type.c_str());
         }
     }
 

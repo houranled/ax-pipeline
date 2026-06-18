@@ -47,6 +47,7 @@ bool AlarmManager::generateAlarm(AlarmType type, const std::string& message, flo
     alarm.point_id = point_id;
     alarm.light_flag = light_flag;
     alarm.type = type;
+    alarm.damage_type = message;  // 使用 message 参数作为损伤类型名称
     alarm.timestamp = time(nullptr);
     alarm.confidence = confidence;
     alarm.picPath = camera->get_pic_path();
