@@ -85,6 +85,9 @@ private:
     // 模型根目录
     std::string m_model_root_dir;
 
+    // 部署时指定的部位名称（对应子目录名）
+    std::string m_position_name;
+
     // 获取当前点位名称
     std::string get_current_point_name();
 

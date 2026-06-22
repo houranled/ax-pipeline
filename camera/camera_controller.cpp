@@ -905,13 +905,13 @@ std::string Camera::generateCustomVideoPath(VideoPathType type= VideoPathType::V
             t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
 
     } else if (type == VideoPathType::DAMAGE_CLIP) {
-        // 损伤片段视频：按 风场/年月日/小时/damage 分目录，文件名含通道、点位、时分秒
+        // 损伤片段视频：按 风场/年月日/小时/damage 分目录，文件名与快照前缀一致（不带开关灯标识）
         base_path = "/wt_tech/data/";
         dirname = base_path + orga_name.c_str() + "/" + std::string(dateStr) + "/" + std::string(dateStr) + "_"
             + std::to_string(t->tm_hour) + "/damage";
 
-        sprintf(filename, "%s/%s_point%d_%02d%02d%02d.mp4", dirname.c_str(),
-            name.c_str(), now_point_id, t->tm_hour, t->tm_min, t->tm_sec);
+        sprintf(filename, "%s/%s_%02d_%s_%s_%d_%02d%02d%02d.mp4", dirname.c_str(),
+            dateStr, t->tm_hour, orga_name.c_str(), name.c_str(), now_point_id, t->tm_hour, t->tm_min, t->tm_sec);
     } else {
         base_path = "/wt_tech/data/";
         dirname = base_path + orga_name.c_str() + "/" + std::string(dateStr) + "/" + std::string(dateStr) + "_"

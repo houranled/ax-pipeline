@@ -1008,39 +1008,33 @@ int wt_damage_multi_model_recognize::init(void *json_obj)
     }
 
 
-    // 扫描 MODEL_ROOT_DIR 下的子目录（每个子目录名即为部位名）
-    DIR *root_dir = opendir(m_model_root_dir.c_str());
-    if (!root_dir) {
-        WTALOGI("无法打开模型根目录: %s", m_model_root_dir.c_str());
+    // 解析部署时指定的部位名称
+    if (jsondata.contains("POSITION")) {
+        m_position_name = jsondata["POSITION"].get<std::string>();
+    } else {
+        WTALOGI("配置中缺少 POSITION（部位名称）");
         return -1;
     }
 
-    struct dirent *entry;
-    while ((entry = readdir(root_dir)) != nullptr) {
-        std::string name = entry->d_name;
-        if (name == "." || name == "..") continue;
-
-        // 检查是否为目录
-        std::string sub_path = m_model_root_dir + "/" + name;
-        struct stat st;
-        if (stat(sub_path.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) continue;
-
-        std::string position_name = name; // 目录名即为部位名
-
-        // 如果 POSITION_KEYWORDS 中没有该部位，则用目录名本身作为关键词
-        if (m_position_keywords.find(position_name) == m_position_keywords.end()) {
-            m_position_keywords[position_name] = {position_name};
-        }
-
-        // 扫描并加载该部位目录下的所有模型
-        int ret = scan_and_load_models(sub_path, position_name);
-        if (ret != 0) {
-            WTALOGI("部位 '%s' 模型加载失败，退出初始化", position_name.c_str());
-            closedir(root_dir);
-            return -1;
-        }
+    // 直接访问指定部位的子目录
+    std::string position_dir = m_model_root_dir + "/" + m_position_name;
+    struct stat st;
+    if (stat(position_dir.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) {
+        WTALOGI("部位目录不存在: %s", position_dir.c_str());
+        return -1;
     }
-    closedir(root_dir);
+
+    // 如果 POSITION_KEYWORDS 中没有该部位，则用部位名本身作为关键词
+    if (m_position_keywords.find(m_position_name) == m_position_keywords.end()) {
+        m_position_keywords[m_position_name] = {m_position_name};
+    }
+
+    // 加载该部位目录下的所有模型
+    int ret = scan_and_load_models(position_dir, m_position_name);
+    if (ret != 0) {
+        WTALOGI("部位 '%s' 模型加载失败", m_position_name.c_str());
+        return -1;
+    }
 
     // 输出加载摘要
     WTALOGI("=== 多模型加载摘要 ===");
@@ -1100,7 +1094,6 @@ int wt_damage_multi_model_recognize::inference(axdl_image_t *pstFrame, axdl_bbox
     int result = 0;
 
     if (current_point_name.empty()) {
-        WTALOGI("无法获取当前点位名称");
         return 0;
     }
 
