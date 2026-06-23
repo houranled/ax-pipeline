@@ -891,7 +891,7 @@ wt_damage_multi_model_recognize::wt_damage_multi_model_recognize()
     WTALOGI("Instance wt_damage_multi_model_recognize object");
 }
 
-int wt_damage_multi_model_recognize::scan_and_load_models(const std::string& position_dir, const std::string& position_name)
+int wt_damage_multi_model_recognize::scan_and_load_models(const std::string& position_dir)
 {
     DIR *dir = opendir(position_dir.c_str());
     if (!dir) {
@@ -961,20 +961,20 @@ int wt_damage_multi_model_recognize::scan_and_load_models(const std::string& pos
         }
         model->set_channel_init_info(channel_name, camera_id);
 
-        // 添加到部位模型列表
+        // 添加到模型列表
         DamageModelInfo info;
-        info.damage_type = damage_type;
+        info.damage_type_name = damage_type;
         info.model = model;
-        m_position_models[position_name].push_back(info);
+        m_damage_models.push_back(info);
         m_models.push_back(model); // 保持父类兼容
 
         loaded_count++;
         WTALOGI("加载模型: 部位='%s', 损伤类型='%s', 路径='%s'",
-                position_name.c_str(), damage_type.c_str(), model_path.c_str());
+                m_position_name.c_str(), damage_type.c_str(), model_path.c_str());
     }
     closedir(dir);
 
-    WTALOGI("部位 '%s' 共加载 %d 个损伤模型", position_name.c_str(), loaded_count);
+    WTALOGI("部位 '%s' 共加载 %d 个损伤模型", m_position_name.c_str(), loaded_count);
     return 0;
 }
 
@@ -990,23 +990,6 @@ int wt_damage_multi_model_recognize::init(void *json_obj)
         WTALOGI("配置中缺少 MODEL_ROOT_DIR");
         return -1;
     }
-
-    // 解析部位关键词映射
-    if (jsondata.contains("POSITION_KEYWORDS")) {
-        auto& kw_json = jsondata["POSITION_KEYWORDS"];
-        for (auto& item : kw_json.items()) {
-            std::string position = item.key();
-            std::vector<std::string> keywords;
-            for (auto& k : item.value()) {
-                keywords.push_back(k.get<std::string>());
-            }
-            m_position_keywords[position] = keywords;
-            WTALOGI("部位关键词: '%s' -> [%zu个关键词]", position.c_str(), keywords.size());
-        }
-    } else {
-        WTALOGI("配置中缺少 POSITION_KEYWORDS，将使用目录名作为关键词");
-    }
-
 
     // 解析部署时指定的部位名称
     if (jsondata.contains("POSITION")) {
@@ -1024,13 +1007,8 @@ int wt_damage_multi_model_recognize::init(void *json_obj)
         return -1;
     }
 
-    // 如果 POSITION_KEYWORDS 中没有该部位，则用部位名本身作为关键词
-    if (m_position_keywords.find(m_position_name) == m_position_keywords.end()) {
-        m_position_keywords[m_position_name] = {m_position_name};
-    }
-
     // 加载该部位目录下的所有模型
-    int ret = scan_and_load_models(position_dir, m_position_name);
+    int ret = scan_and_load_models(position_dir);
     if (ret != 0) {
         WTALOGI("部位 '%s' 模型加载失败", m_position_name.c_str());
         return -1;
@@ -1038,82 +1016,21 @@ int wt_damage_multi_model_recognize::init(void *json_obj)
 
     // 输出加载摘要
     WTALOGI("=== 多模型加载摘要 ===");
-    for (const auto& pair : m_position_models) {
-        WTALOGI("  部位 '%s': %zu 个模型", pair.first.c_str(), pair.second.size());
-        for (const auto& info : pair.second) {
-            WTALOGI("    - 损伤类型: '%s'", info.damage_type.c_str());
-        }
+    WTALOGI("  部位 '%s': %zu 个模型", m_position_name.c_str(), m_damage_models.size());
+    for (const auto& info : m_damage_models) {
+        WTALOGI("    - 损伤类型: '%s'", info.damage_type_name.c_str());
     }
-    WTALOGI("共加载 %zu 个模型", m_models.size());
 
     return 0;
 }
 
-std::string wt_damage_multi_model_recognize::get_current_point_name()
-{
-    // 从摄像机控制器获取当前点位名称
-    CameraController* controller = CameraController::getInstance();
-    auto camera = controller->getCamera(this->camera_id);
-
-    int current_point_id = camera->now_point_id;
-
-    // 通过 ID 查找预置位
-    for (const auto& pos : camera->getPresetPositions()) {
-        if (pos.id == current_point_id) {
-            return pos.name;
-        }
-    }
-
-    return "";
-}
-
-std::string wt_damage_multi_model_recognize::find_position_for_point(const std::string& point_name)
-{
-    // 在点位名称中查找包含的部位关键词（包含匹配，非前缀匹配）
-    for (const auto& pair : m_position_keywords) {
-        const std::string& position = pair.first;
-        const std::vector<std::string>& keywords = pair.second;
-
-        for (const auto& keyword : keywords) {
-            if (point_name.find(keyword) != std::string::npos) {
-                WTALOGI("点位 '%s' 匹配部位 '%s'（关键词: '%s'）",
-                        point_name.c_str(), position.c_str(), keyword.c_str());
-                return position;
-            }
-        }
-    }
-
-    WTALOGI("点位 '%s' 未匹配到任何部位", point_name.c_str());
-    return "";
-}
-
 int wt_damage_multi_model_recognize::inference(axdl_image_t *pstFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results)
 {
-    // 获取当前点位名称
-    std::string current_point_name = get_current_point_name();
     int result = 0;
 
-    if (current_point_name.empty()) {
+    if (m_damage_models.empty()) {
         return 0;
     }
-
-    // 从点位名称中匹配部位
-    std::string position = find_position_for_point(current_point_name);
-
-    if (position.empty()) {
-        WTALOGI("点位 '%s' 未匹配到部位，跳过推理", current_point_name.c_str());
-        return 0;
-    }
-
-    // 获取该部位下所有损伤模型
-    auto it = m_position_models.find(position);
-    if (it == m_position_models.end() || it->second.empty()) {
-        WTALOGI("部位 '%s' 无可用模型", position.c_str());
-        return 0;
-    }
-
-    const auto& models_info = it->second;
-    WTALOGI("点位 '%s' -> 部位 '%s'，执行 %zu 个损伤模型",current_point_name.c_str(), position.c_str(), models_info.size());
 
     // 并行推理：每个模型在独立线程中执行
     struct ModelResult {
@@ -1123,13 +1040,13 @@ int wt_damage_multi_model_recognize::inference(axdl_image_t *pstFrame, axdl_bbox
     };
 
     std::vector<std::future<ModelResult>> futures;
-    futures.reserve(models_info.size());
+    futures.reserve(m_damage_models.size());
 
-    for (const auto& model_info : models_info) {
+    for (const auto& model_info : m_damage_models) {
         futures.push_back(std::async(std::launch::async,
             [&model_info, pstFrame, crop_resize_box]() -> ModelResult {
                 ModelResult mr = {};
-                mr.damage_type = model_info.damage_type;
+                mr.damage_type = model_info.damage_type_name;
                 mr.ret = model_info.model->inference(pstFrame, crop_resize_box, &mr.results);
                 return mr;
             }));

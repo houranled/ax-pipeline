@@ -165,7 +165,6 @@ void ai_inference_func(pipeline_buffer_t *buff)
             tSrcFrame.nSize = buff->n_size;
 
             // 初始化合并后的结果
-            //memset(&mResults[pipe->pipeid], 0, sizeof(axdl_results_t));
             mResults[pipe->pipeid].nObjSize = 0;
 
             if (pipe->m_pcamera && (pipe->m_pcamera->ptz_ip.empty() || pipe->m_pcamera->is_patroling())) {
@@ -177,7 +176,7 @@ void ai_inference_func(pipeline_buffer_t *buff)
 
                     axdl_inference(each_model, &tSrcFrame, &model_result);
 
-                    // 合并模型结果到统一结果中（每个模型最多取[SAMPLE_MAX_BBOX_COUNT/模型总数]个目标）
+                    // 合并高层多模型结果到统一结果中（每个模型最多取[SAMPLE_MAX_BBOX_COUNT/模型总数]个目标）
                     for (int i = 0; i < model_result.nObjSize; i++) {
                         if (mResults[pipe->pipeid].nObjSize < SAMPLE_MAX_BBOX_COUNT && i < max_obj_per_model) {
                             memcpy(&mResults[pipe->pipeid].mObjects[mResults[pipe->pipeid].nObjSize],
