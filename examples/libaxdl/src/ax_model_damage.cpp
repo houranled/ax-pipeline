@@ -1,4 +1,5 @@
 #include "ax_model_damage.hpp"
+#include "ax_freetype_overlay.hpp"
 #include <cmath>
 #include <opencv2/opencv.hpp>
 #include <numeric>  // 添加此行以使用 std::accumulate
@@ -602,18 +603,36 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
     int text_thickness = 2;
     int baseline = 0;
 
-    // 绘制时间文字（透明底色）
+    // 画面左上角绘制时间文字（透明底色）
     cv::putText(image, time_str, cv::Point(text_x, text_y), font_face, font_scale, cv::Scalar(139, 0, 0, 255), text_thickness);
 
-    // 在画面左下角绘制通道名称/摄像机名称
-    text_x = 10;
-    text_y = image.rows - 30; // 距离底部30像素，避免与点位信息重叠
-    cv::putText(image, channel_name, cv::Point(text_x, text_y), font_face, font_scale, cv::Scalar(139, 0, 0, 255), text_thickness);
+    // 在画面左下角绘制通道名称/摄像机名称（使用预渲染的 FreeType 位图）
+    if (!m_channel_name_bmp.empty()) {
+        text_x = 10;
+        text_y = image.rows - 30;
+        int w = std::min(m_channel_name_bmp.cols, image.cols - text_x);
+        int h = std::min(m_channel_name_bmp.rows, text_y);
+        if (w > 0 && h > 0) {
+            cv::Mat roi = image(cv::Rect(text_x, text_y - h, w, h));
+            // alpha 合成（image 是 BGRA）
+            for (int y = 0; y < h; ++y) {
+                const cv::Vec4b* src = m_channel_name_bmp.ptr<cv::Vec4b>(y);
+                cv::Vec4b* dst = roi.ptr<cv::Vec4b>(y);
+                for (int x = 0; x < w; ++x) {
+                    uint8_t a = src[x][3];
+                    if (!a) continue;
+                    float fa = a / 255.f;
+                    for (int c = 0; c < 3; ++c)
+                        dst[x][c] = cv::saturate_cast<uint8_t>(src[x][c] * fa + dst[x][c] * (1 - fa));
+                    dst[x][3] = std::max(dst[x][3], a);
+                }
+            }
+        }
+    }
 
-    if (!cam || !cam->is_patroling()) return; // 非巡逻状态不绘制以下内容
-    if (cur_point <= 0) return; // 回位中不显示点位信息
+    if (!cam || !cam->is_patroling() || cur_point <= 0) return; // 非巡逻状态或回位中不绘制以下内容
 
-    // 绘制点位文字背景及文字
+    // 画面正下方绘制点位文字背景及文字
     cv::Size point_size = cv::getTextSize(point_str, font_face, font_scale, text_thickness, &baseline);
     // 计算画面下方的居中位置
     int image_width = image.cols;
@@ -885,6 +904,26 @@ int ax_model_damage::sub_init(void *json_obj)
 
     WTALOGI("Damage type: '%s'", damage_type.c_str());
     return 0;
+}
+
+void ax_model_damage::set_channel_init_info(const std::string name, const int id)
+{
+    ax_model_base::set_channel_init_info(name, id);
+
+    // 预渲染通道名称（使用 FreeType 支持中文）
+    auto& ft = FreeTypeOverlay::instance();
+    if (!ft.ready()) {
+        ft.init("/wt_tech/conf/simsun.ttc", 20);
+    }
+    if (ft.ready() && !channel_name.empty()) {
+        m_channel_name_bmp = ft.renderTextRGBA(channel_name, cv::Scalar(255, 0, 0, 255), 2);
+        if (m_channel_name_bmp.empty()) {
+            WTALOGI("[FreeType] render channel_name failed: '%s'", channel_name.c_str());
+        } else {
+            WTALOGI("[FreeType] channel_name ready: '%s' size=%dx%d",
+                    channel_name.c_str(), m_channel_name_bmp.cols, m_channel_name_bmp.rows);
+        }
+    }
 }
 
 wt_damage_multi_model_recognize::wt_damage_multi_model_recognize()

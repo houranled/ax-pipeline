@@ -36,6 +36,9 @@ public:
     // Override sub_init to extract damage type from filename (called after base init)
     int sub_init(void *json_obj) override;
 
+    // 设置通道信息后预渲染中文水印
+    void set_channel_init_info(const std::string name, const int id) override;
+
     // Get damage type (损伤类型，即模型文件名去后缀)
     std::string get_damage_type() const { return damage_type; }
 
@@ -52,6 +55,9 @@ private:
     // 缓存原图用于快照合成（在 post_process 中更新）
     cv::Mat m_cached_frame_bgr;
     std::mutex m_frame_mutex;
+
+    // 缓存通道名称位图（FreeType 预渲染）
+    cv::Mat m_channel_name_bmp;
 
 };
 REGISTER(MT_DAMAGE_MODEL, ax_model_damage)
