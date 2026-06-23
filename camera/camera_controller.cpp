@@ -1151,10 +1151,18 @@ void Camera::update_posture_state(int x, int y)
         WTALOGI("摄像机[%d] read position failed: %s", id, modbus_strerror(errno));
         connect_modbus(); // 重连一次
     } else {
-        if (x >= regs[1]-3 && x <= regs[1]+3 && y >= regs[0]-3 && y <= regs[0]+3) {
+        // 环形距离比较（处理 0°/360° 边界情况，如 -180° 与 179°）
+        int full_circle = 36000; // 360° * 100
+        int dx = std::abs((int)regs[1] - x);
+        if (dx > full_circle / 2) dx = full_circle - dx;
+        int dy = std::abs((int)regs[0] - y);
+        if (dy > full_circle / 2) dy = full_circle - dy;
+
+        if (dx <= 150 && dy <= 150) { // 容差 1.5°
             posture_completed = true;
-        }
-        else {
+        } else {
+            WTALOGI("摄像机[%d] 未到位: 期望(%d,%d) 实际(%d,%d) 环形差(dx=%d,dy=%d)",
+                    id, x, y, (int)regs[1], (int)regs[0], dx, dy);
             posture_completed = false;
         }
     }
