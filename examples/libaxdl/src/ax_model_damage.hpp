@@ -68,6 +68,8 @@ public:
 
     void *GetRunnerHandle() override {return NULL;}
 
+    void draw_custom(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y) override;
+
 private:
     // 单个损伤模型信息
     struct DamageModelInfo {

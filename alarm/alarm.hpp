@@ -27,8 +27,8 @@ struct Alarm {
     std::string channel_name;       // 摄像头名称
     int point_id;           // 告警点id
     int light_flag;         // 灯光状态：0=开灯(L0)，1=关灯(L1)，-1=diff对比
-    AlarmType type;         // 告警类型
-    std::string damage_type;// 损伤类型名称（= 模型文件名，如"裂缝"、"腐蚀"），用于告警分类
+    AlarmType damage_type;         // 告警类型
+    std::string type;// 损伤类型名称（= 模型文件名，如"裂缝"、"腐蚀"），用于告警分类
     std::string message;    // 告警消息
     time_t timestamp;       // 时间戳
     float confidence;       // 置信度

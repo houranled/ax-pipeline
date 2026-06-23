@@ -498,9 +498,11 @@ int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resi
 
             // Set object name using OBB class names
             if (obj.label < (int)CLASS_NAMES.size()) {
-                strcpy(results->mObjects[i].objname, CLASS_NAMES[obj.label].c_str());
+                strncpy(results->mObjects[i].objname, CLASS_NAMES[obj.label].c_str(), sizeof(results->mObjects[i].objname) - 1);
+                results->mObjects[i].objname[sizeof(results->mObjects[i].objname) - 1] = '\0';
             } else {
-                strcpy(results->mObjects[i].objname, "unknown");
+                strncpy(results->mObjects[i].objname, "unknown", sizeof(results->mObjects[i].objname) - 1);
+                results->mObjects[i].objname[sizeof(results->mObjects[i].objname) - 1] = '\0';
             }
         }
 
@@ -557,9 +559,11 @@ int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resi
 
             // Set object name using OBB class names
             if (obj.label < (int)CLASS_NAMES.size()) {
-                strcpy(results->mObjects[i].objname, CLASS_NAMES[obj.label].c_str());
+                strncpy(results->mObjects[i].objname, CLASS_NAMES[obj.label].c_str(), sizeof(results->mObjects[i].objname) - 1);
+                results->mObjects[i].objname[sizeof(results->mObjects[i].objname) - 1] = '\0';
             } else {
-                strcpy(results->mObjects[i].objname, "unknown");
+                strncpy(results->mObjects[i].objname, "unknown", sizeof(results->mObjects[i].objname) - 1);
+                results->mObjects[i].objname[sizeof(results->mObjects[i].objname) - 1] = '\0';
             }
         }
 
@@ -598,10 +602,7 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
     int text_thickness = 2;
     int baseline = 0;
 
-    // 绘制时间文字背景及文字（RGBA 格式需要设置 Alpha=255 才能在混合时显示）
-    cv::Size time_size = cv::getTextSize(time_str, font_face, font_scale, text_thickness, &baseline);
-    cv::rectangle(image, cv::Point(text_x, text_y - time_size.height - baseline),
-                  cv::Point(text_x + time_size.width, text_y + baseline), cv::Scalar(255, 255, 255, 255), -1);
+    // 绘制时间文字（透明底色）
     cv::putText(image, time_str, cv::Point(text_x, text_y), font_face, font_scale, cv::Scalar(139, 0, 0, 255), text_thickness);
 
     // 在画面左下角绘制通道名称/摄像机名称
@@ -627,7 +628,7 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
     int point_color_val = is_moving ? static_cast<int>(139 * breath_factor) : 139;
     cv::Scalar point_color = cv::Scalar(point_color_val, 0, 0);
 
-    cv::putText(image, point_str, cv::Point(text_x, text_y + baseline), font_face, font_scale*2, cv::Scalar(point_color[0], point_color[1], point_color[2], 255), text_thickness);
+    cv::putText(image, point_str, cv::Point(text_x, text_y + baseline), font_face, font_scale, cv::Scalar(point_color[0], point_color[1], point_color[2], 255), text_thickness);
 
 
     // 每个点位触发两次拍照（有灯照+无灯照）：
@@ -1039,7 +1040,7 @@ int wt_damage_multi_model_recognize::inference(axdl_image_t *pstFrame, axdl_bbox
         int ret;
     };
 
-    std::vector<std::future<ModelResult>> futures;
+    std::vector<std::future<ModelResult>> futures; //
     futures.reserve(m_damage_models.size());
 
     for (const auto& model_info : m_damage_models) {
@@ -1088,3 +1089,10 @@ int wt_damage_multi_model_recognize::inference(axdl_image_t *pstFrame, axdl_bbox
 
     return result;
 }
+
+void wt_damage_multi_model_recognize::draw_custom(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y)
+{
+    this->m_damage_models.begin()->model->draw_results(image, results, fontscale, thickness, offset_x, offset_y);
+}
+
+
