@@ -510,8 +510,8 @@ void ax_model_custom::build_static_label()
         return;
     }
 
-    // 白色文字，透明背景
-    m_static_label_bmp = ft.renderTextRGBA(text, cv::Scalar(255, 255, 255, 255), 2);
+    // FreeType 渲染中文水印 RGBA
+    m_static_label_bmp = ft.renderTextRGBA(text, cv::Scalar(255, 0, 0, 255), 2);
     if (m_static_label_bmp.empty()) {
         WTALOGI("[FreeType] renderTextRGBA empty, text='%s'", text.c_str());
     } else {

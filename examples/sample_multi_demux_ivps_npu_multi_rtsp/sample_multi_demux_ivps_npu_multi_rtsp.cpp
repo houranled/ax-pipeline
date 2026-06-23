@@ -22,8 +22,6 @@
 #include "../libaxdl/include/ax_osd_helper.hpp"
 #include "../common/common_func.h"
 #include "common_pipeline.h"
-#include "git_version.h"
-
 #include "../utilities/sample_log.h"
 
 #include "../common/video_demux.hpp"
@@ -43,6 +41,7 @@
 #include "../../../camera/camera_controller.hpp"
 #include <list>
 #include <cstdint>
+#include "git_version.h"
 
 #define pipe_count 2
 
