@@ -1229,7 +1229,7 @@ int Camera::set_ptz(int horizontal, int vertical, int brightness)
 
     // 准备要写入的寄存器值
     uint16_t regs[2];
-    regs[0] = static_cast<uint16_t>(vertical);   // 垂直角度
+    regs[0] = static_cast<uint16_t>(vertical == 9000 ? 8999 : vertical);   // 垂直角度  TODO临时bug修复
     regs[1] = static_cast<uint16_t>(horizontal); // 水平角度
 
     int rc = modbus_write_registers(modbus_ctx, MODBUSPTZ, 2, regs); // 全部写入寄存器
