@@ -9,6 +9,7 @@
 #include <string>
 #include <mutex>
 #include <atomic>
+#include <condition_variable>
 #include <ctime>
 #include <fstream>
 #include <sys/stat.h>
@@ -132,6 +133,15 @@ public:
     int get_id() const;
     bool is_patroling() const; // 获取是否在巡逻中
     void finish_patrolling(); // 告知巡逻结束
+    // 请求中断当前巡检/标定循环：循环会在最近的可打断点退出
+    void request_stop_patrol() {
+        {
+            std::lock_guard<std::mutex> lk(stop_mtx);
+            stop_requested.store(true);
+        }
+        stop_cv.notify_all(); // 立刻唤醒所有正在 interruptible_sleep_ms 中的等待
+    }
+    bool is_stop_requested() const { return stop_requested.load(); }
     int add_preset_position(PresetPosition pos); // 添加单个点位到点位集合中
 
     bool start_record_video(); // 录制视频
@@ -203,6 +213,9 @@ private:
 
     bool running;
     bool patrolling = false;  // 是否在巡逻中
+    std::atomic<bool> stop_requested{false}; // 收到停止巡检指令
+    std::mutex              stop_mtx;        // 配合 stop_cv 使用
+    std::condition_variable stop_cv;         // 用于立刻唤醒巡检中各处 sleep
 
     std::vector<PresetPosition> preset_positions; // 点位信息集
 
@@ -213,6 +226,8 @@ private:
     modbus_t *modbus_ctx = nullptr;
 
     int patrol_with_calibration_loop(bool is_calibrate);  // 摄像机巡检(可伴随标定)
+    // 可被 stop_requested 打断的等待；返回 true 表示等满 ms，false 表示被打断
+    bool interruptible_sleep_ms(int ms);
     void update_posture_state(int x, int y); // 判断是否到达指定位置
     void setPipe(pipeline_t * pipe); // 绑定pipeline
     bool connect_modbus(); // 重连modbus

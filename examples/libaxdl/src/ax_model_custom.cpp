@@ -15,6 +15,16 @@
 // 初始化静态成员
 std::string ax_model_custom::car_no = "";
 
+namespace {
+// 浮点数按指定小数位格式化（避免 std::to_string 强制 6 位小数）
+static inline std::string fmt_float(float v, int n = 3)
+{
+    std::ostringstream os;
+    os << std::fixed << std::setprecision(n) << v;
+    return os.str();
+}
+}
+
 int ax_model_custom::preprocess(axdl_image_t *srcFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results)
 {
     auto ret = this->ax_model_single_base_t::preprocess(srcFrame, crop_resize_box, results); // 保留原有逻辑
@@ -132,7 +142,7 @@ void ax_model_custom::draw_custom(cv::Mat &image, axdl_results_t *results, float
         // 使用OpenCV绘制目标点内容
         cv::Point obj_pt(static_cast<int>(obj.bbox.x * image_width + offset_x),
                         static_cast<int>(obj.bbox.y * image_height + offset_y + 3));
-        std::string obj_text = std::to_string(distance_now);
+        std::string obj_text = fmt_float(distance_now, 3);
         // 绘制检测框
         cv::Rect rect(obj.bbox.x * image_width + offset_x,
                       obj.bbox.y * image_height + offset_y,
@@ -144,14 +154,14 @@ void ax_model_custom::draw_custom(cv::Mat &image, axdl_results_t *results, float
     }
 
     cv::Point pos_text_pt(static_cast<int>(0.3 * image_width), 20);
-    std::string pos_text = "positive max:" + std::to_string(cad.amp_max_positive);
+    std::string pos_text = "positive max:" + fmt_float(cad.amp_max_positive, 3);
     int pos_baseline = 0;
     cv::Size pos_size = cv::getTextSize(pos_text, cv::FONT_HERSHEY_SIMPLEX, 1.0, 1, &pos_baseline);
     cv::putText(image, pos_text, pos_text_pt, cv::FONT_HERSHEY_SIMPLEX, 1.0,
                cv::Scalar(255, 0, 0, UCHAR_MAX), 2);
 
     cv::Point neg_text_pt(pos_text_pt.x + pos_size.width + 20, 20);
-    std::string neg_text = "negative max:" + std::to_string(cad.amp_max_negative);
+    std::string neg_text = "negative max:" + fmt_float(cad.amp_max_negative, 3);
     cv::putText(image, neg_text, neg_text_pt, cv::FONT_HERSHEY_SIMPLEX, 1.0,
                cv::Scalar(255, 0, 0, UCHAR_MAX), 2);
 
@@ -338,7 +348,7 @@ void ax_model_custom::process_texts(axdl_results_t *results, int &chn, int d, fl
                 * tanAngle /*tan仰角*/;
     }
 
-    cad.amplitude_now = std::round(cad.amplitude_now * 100000) / 100000; // 保留小数点后5位并加上初始距离形成绝对距离
+    cad.amplitude_now = std::round(cad.amplitude_now * 1000) / 1000; // 保留小数点后3位并加上初始距离形成绝对距离
     auto distance_now = cad.amplitude_now + cad.Y; // 距离 = 振幅 + 初始距离
 
     if (cad.amplitude_now > 0 && cad.amplitude_now > cad.amp_max_positive) {
@@ -368,14 +378,14 @@ void ax_model_custom::process_texts(axdl_results_t *results, int &chn, int d, fl
     }
 
     float actual_fontscale = 1;
-    m_drawers[chn].add_text(std::string(obj.objname) + ":" + std::to_string(distance_now),
+    m_drawers[chn].add_text(std::string(obj.objname) + ":" + fmt_float(distance_now, 3),
         {obj.bbox.x, obj.bbox.y},
         {UCHAR_MAX, 0, 0, 0}, fontscale, 2);
 
-    m_drawers[chn].add_text(std::string("positive max") + ":" + std::to_string(cad.amp_max_positive),
+    m_drawers[chn].add_text(std::string("positive max") + ":" + fmt_float(cad.amp_max_positive, 3),
         {0.3, 0},
         {UCHAR_MAX, 0, 0, 0}, actual_fontscale, 2);
-    m_drawers[chn].add_text(std::string("negative max") + ":" + std::to_string(cad.amp_max_negative),
+    m_drawers[chn].add_text(std::string("negative max") + ":" + fmt_float(cad.amp_max_negative, 3),
         {0.5, 0},
         {UCHAR_MAX, 0, 0, 0}, actual_fontscale, 2);
 }

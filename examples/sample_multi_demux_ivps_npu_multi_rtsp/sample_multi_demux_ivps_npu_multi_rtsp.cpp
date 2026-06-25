@@ -211,21 +211,21 @@ void h265_save_func(pipeline_buffer_t *buff)
     size_t one_frame_size = buff->n_size;
     void *one_frame_data = buff->p_vir;
 
-    // ===== 损伤片段：与巡检主录像并行的状态机 =====
-    // 不论 IsRecordVideo 是否为真，都维护 3 秒 H.265 滚动预录缓冲与状态机
-    bool need_damage_record = pipe->IsRecordVideo || pipe->damage_state != DC_IDLE;
-    if (need_damage_record && one_frame_data != NULL && one_frame_size > 0) {
+    // ===== 3 秒滚动预录缓冲（常驻维护） =====
+    // 不论 IsRecordVideo / damage_state 是否激活，都维护预录缓冲，
+    // 以便"人员检测录像"和"损伤片段录像"都能从更早的 I 帧切入，包含触发前 3 秒画面。
+    if (one_frame_data != NULL && one_frame_size > 0) {
         bool is_key = is_hevc_keyframe((const uint8_t*)one_frame_data, one_frame_size);
 
         pthread_mutex_lock(&pipe->damage_mutex);
-        // 始终维护预录缓冲（首次进入时按 fps 计算 max_frames）
+        // 首次进入时按 fps 计算 max_frames（3 秒）
         if (pipe->damage_pre_max_frames == 0) {
             int fps = pipe->m_ivps_attr.n_ivps_fps > 0 ? pipe->m_ivps_attr.n_ivps_fps : 25;
             pipe->damage_pre_max_frames = (size_t)(fps * 3);
         }
         damage_push_pre_buf(pipe, (const uint8_t*)one_frame_data, one_frame_size, is_key);
 
-        // 状态机：STAYING / POST 期间累积到 damage_clip_frames
+        // 损伤片段状态机：STAYING / POST 期间累积到 damage_clip_frames
         if (pipe->damage_state == DC_STAYING || pipe->damage_state == DC_POST) {
             damage_append_clip_locked(pipe, (const uint8_t*)one_frame_data, one_frame_size);
 
@@ -247,10 +247,28 @@ void h265_save_func(pipeline_buffer_t *buff)
 
     // 录制期间：只缓存到内存，不写入 ffmpeg
     if (pipe->IsRecordVideo) {
-        // 首次初始化：设置内存限制并准备录制
+        bool just_started = false;
+        // 首次初始化：设置内存限制，并把 3 秒前置缓冲拼到录像开头
         if (pipe->frame_list.empty() && pipe->max_memory_limit == 0) {
             pipe->max_memory_limit = 100 * 1024 * 1024;  // 默认100MB限制
-            WTALOGI("开始录制，内存缓存限制: %zu MB", pipe->max_memory_limit / (1024*1024));
+            just_started = true;
+
+            // 将常驻维护的 damage_pre_buf 作为录像开头（含本帧，已保证首帧为 I 帧）
+            pthread_mutex_lock(&pipe->damage_mutex);
+            pthread_mutex_lock(&pipe->buffer_mutex);
+            size_t preroll_size = 0;
+            for (size_t i = 0; i < pipe->damage_pre_buf.size(); ++i) {
+                preroll_size += pipe->damage_pre_buf[i].size();
+                pipe->frame_list.push_back(pipe->damage_pre_buf[i]); // 拷贝
+            }
+            pipe->total_cached_size += preroll_size;
+            size_t preroll_frames = pipe->damage_pre_buf.size();
+            pthread_mutex_unlock(&pipe->buffer_mutex);
+            pthread_mutex_unlock(&pipe->damage_mutex);
+
+            WTALOGI("开始录制，内存缓存限制: %zu MB，已注入前置缓冲 %zu 帧(%.2f MB)",
+                    pipe->max_memory_limit / (1024*1024),
+                    preroll_frames, preroll_size / (1024.0*1024.0));
         }
 
         // 加锁保护 frame_list
@@ -259,20 +277,23 @@ void h265_save_func(pipeline_buffer_t *buff)
             return;
         }
 
-        // 检查内存限制
-        if (pipe->total_cached_size + one_frame_size > pipe->max_memory_limit) {
-            WTALOGI("内存缓存将达到上限(%zu/%zu)，丢弃旧帧!!", pipe->total_cached_size, pipe->max_memory_limit);
-            // 移除最早的帧直到有足够空间
-            while (!pipe->frame_list.empty() && pipe->total_cached_size + one_frame_size > pipe->max_memory_limit) {
-                pipe->total_cached_size -= pipe->frame_list.front().size();
-                pipe->frame_list.erase(pipe->frame_list.begin());
+        // just_started 时本帧已通过 pre_buf 注入到 frame_list 末尾，不再重复 push
+        if (!just_started) {
+            // 检查内存限制
+            if (pipe->total_cached_size + one_frame_size > pipe->max_memory_limit) {
+                WTALOGI("内存缓存将达到上限(%zu/%zu)，丢弃旧帧!!", pipe->total_cached_size, pipe->max_memory_limit);
+                // 移除最早的帧直到有足够空间
+                while (!pipe->frame_list.empty() && pipe->total_cached_size + one_frame_size > pipe->max_memory_limit) {
+                    pipe->total_cached_size -= pipe->frame_list.front().size();
+                    pipe->frame_list.erase(pipe->frame_list.begin());
+                }
             }
-        }
 
-        // 将帧数据复制到 vector 并添加到列表
-        std::vector<uint8_t> frame_vec((uint8_t*)one_frame_data, (uint8_t*)one_frame_data + one_frame_size);
-        pipe->frame_list.push_back(std::move(frame_vec));
-        pipe->total_cached_size += one_frame_size;
+            // 将帧数据复制到 vector 并添加到列表
+            std::vector<uint8_t> frame_vec((uint8_t*)one_frame_data, (uint8_t*)one_frame_data + one_frame_size);
+            pipe->frame_list.push_back(std::move(frame_vec));
+            pipe->total_cached_size += one_frame_size;
+        }
 
         size_t cached_frames = pipe->frame_list.size();
         pthread_mutex_unlock(&pipe->buffer_mutex);
@@ -776,9 +797,7 @@ void _demux_frame_callback(const void *buff, int len, void *reserve)
 // 允许外部调用
 extern "C" AX_VOID __sigExit(int iSigNo)
 {
-    // ALOGN("Catch signal %d!\n", iSigNo);
     gLoopExit = 1;
-    sleep(1);
     return;
 }
 
