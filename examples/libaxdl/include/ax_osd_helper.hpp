@@ -15,6 +15,8 @@
 
 #include "opencv2/opencv.hpp"
 
+#include "git_version.h" // Git 版本信息
+
 class ax_osd_helper
 {
 private:
@@ -57,6 +59,17 @@ private:
                         memset(img_overlay.data, 0, img_overlay.width * img_overlay.height * img_overlay.channel);
 
                         axdl_draw_results(gModels, &img_overlay, &mResults, 0.6, 1.0, 0, 0);
+
+                        // 在右下角绘制版本信息
+#ifdef GIT_COMMIT_HASH
+                        cv::Mat version_canvas(img_overlay.height, img_overlay.width, CV_8UC4, img_overlay.data);
+                        std::string version_text = std::string(GIT_COMMIT_HASH).substr(0, 4);
+                        int baseline = 0;
+                        cv::Size ver_size = cv::getTextSize(version_text, cv::FONT_HERSHEY_SIMPLEX, 0.3, 1, &baseline);
+                        cv::Point ver_pt(img_overlay.width - ver_size.width - 5, img_overlay.height - 5);
+                        cv::putText(version_canvas, version_text, ver_pt, cv::FONT_HERSHEY_SIMPLEX, 0.3,
+                                   cv::Scalar(255, 255, 255, 180), 1);
+#endif
 
                         tDisp.nNum = 1;
                         tDisp.tChnAttr.nAlpha = 1024;
@@ -226,6 +239,17 @@ private:
                         memset(img_overlay.data, 0, img_overlay.width * img_overlay.height * img_overlay.channel);
 
                         axdl_draw_results(gModels, &img_overlay, &mResults, 0.6, 1.0, 0, 0);
+
+                        // 在右下角绘制版本信息
+#ifdef GIT_COMMIT_HASH
+                        cv::Mat version_canvas(img_overlay.height, img_overlay.width, CV_8UC4, img_overlay.data);
+                        std::string version_text = std::string(GIT_COMMIT_HASH).substr(0, 4);
+                        int baseline = 0;
+                        cv::Size ver_size = cv::getTextSize(version_text, cv::FONT_HERSHEY_SIMPLEX, 0.3, 1, &baseline);
+                        cv::Point ver_pt(img_overlay.width - ver_size.width - 5, img_overlay.height - 5);
+                        cv::putText(version_canvas, version_text, ver_pt, cv::FONT_HERSHEY_SIMPLEX, 0.3,
+                                   cv::Scalar(255, 255, 255, 180), 1);
+#endif
 
                         tDisp.nNum = 1;
                         tDisp.tChnAttr.nAlpha = 255;

@@ -1209,13 +1209,10 @@ void Camera::update_posture_state(int x, int y)
         int dy = std::abs((int)regs[0] - y);
         if (dy > full_circle / 2) dy = full_circle - dy;
 
-        if (dx <= 150 && dy <= 150) { // 容差 1.5°
+        if (dx <= 150 && dy <= 150)  // 容差 1.5°
             posture_completed = true;
-        } else {
-            WTALOGI("摄像机[%d] 未到位: 期望(%d,%d) 实际(%d,%d) 环形差(dx=%d,dy=%d)",
-                    id, x, y, (int)regs[1], (int)regs[0], dx, dy);
+        else
             posture_completed = false;
-        }
     }
 
     return ;
