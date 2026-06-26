@@ -1152,6 +1152,9 @@ END:
     if (!is_calibrate) {
         stop_record_video();
     }
+
+    finish_patrolling(); // 巡逻结束
+
     // 巡检结束后批量做点位前后对比（同光照↔同光照），
     // 命中差异即生成告警 + 标注对比图，避免占用 OSD/录像热路径
     // 标定模式(is_calibrate=true)时更新基线，巡检模式时不更新
@@ -1163,7 +1166,6 @@ END:
         drain_diff_queue(); // 仍然清空队列，避免下轮残留
     }
 
-    finish_patrolling(); // 巡逻结束
     return res;
 }
 
