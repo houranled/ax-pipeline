@@ -51,7 +51,7 @@ private:
 
         float occlusion_pixel_height = 0; //画面遮挡部分的高度差
         float f = 0.028;   //焦距 单位m  焦距28mm
-        float size_per_pixel = 0.0000001f; //摄像传感器像素大小 单位 m/像素
+        float size_per_pixel = 0.00000015f; //摄像传感器像素物理尺寸 单位 m/像素
 
         std::vector<float> amplitude_datas;
         std::chrono::steady_clock::time_point last_save_time;
