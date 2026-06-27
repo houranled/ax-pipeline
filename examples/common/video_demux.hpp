@@ -361,8 +361,6 @@ private:
     // RTSP 重连监控线程：检测断线并自动重连
     static void _rtsp_monitor_thread(VideoDemux *demux)
     {
-        ALOGI("rtsp monitor thread started: %s", demux->url.c_str());
-
         time_t last_frame_time = time(nullptr);
         const int timeout_sec = 10;  // 10秒无帧视为断线
 
@@ -380,8 +378,6 @@ private:
                 // 检查是否超时
                 if (time(nullptr) - last_frame_time > timeout_sec)
                 {
-                    ALOGW("rtsp timeout, reconnecting: %s", demux->url.c_str());
-
                     // 关闭旧连接
                     if (demux->rtspClient)
                     {
@@ -395,15 +391,14 @@ private:
                         {
                             if (demux->rtspClient->playURL(_rtsp_frame_callback, demux, NULL, NULL) == 0)
                             {
-                                ALOGI("rtsp reconnected: %s", demux->url.c_str());
+                                WTALOGI("rtsp reconnected: %s", demux->url.c_str());
                                 last_frame_time = time(nullptr);
                                 demux->rtsp_connected = true;
                                 break;
                             }
                             demux->rtspClient->closeURL();
                         }
-                        ALOGW("rtsp reconnect failed, retry after %ds: %s",
-                              demux->reconnect_interval, demux->url.c_str());
+
                         for (int i = 0; i < demux->reconnect_interval && !demux->gLoopExit; i++)
                         {
                             std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -412,7 +407,7 @@ private:
                 }
             }
         }
-        ALOGI("rtsp monitor thread stopped: %s", demux->url.c_str());
+        WTALOGI("rtsp monitor thread stopped: %s", demux->url.c_str());
     }
 
 public:
