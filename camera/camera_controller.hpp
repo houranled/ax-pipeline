@@ -215,6 +215,7 @@ private:
 
     bool running;
     bool patrolling = false;  // 是否在巡逻中
+    time_t patrol_start_time = 0; // 巡检开始时间戳（东八区已修正），用于本轮巡检所有路径统一时间基准
     std::atomic<bool> stop_requested{false}; // 收到停止巡检指令
     std::mutex              stop_mtx;        // 配合 stop_cv 使用
     std::condition_variable stop_cv;         // 用于立刻唤醒巡检中各处 sleep
