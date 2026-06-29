@@ -405,6 +405,8 @@ Finish:
 
 int CameraController::all_cameras_patrol()
 {
+    reload_config(); // 巡检前热加载配置（点位+基础字段）
+
     // 遍历所有摄像机，设置不标定模式并启动巡逻
     std::vector<std::thread> threads;
     bool res = false;
@@ -431,6 +433,8 @@ int CameraController::all_cameras_patrol()
 
 int CameraController::calibrate(int camera_id) //return 0正常  非0异常
 {
+    reload_config(); // 标定前热加载配置（点位+基础字段）
+
     int res = 0;
     // 如果指定了有效的摄像机ID，则只标定该摄像机；否则标定所有摄像机
     if (camera_id > 0 && cameras.find(camera_id) != cameras.end()) {
@@ -560,9 +564,124 @@ int CameraController::load_config_from_file(const std::string& config_file_path)
             }
         }
         WTALOGI("完成配置加载!");
+
+        // 记录初始 mtime，用于后续热加载判断
+        struct stat st;
+        if (stat(config_file_path.c_str(), &st) == 0) {
+            last_config_mtime = st.st_mtime;
+        }
         return 0;
     } catch (const std::exception& e) {
         WTALOGI("Error loading config:%s",  e.what());
+        return -1;
+    }
+}
+
+int CameraController::reload_config()
+{
+    // 通过 mtime 判断配置是否变化，未变化则跳过
+    struct stat st;
+    if (stat(CONFIG_FILE_PATH, &st) != 0) {
+        WTALOGI("热加载: 无法获取配置文件状态: %s", CONFIG_FILE_PATH);
+        return -1;
+    }
+    if (st.st_mtime == last_config_mtime) {
+        return 0; // 文件未变化
+    }
+
+    try {
+        std::ifstream config_file(CONFIG_FILE_PATH);
+        if (!config_file.is_open()) {
+            WTALOGI("热加载: 打开配置文件失败");
+            return -1;
+        }
+
+        nlohmann::json config;
+        config_file >> config;
+
+        // 全局字段：告警冷却时间
+        if (config.contains("cooldown")) {
+            alarm_manager.cooldown = config["cooldown"];
+        }
+
+        // 全局字段：风场名称
+        std::string orga_name = "";
+        if (config.contains("org_name")) {
+            orga_name = config["org_name"];
+        }
+
+        if (!config.contains("chl_list") || !config["chl_list"].is_array()) {
+            WTALOGI("热加载: chl_list 不存在或非数组");
+            return -1;
+        }
+
+        int updated_count = 0;
+        for (const auto& camera_config : config["chl_list"]) {
+            auto type = camera_config["type"];
+            auto enable = camera_config["enable"];
+            if (type != "Webcam" || enable != "1") {
+                continue;
+            }
+
+            int cam_id = std::stoi(camera_config["id"].get<std::string>());
+            auto it = cameras.find(cam_id);
+            if (it == cameras.end()) {
+                WTALOGI("热加载: 相机[%d]未在初始配置中，跳过", cam_id);
+                continue;
+            }
+            Camera* camera = it->second;
+
+            // 巡检中的相机跳过，避免数据竞争
+            if (camera->is_patroling()) {
+                WTALOGI("热加载: 相机[%d]巡检中，跳过点位热加载", cam_id);
+                continue;
+            }
+
+            // 更新基础字段
+            camera->name = camera_config["name"];
+            camera->orga_name = orga_name;
+            if (camera_config.contains("ptz_ip")) {
+                camera->ptz_ip = camera_config["ptz_ip"];
+            }
+
+            // 检测 IP 变化（本方案不重连 RTSP，仅记录日志提示）
+            if (camera_config.contains("ip")) {
+                std::string new_ip = camera_config["ip"];
+                if (new_ip != camera->ip) {
+                    WTALOGI("热加载: 相机[%d] IP 变化 %s -> %s，需要重启生效",
+                            cam_id, camera->ip.c_str(), new_ip.c_str());
+                }
+            }
+
+            // 重建点位列表
+            std::vector<Camera::PresetPosition> new_positions;
+            if (camera_config.contains("points") && camera_config["points"].is_array()) {
+                for (const auto& point : camera_config["points"]) {
+                    Camera::PresetPosition pos;
+                    pos.id = std::stoi(point["id"].get<std::string>());
+                    pos.name = point["name"];
+                    pos.distance = point["dist"];
+                    pos.duration = point["duration"];
+                    pos.web_rotation_x = point["rotatex"];
+                    pos.web_rotation_y = point["rotatey"];
+                    pos.zoom = point["zoom"];
+                    pos.focus = point["focus"];
+                    pos.brightness = point["brightness"];
+                    new_positions.push_back(pos);
+                }
+            }
+            camera->preset_positions = std::move(new_positions);
+
+            WTALOGI("热加载: 相机[%d]更新完成, 点位数量:%d",
+                    cam_id, (int)camera->preset_positions.size());
+            updated_count++;
+        }
+
+        last_config_mtime = st.st_mtime;
+        WTALOGI("热加载完成: 共更新 %d 个相机", updated_count);
+        return 0;
+    } catch (const std::exception& e) {
+        WTALOGI("热加载失败: %s", e.what());
         return -1;
     }
 }

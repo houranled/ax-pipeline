@@ -52,6 +52,7 @@ public:
 
     void addCamera(int id, std::string channel_name, std::string rtsp_url); // 添加相机
     void remove_all_cameras(); // 移除所有相机对象
+    int reload_config(); // 热加载配置（点位+基础字段，不含RTSP重连）
 
 private:
     // 将构造函数设为私有
@@ -73,6 +74,7 @@ private:
     int all_cameras_patrol(); // 巡逻
     int calibrate(int camera_id); // 标定
     int load_config_from_file(const std::string& config_file_path); //根据配置文件信息自构建所有相机对象
+    time_t last_config_mtime = 0; // 配置文件最后修改时间，用于热加载判断
 
 };
 
