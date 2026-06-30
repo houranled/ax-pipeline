@@ -60,6 +60,16 @@ int CameraController::receive_input_loop() {
             if (brace_count == 0 && json_str.size()>2 ) break; // JSON 闭合
         }
 
+        // getline 因 EOF/错误退出且没读到有效内容：不要拿空串去 parse（会抛
+        // "unexpected end of input"），更要避免在 stdin 关闭后空转刷屏。
+        if (json_str.find_first_not_of(" \t\r\n") == std::string::npos) {
+            if (std::cin.eof() || std::cin.fail()) {
+                std::cin.clear();                 // 复位流状态以便后续可继续读取
+                std::this_thread::sleep_for(std::chrono::milliseconds(100)); // 防忙等
+            }
+            continue;
+        }
+
         nlohmann::json json_request; //请求
         try {
             // 解析JSON字符串(处理JSON命令)
