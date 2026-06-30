@@ -1532,7 +1532,8 @@ int Camera::set_zoom_and_focus(int zoom, int focus)
 
     // 仅当focus > -1时添加focus参数
     if (focus > -1) {
-        url += "&CAMPOS.focuspos=" + std::to_string(focus);
+        // 0~80 段不生效，统一 clamp 到 80；>=80 保持原值（避免整体 +80 顶穿上限）
+        url += "&CAMPOS.focuspos=" + std::to_string(focus < 80 ? 80 : focus);
         todo = true;
     }
 
