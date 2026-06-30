@@ -22,13 +22,15 @@ bool AlarmManager::generateAlarm(AlarmType type, const std::string& message, flo
     // 使用互斥锁保护队列操作
     std::lock_guard<std::mutex> lock(queueMutex);
 
-    // ★ 入队前去重：检查是否已存在相同 camera_id + point_id + light_flag 的告警
+    // ★ 入队前去重：检查是否已存在相同 camera_id + point_id + light_flag + 损伤类型(type字符串) 的告警
+    //   注意：仅按 (point_id, light_flag) 去重会导致同点位检出多种损伤时只保留第一种，
+    //   因此把 message（即 alarm.type）也纳入判定，不同损伤类型可并存。
     auto& q = alarm_map_datas[cameraId];
     std::queue<Alarm> temp_q;
     bool exists = false;
     while (!q.empty()) {
         Alarm& a = q.front();
-        if (a.point_id == point_id && a.light_flag == light_flag) {
+        if (a.point_id == point_id && a.light_flag == light_flag && a.type == message) {
             exists = true;
         }
         temp_q.push(std::move(a));
@@ -37,7 +39,7 @@ bool AlarmManager::generateAlarm(AlarmType type, const std::string& message, flo
     alarm_map_datas[cameraId] = std::move(temp_q);
 
     if (exists) {
-        WTALOGI("摄像头[%d] 点位[%d] L%d 告警已存在，跳过重复入队", cameraId, point_id, light_flag);
+        WTALOGI("摄像头[%d] 点位[%d] L%d 损伤类型[%s] 告警已存在，跳过重复入队", cameraId, point_id, light_flag, message.c_str());
         return false;
     }
 

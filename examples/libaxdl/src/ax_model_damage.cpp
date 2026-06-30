@@ -9,6 +9,7 @@
 #include <dirent.h>
 #include <fstream>
 #include <ctime>
+#include <set>
 #include "../../utilities/json.hpp"
 #include "../../camera/camera_controller.hpp"
 
@@ -747,12 +748,26 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
 
     // 触发新增点位告警（只有真正生成告警时才标记损伤）
     if (results->nObjSize > 0) {
-        // 使用当前模型的损伤类型名称（模型文件名，如"裂缝"、"腐蚀"英文）
-        bool alarm_generated = CameraController::getInstance()->early_warning_process(camera_id, cur_point, cur_light_flag, damage_type);
-        if (alarm_generated) {
+        std::set<std::string> seen_types;
+        for (int i = 0; i < (int)results->nObjSize; i++) {
+            const char* nm = results->mObjects[i].objname;
+            if (nm && nm[0]) seen_types.insert(nm);
+        }
+        // 兜底：objname 为空时退化为当前模型的 damage_type
+        if (seen_types.empty() && !damage_type.empty()) {
+            seen_types.insert(damage_type);
+        }
+
+        bool any_alarm = false;
+        for (const auto& dt : seen_types) {
+            if (CameraController::getInstance()->early_warning_process(camera_id, cur_point, cur_light_flag, dt)) {
+                any_alarm = true;
+                WTALOGI("[damage] 点位[%d] L%d 已拍照并告警: %s (损伤类型: %s)", cur_point, cur_light_flag, saved_path.c_str(), dt.c_str());
+            }
+        }
+        if (any_alarm) {
             // 标记当前停留期间检出损伤：pipeline 状态机会在离开点位 3 秒后落盘 MP4
             cam->mark_damage_seen();
-            WTALOGI("[damage] 点位[%d] L%d 已拍照并告警: %s (损伤类型: %s)", cur_point, cur_light_flag, saved_path.c_str(), damage_type.c_str());
         }
     }
 
