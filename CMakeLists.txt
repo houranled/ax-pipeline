@@ -96,11 +96,7 @@ endif()
 message(STATUS "CMAKE_TOOLCHAIN_FILE = ${CMAKE_TOOLCHAIN_FILE}")
 
 # Git 版本信息由构建脚本生成 git_version.h 到 build 目录
-# 脚本示例: cat > git_version.h << EOF
-#   #pragma once
-#   #define GIT_COMMIT_HASH "$(git rev-parse --short HEAD)"
-#   #define GIT_COMMIT_DATE "$(git log -1 --format=%cd --date=short)"
-# EOF
+
 include_directories(${CMAKE_BINARY_DIR})
 
 

@@ -803,8 +803,9 @@ extern "C" AX_VOID __sigExit(int iSigNo)
 
 static AX_VOID PrintHelp(char *testApp)
 {
-    printf("version:%s\n", GIT_COMMIT_HASH);
+    printf("version:%s\n", PROJECT_VERSION_FULL); // 例如 1.1.3-343972f-dirty
     printf("date:   %s\n", GIT_COMMIT_DATE);
+    printf("branch: %s\n", GIT_BRANCH);
     printf("Usage:%s -h for help\n\n", testApp);
     printf("\t-p: model config file path\n");
 
