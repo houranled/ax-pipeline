@@ -228,6 +228,19 @@ private:
     CURL *curl_handle;  // 持久化的curl句柄
     modbus_t *modbus_ctx = nullptr;
 
+    // === Modbus 线程安全 & 后台重连 ===
+    // modbus_ctx 会被多条线程访问（姿态轮询线程、JSON 命令线程、fetch_remote_status
+    // 线程、connect_modbus 内部的 close/free），必须整体互斥；且 connect_modbus 可能
+    // 从锁内部再次调用，所以用 recursive_mutex。
+    std::recursive_mutex m_modbus_mtx;                 // 保护 modbus_ctx 的所有读/写/IO
+    std::atomic<bool>    m_modbus_broken{false};       // 业务函数发现 modbus IO 失败时置位
+    std::atomic<bool>    m_modbus_reconnect_exit{false};
+    std::thread          m_modbus_reconnect_thread;    // 后台重连线程（异步 + 冷却）
+    void _modbus_reconnect_loop();
+
+    // 姿态轮询防重入：避免同一 Camera 起多条 update_posture_state 轮询线程
+    std::atomic<bool>    m_posture_polling{false};
+
     int patrol_with_calibration_loop(bool is_calibrate);  // 摄像机巡检(可伴随标定)
     // 可被 stop_requested 打断的等待；返回 true 表示等满 ms，false 表示被打断
     bool interruptible_sleep_ms(int ms);

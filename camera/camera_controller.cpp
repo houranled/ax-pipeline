@@ -795,6 +795,21 @@ Camera::Camera()
 
 Camera::~Camera()
 {
+    // 通知并 join 后台 modbus 重连线程，避免线程访问已析构的 modbus_ctx / this
+    m_modbus_reconnect_exit.store(true);
+    if (m_modbus_reconnect_thread.joinable()) {
+        m_modbus_reconnect_thread.join();
+    }
+    // 关闭 modbus_ctx（此时其他线程已停）
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_modbus_mtx);
+        if (modbus_ctx) {
+            modbus_close(modbus_ctx);
+            modbus_free(modbus_ctx);
+            modbus_ctx = nullptr;
+        }
+    }
+
     if (curl_handle) {
         curl_easy_cleanup(curl_handle);
         curl_handle = nullptr;
@@ -808,6 +823,12 @@ int Camera::start()
     auto res_code = 1;
 
     auto rc = connect_modbus();  //云台连接
+
+    // 启动后台 modbus 重连线程：业务函数只置 m_modbus_broken 标志，重连由此线程异步处理
+    if (!m_modbus_reconnect_thread.joinable() && !ptz_ip.empty()) {
+        m_modbus_reconnect_exit.store(false);
+        m_modbus_reconnect_thread = std::thread(&Camera::_modbus_reconnect_loop, this);
+    }
 
     fetch_remote_status();
 
@@ -828,6 +849,9 @@ bool Camera::connect_modbus()
 {
     if (ptz_ip.empty())
         return false;
+
+    // 整个 connect_modbus 期间独占 modbus_ctx，避免其他线程正在 IO 时被 close/free
+    std::lock_guard<std::recursive_mutex> lk(m_modbus_mtx);
 
     uint32_t to_sec = 10; // 超时秒数
 
@@ -860,11 +884,38 @@ bool Camera::connect_modbus()
         } else {
             // 设置 Modbus 从站 ID（根据实际情况调整）
             //modbus_set_slave(modbus_ctx, 1);
+            m_modbus_broken.store(false); // 重连成功，清除损坏标志
             return true;
         }
     }
 
     return false;
+}
+
+// 后台 modbus 重连线程：观察 m_modbus_broken 标志，异步重连并带冷却，
+// 避免业务函数（如 update_posture_state / fetch_remote_status）在 200ms 轮询里
+// 同步调 connect_modbus 阻塞整个循环。
+void Camera::_modbus_reconnect_loop()
+{
+    WTALOGI("摄像机[%d] modbus 后台重连线程启动", id);
+    while (!m_modbus_reconnect_exit.load()) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        if (m_modbus_reconnect_exit.load()) break;
+
+        if (!m_modbus_broken.load()) continue;
+
+        WTALOGI("摄像机[%d] 检测到 modbus 断开标志，尝试后台重连...", id);
+        bool ok = connect_modbus();
+        if (ok) {
+            WTALOGI("摄像机[%d] modbus 后台重连成功", id);
+        } else {
+            // 失败：叠加 4s 冷却，避免高频重连
+            for (int i = 0; i < 4 && !m_modbus_reconnect_exit.load(); i++) {
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+            }
+        }
+    }
+    WTALOGI("摄像机[%d] modbus 后台重连线程退出", id);
 }
 
 int Camera::get_id() const
@@ -1329,7 +1380,9 @@ bool Camera::interruptible_sleep_ms(int ms)
 
 void Camera::update_posture_state(int x, int y)
 {
-    // 调用modbus请求
+    // 调用modbus请求（整个流程持锁：write + sleep + read 必须是原子事务，
+    // 否则另一线程可能插入自己的 write/read 导致响应错位）
+    std::lock_guard<std::recursive_mutex> lk(m_modbus_mtx);
     if (modbus_ctx == nullptr)
         return;
 
@@ -1348,7 +1401,7 @@ void Camera::update_posture_state(int x, int y)
     rc = modbus_read_registers(modbus_ctx, 0x445A, 2, regs);
     if (rc == -1) {
         WTALOGI("摄像机[%d] read position failed: %s", id, modbus_strerror(errno));
-        connect_modbus(); // 重连一次
+        m_modbus_broken.store(true); // 交给后台线程异步重连，本调用立即返回
     } else {
         // 环形距离比较（处理 0°/360° 边界情况，如 -180° 与 179°）
         int full_circle = 36000; // 360° * 100
@@ -1369,26 +1422,31 @@ void Camera::update_posture_state(int x, int y)
 int Camera::set_ptz(int horizontal, int vertical, int brightness)
 {
     WTALOGI("设置摄像头[云台ip %s]姿态：水平:%d,垂直:%d,亮度:%d",this->ptz_ip.c_str(), horizontal, vertical, brightness);
-    if (modbus_ctx == nullptr)
-        return -1;
 
     if (horizontal==-1 && vertical==-1 && brightness==-1)
         return 0; // 忽略控制请求，不进行任何操作
 
-    // 准备要写入的寄存器值
-    uint16_t regs[2];
-    regs[0] = static_cast<uint16_t>(vertical == 9000 ? 8999 : vertical);   // 垂直角度  TODO临时bug修复
-    regs[1] = static_cast<uint16_t>(horizontal); // 水平角度
+    // 写 PTZ 寄存器（持锁）
+    {
+        std::lock_guard<std::recursive_mutex> lk(m_modbus_mtx);
+        if (modbus_ctx == nullptr)
+            return -1;
 
-    int rc = modbus_write_registers(modbus_ctx, MODBUSPTZ, 2, regs); // 全部写入寄存器
-    if (rc == -1) {
-        WTALOGI("Failed to write PTZ registers: %s", modbus_strerror(errno));
+        // 准备要写入的寄存器值
+        uint16_t regs[2];
+        regs[0] = static_cast<uint16_t>(vertical == 9000 ? 8999 : vertical);   // 垂直角度  TODO临时bug修复
+        regs[1] = static_cast<uint16_t>(horizontal); // 水平角度
 
-        // 尝试重新连接并重试一次
+        int rc = modbus_write_registers(modbus_ctx, MODBUSPTZ, 2, regs); // 全部写入寄存器
+        if (rc == -1) {
+            WTALOGI("Failed to write PTZ registers: %s", modbus_strerror(errno));
+            m_modbus_broken.store(true); // 交给后台重连
+        }
     }
 
     // 启动后台线程持续读取云台实际角度并更新状态，直到到位或超时
-    if (horizontal != -1 || vertical != -1) {
+    // ★ 防重入：如果已经有一条轮询线程在跑，就不再开新的，避免多线程同时用 modbus_ctx
+    if ((horizontal != -1 || vertical != -1) && !m_posture_polling.exchange(true)) {
         std::thread([this, horizontal, vertical]() {
             auto start = std::chrono::steady_clock::now();
             while (std::chrono::duration_cast<std::chrono::seconds>(
@@ -1398,7 +1456,10 @@ int Camera::set_ptz(int horizontal, int vertical, int brightness)
                     break;
                 std::this_thread::sleep_for(std::chrono::milliseconds(200));
             }
+            m_posture_polling.store(false); // 释放锁位
         }).detach();
+    } else if (horizontal != -1 || vertical != -1) {
+        WTALOGI("摄像机[%d] 已有姿态轮询线程在跑，跳过重复启动", id);
     }
 
     this->set_brighten(brightness); //亮度
@@ -1408,6 +1469,7 @@ int Camera::set_ptz(int horizontal, int vertical, int brightness)
 
 int Camera::set_wiper(int _switch)
 {
+    std::lock_guard<std::recursive_mutex> lk(m_modbus_mtx);
     if (modbus_ctx == nullptr)
         return -1;
 
@@ -1418,6 +1480,7 @@ int Camera::set_wiper(int _switch)
     int rc = modbus_write_registers(modbus_ctx, MODBUSWIPER, 1, &wiper_reg);
     if (rc == -1) {
         WTALOGI("Failed to write wiper register: %s", modbus_strerror(errno));
+        m_modbus_broken.store(true);
         return -1;
     }
 
@@ -1433,6 +1496,7 @@ int Camera::set_brighten(int brightness)
     WTALOGI("相机[%d] 设置亮度:%d", id, brightness);
 
     // 使用Modbus设置亮度
+    std::lock_guard<std::recursive_mutex> lk(m_modbus_mtx);
     if (modbus_ctx == nullptr) {
         std::cerr << "Modbus context not initialized" << std::endl;
         return -1;
@@ -1469,6 +1533,7 @@ int Camera::set_brighten(int brightness)
 
     if (rc == -1 || rc2 == -1)  {
         WTALOGI("Failed to write brighten register(%d)|(%d): %s", rc, rc2, modbus_strerror(errno));
+        m_modbus_broken.store(true);
         return -1;
     }
 
@@ -1478,6 +1543,7 @@ int Camera::set_brighten(int brightness)
 // 获取云台设备上的光敏亮度值和阈值
 int Camera::getPhotosensitive()
 {
+    std::lock_guard<std::recursive_mutex> lk(m_modbus_mtx);
     if (modbus_ctx == nullptr)
         return -1;
 
@@ -1486,32 +1552,38 @@ int Camera::getPhotosensitive()
     int rc = modbus_read_registers(modbus_ctx, MODBUSPSENT, 1, regs);
     if (rc == -1) {
         WTALOGI("Failed to read photosensitive register");
+        m_modbus_broken.store(true);
+    } else {
+        photosensitive = regs[0]; // 更新内部状态（避免失败时读到脏 regs）
     }
-    photosensitive = regs[0]; // 更新内部状态
 
     regs[0] = 0;
     rc = modbus_read_registers(modbus_ctx, MODBUSPTHRESHOLD, 1, regs);
     if (rc == -1) {
         WTALOGI("Failed to read photosensitive threshold register");
+        m_modbus_broken.store(true);
+    } else {
+        photosensitiveThreshold = regs[0]; // 更新内部状态
     }
-    photosensitiveThreshold = regs[0]; // 更新内部状态
 
     return 1;
 }
 
 int Camera::setphotosensitiveThreshold(int threshold)
 {
-    if (modbus_ctx == nullptr)
-        return -1;
-
     if (threshold == -1)
         return 0;
+
+    std::lock_guard<std::recursive_mutex> lk(m_modbus_mtx);
+    if (modbus_ctx == nullptr)
+        return -1;
 
     uint16_t reg = 0;
     reg = threshold;
     int rc = modbus_write_register(modbus_ctx, MODBUSPTHRESHOLD, reg);
     if (rc == -1) {
         WTALOGI("Failed to write photosensitive threshold register");
+        m_modbus_broken.store(true);
         return -1;
     }
     photosensitiveThreshold = threshold;
@@ -1656,6 +1728,11 @@ int Camera::fetch_remote_status()
 
     int res2 = 0;
     std::thread th2([this,&res2](){
+        // 整个 modbus 会话持锁：这里连着多次读寄存器（姿态/灯/雨刮/光敏），
+        // 一次锁到底既保证事务不被打断，也避免和其他线程交织。
+        std::lock_guard<std::recursive_mutex> lk(m_modbus_mtx);
+        if (modbus_ctx == nullptr) { res2 = -1; return; }
+
         //调用modbus获取云台姿态
         uint16_t regs[2];
         regs[0] = 1;
@@ -1669,7 +1746,7 @@ int Camera::fetch_remote_status()
         rc = modbus_read_registers(modbus_ctx, 0x445A, 2, regs);
         if (rc == -1) {
             WTALOGI("摄像机[%d] read position failed: %s", id, modbus_strerror(errno));
-            connect_modbus(); // 重新连接一次
+            m_modbus_broken.store(true); // 交给后台线程重连，本处立即返回失败
             res2 = -1;
         } else {
             rotation_y = regs[0];
