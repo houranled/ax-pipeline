@@ -45,14 +45,12 @@ fi
 if [ "$(git status | grep -E "Your branch is behind|Your branch and")" != "" ]; then
 	echo "there is a new revision!"
 	sleep 2
+    git reset --hard @{upstream}
 else
 	echo "no new revision"
 #	exit 1
 fi
 
-
-#git reset --hard @{upstream} && git stash apply stash@{0}
-git reset --hard @{upstream}
 
 # ---- 生成 git_version.h（信息全部从 git 获取）----
 # 版本号格式：<MAJOR>.<MINOR>.<PATCH>-<hash>[-dirty]
