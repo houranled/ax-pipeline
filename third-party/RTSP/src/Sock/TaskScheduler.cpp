@@ -40,7 +40,7 @@ void TaskScheduler::taskUnlock()
 	MUTEX_UNLOCK(&fMutex);
 }
 
-void TaskScheduler::turnOnBackgroundReadHandling(int socketNum, BackgroundHandlerProc* handlerProc, void *clientData) 
+void TaskScheduler::turnOnBackgroundReadHandling(int socketNum, BackgroundHandlerProc* handlerProc, void *clientData)
 {
 	taskLock();
 
@@ -57,7 +57,7 @@ exit:
 	taskUnlock();
 }
 
-void TaskScheduler::turnOffBackgroundReadHandling(int socketNum) 
+void TaskScheduler::turnOffBackgroundReadHandling(int socketNum)
 {
 	taskLock();
 
@@ -98,7 +98,7 @@ void TaskScheduler::stopEventLoop()
 	THREAD_DESTROY(&fThread);
 }
 
-void TaskScheduler::doEventLoop() 
+void TaskScheduler::doEventLoop()
 {
 	while (fTaskLoop)
 	{

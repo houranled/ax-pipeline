@@ -15,8 +15,10 @@ int THREAD_JOIN(THREAD *thread)
 #ifdef WIN32
 	return WaitForSingleObject(*thread, INFINITE) == WAIT_FAILED ? -1 : 0;
 #else
-	int status;
-	return pthread_join(*thread, (void **)&status);
+	// 注意：pthread_join 会向第二个参数指向的位置写入一个 void*（64 位平台 8 字节）。
+	// 原实现传 &int 会在 aarch64/x86_64 上越界写坏栈 canary，触发 __stack_chk_fail。
+	// 返回值这里未使用，直接传 NULL。
+	return pthread_join(*thread, NULL);
 #endif
 }
 
