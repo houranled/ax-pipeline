@@ -193,7 +193,8 @@ int CameraController::receive_input_loop() {
 
                 if (has_rotatey) {
                     new_rotatey = data["rotatey"]; // 前端角度变化量y
-                    camera->web_rotation_y = (origin_rotatey + new_rotatey)%360; // 更新前端值y
+                    // 归一化并按云台硬件可动范围 clamp（大云台俯下90/上仰40），避免下发到达不了的角度
+                    camera->web_rotation_y = camera->clamp_y_angle(origin_rotatey + new_rotatey); // 更新前端值y
                     y = (360+camera->web_rotation_y)%360 * 100;  // 映射后端值y
                 }
 
@@ -535,6 +536,11 @@ int CameraController::load_config_from_file(const std::string& config_file_path)
 
                 camera->orga_name = orga_name;
 
+                // 云台大小类型（big/small），影响点位 y 值 clamp 范围
+                if (config.contains("ptz_type")) {
+                    camera->ptz_type = config["ptz_type"];
+                }
+
                 // 设置 PTZ IP
                 if (camera_config.contains("ptz_ip")) {
                     camera->ptz_ip = camera_config["ptz_ip"];
@@ -653,6 +659,9 @@ int CameraController::reload_config()
             if (camera_config.contains("ptz_ip")) {
                 camera->ptz_ip = camera_config["ptz_ip"];
             }
+            if (config.contains("ptz_type")) {
+                camera->ptz_type = config["ptz_type"];
+            }
 
             // 检测 IP 变化（本方案不重连 RTSP，仅记录日志提示）
             if (camera_config.contains("ip")) {
@@ -677,6 +686,7 @@ int CameraController::reload_config()
                     pos.zoom = point["zoom"];
                     pos.focus = point["focus"];
                     pos.brightness = point["brightness"];
+                    camera->clamp_preset_y(pos);
                     new_positions.push_back(pos);
                 }
             }
@@ -935,8 +945,41 @@ void Camera::finish_patrolling()
     WTALOGI("摄像机[%d]完成巡逻!", this->id);
 }
 
+int Camera::clamp_y_angle(int orig) const
+{
+    // 硬件可动范围（前端约定：负=上仰，正=俯下）
+    //   big:   俯下 90 + 上仰 40 → y ∈ [-40, 90]
+    //   small: 俯下 90 + 上仰 90 → y ∈ [-90, 90]（默认）
+    int lo = (ptz_type == "big") ? -40 : -90;
+    int hi = 90;
+
+    // 前端可能传任意角度值（例如 320 实际等价 -40，即上仰 40°）。
+    // 先归一化到 (-180, 180]，让同一姿态只有一种数值表达；再按硬件可动范围 clamp。
+    int y = orig % 360;       // 归一化到 (-360, 360)
+    if (y > 180)        y -= 360;  // (180, 360)   -> (-180, 0)
+    else if (y <= -180) y += 360;  // (-360, -180] -> (0, 180]
+
+    if (y < lo)      y = lo;
+    else if (y > hi) y = hi;
+    return y;
+}
+
+void Camera::clamp_preset_y(Camera::PresetPosition& pos) const
+{
+    int orig = pos.web_rotation_y;
+    int adjusted = clamp_y_angle(orig);
+
+    if (adjusted != orig) {
+        int lo = (ptz_type == "big") ? -40 : -90;
+        WTALOGI("摄像机[%d] 点位[%d] y=%d 归一化并 clamp 到 %s 云台范围[%d,%d] -> %d",
+                id, pos.id, orig, ptz_type.c_str(), lo, 90, adjusted);
+    }
+    pos.web_rotation_y = adjusted;
+}
+
 int Camera::add_preset_position(Camera::PresetPosition pos)
 {
+    clamp_preset_y(pos);
     this->preset_positions.push_back(pos);
     return 0;
 }

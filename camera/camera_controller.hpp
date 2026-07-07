@@ -110,6 +110,7 @@ public:
 
     std::string ip;  // 相机ip地址
     std::string ptz_ip; // 云台ip地址
+    std::string ptz_type = "big";
     int now_point_id=0; // 当前所在点位id
     std::atomic<bool> posture_completed{true}; // 是否到达指定位置
     bool light_phase_changed = false; // 灯光状态变更标志，用于同一点位触发两次拍照
@@ -245,6 +246,14 @@ private:
     // 可被 stop_requested 打断的等待；返回 true 表示等满 ms，false 表示被打断
     bool interruptible_sleep_ms(int ms);
     void update_posture_state(int x, int y); // 判断是否到达指定位置
+    // 把点位竖直角度 web_rotation_y 归一化到 (-180, 180]（例如 320 → -40），
+    // 再按 ptz_type 对应的硬件可动范围 clamp：
+    //   big:   [-40, 90]  俯下 90° + 上仰 40°
+    //   small: [-90, 90]  俯下 90° + 上仰 90°
+    // 归一化后仍越界的（例如 -160）clamp 到最近边界。
+    void clamp_preset_y(PresetPosition& pos) const;
+    // 把任意竖直角度归一化到 (-180,180] 并按 ptz_type 硬件范围 clamp，返回可下发角度
+    int clamp_y_angle(int y) const;
     void setPipe(pipeline_t * pipe); // 绑定pipeline
     bool connect_modbus(); // 重连modbus
 
