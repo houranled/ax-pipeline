@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <mutex>
+#include <time.h>
 
 typedef enum
 {
@@ -87,6 +88,15 @@ static inline void init_wt_log_file() {
     }
 }
 
+// 生成东八区时间戳字符串 "YYYY-MM-DD HH:MM:SS"。
+// 用 time()+8h 配 gmtime_r，避免依赖系统时区设置，也保证线程安全。
+static inline void _wt_log_timestr(char* buf, size_t n) {
+    time_t t = time(nullptr) + 8 * 3600;
+    struct tm tmv;
+    gmtime_r(&t, &tmv);
+    strftime(buf, n, "%Y-%m-%d %H:%M:%S", &tmv);
+}
+
 // 检查当前 FILE* 尺寸是否超阈值，超了就环形滚动并重开。
 // 必须在持有 g_log_rot_mtx 的情况下调用。
 static inline void _log_rotate_if_needed(FILE** fp, const char* path) {
@@ -134,7 +144,8 @@ static inline void _log_rotate_if_needed(FILE** fp, const char* path) {
         std::lock_guard<std::mutex> _lk(g_log_rot_mtx); \
         init_wt_log_file(); \
         if (wt_log_file) { \
-            fprintf(wt_log_file, "[wt][%32s][%4d]: " fmt "\n", __FUNCTION__, __LINE__, ##__VA_ARGS__); \
+            char _ts[24]; _wt_log_timestr(_ts, sizeof(_ts)); \
+            fprintf(wt_log_file, "[%s][wt][%32s][%4d]: " fmt "\n", _ts, __FUNCTION__, __LINE__, ##__VA_ARGS__); \
             fflush(wt_log_file); \
             _log_rotate_if_needed(&wt_log_file, "/wt_tech/logs/node/wt_ai.log"); \
         } \

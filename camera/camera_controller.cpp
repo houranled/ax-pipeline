@@ -97,7 +97,10 @@ int CameraController::receive_input_loop() {
 
         Camera* camera = NULL;
         if (camera_id > 0) {
-            camera = cameras[camera_id];
+            auto it = cameras.find(camera_id);
+            if (it != cameras.end()) {
+                camera = it->second;
+            }
         }
 
         WTALOGI("接收到命令:[%s],相机id:[%d]\n", json_str.c_str(), camera_id);
