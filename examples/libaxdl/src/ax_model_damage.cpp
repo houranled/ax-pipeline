@@ -650,6 +650,10 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
 
     cv::putText(image, point_str, cv::Point(text_x, text_y + baseline), font_face, font_scale, cv::Scalar(point_color[0], point_color[1], point_color[2], 255), text_thickness);
 
+    // ★ 每帧累积检测结果（到位后、拍照前的所有帧）
+    if (cam->posture_completed && results->nObjSize > 0) {
+        cam->accumulate_detection(results);
+    }
 
     // 每个点位触发两次拍照（有灯照+无灯照）：
     // - 使用 photo_fired_keys 记录已拍照的 (point_id, light_flag) 组合
@@ -740,18 +744,42 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
         }
     }
 
+    // ★ 获取累积的检测结果（停留期间所有帧的合并）
+    auto accumulated = cam->get_accumulated_objects();
+
+    // ★ 在 merged_image 上绘制累积的检测框（确保所有检测到的损伤都显示在拍照图上）
+    if (!accumulated.empty()) {
+        for (const auto& obj : accumulated) {
+            // 绘制检测框
+            int x1 = (int)(obj.bbox.x * merged_image.cols);
+            int y1 = (int)(obj.bbox.y * merged_image.rows);
+            int x2 = (int)((obj.bbox.x + obj.bbox.w) * merged_image.cols);
+            int y2 = (int)((obj.bbox.y + obj.bbox.h) * merged_image.rows);
+            cv::rectangle(merged_image, cv::Point(x1, y1), cv::Point(x2, y2), cv::Scalar(0, 0, 255), 2);
+
+            // 绘制标签
+            char label[128];
+            snprintf(label, sizeof(label), "%s %.2f", obj.objname, obj.prob);
+            int baseline = 0;
+            cv::Size text_size = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseline);
+            cv::rectangle(merged_image, cv::Point(x1, y1 - text_size.height - 4),
+                          cv::Point(x1 + text_size.width, y1), cv::Scalar(0, 0, 255), -1);
+            cv::putText(merged_image, label, cv::Point(x1, y1 - 2),
+                        cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255), 1);
+        }
+    }
+
     // 保存带框图（用于展示告警），使用当前点位 cur_point 而非可能已变化的 now_point_id
     std::string saved_path = cam->captureSnapshot(merged_image, cur_point, cur_light_flag);
 
     // 标记拍照完成（通知巡检线程可以继续）
     cam->photo_captured.store(true);
 
-    // 触发新增点位告警（只有真正生成告警时才标记损伤）
-    if (results->nObjSize > 0) {
+    // ★ 使用累积结果触发告警（而非仅当前帧）
+    if (!accumulated.empty()) {
         std::set<std::string> seen_types;
-        for (int i = 0; i < (int)results->nObjSize; i++) {
-            const char* nm = results->mObjects[i].objname;
-            if (nm && nm[0]) seen_types.insert(nm);
+        for (const auto& obj : accumulated) {
+            if (obj.objname[0]) seen_types.insert(obj.objname);
         }
         // 兜底：objname 为空时退化为当前模型的 damage_type
         if (seen_types.empty() && !damage_type.empty()) {
@@ -762,7 +790,8 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
         for (const auto& dt : seen_types) {
             if (CameraController::getInstance()->early_warning_process(camera_id, cur_point, cur_light_flag, dt)) {
                 any_alarm = true;
-                WTALOGI("[damage] 点位[%d] L%d 已拍照并告警: %s (损伤类型: %s)", cur_point, cur_light_flag, saved_path.c_str(), dt.c_str());
+                WTALOGI("[damage] 点位[%d] L%d 已拍照并告警: %s (损伤类型: %s, 累积检测数: %zu)",
+                        cur_point, cur_light_flag, saved_path.c_str(), dt.c_str(), accumulated.size());
             }
         }
         if (any_alarm) {
