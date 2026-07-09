@@ -105,10 +105,10 @@ namespace {
         std::vector<DiffRegion> out;
         if (cur_bgr.empty() || base_bgr.empty()) return out;
 
-        const float SSIM_TH   = 0.55f; // 严格：改小  宽松：改大
-        const float ABSD_RATIO = 0.12f; // 像素差 > 20% 才算
-        const int   BLOCK     = 64;
-        const int   MIN_AREA  = 800; // 过滤小区域噪点
+        const float SSIM_TH   = 0.45f; // 严格：改小  宽松：改大
+        const float ABSD_RATIO = 0.30f; // 像素差 > 30% 才算
+        const int   BLOCK     = 96;
+        const int   MIN_AREA  = 2000; // 过滤小区域噪点
 
         cv::Mat cur = cur_bgr;
         if (cur.size() != base_bgr.size())

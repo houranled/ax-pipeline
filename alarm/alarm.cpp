@@ -63,7 +63,7 @@ bool AlarmManager::generateAlarm(AlarmType type, const std::string& message, flo
 
 bool AlarmManager::generateDiffAlarm(Camera *camera, int point_id, int light_flag, const std::string& pic_path)
 {
-    if (camera == nullptr || !camera->is_patroling())
+    if (camera == nullptr)
         return false;
 
     int cameraId = camera->get_id();
@@ -95,6 +95,7 @@ bool AlarmManager::generateDiffAlarm(Camera *camera, int point_id, int light_fla
     alarm.point_id = point_id;
     alarm.light_flag = light_flag;
     alarm.damage_type = AlarmType::LINE_CROSSING;
+    alarm.type = "Baseline_Diff";
     alarm.timestamp = time(nullptr);
     alarm.confidence = 1.0f;
     alarm.picPath = pic_path;
