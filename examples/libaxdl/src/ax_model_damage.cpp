@@ -9,6 +9,7 @@
 #include <dirent.h>
 #include <fstream>
 #include <ctime>
+#include <chrono>
 #include <set>
 #include "../../utilities/json.hpp"
 #include "../../camera/camera_controller.hpp"
@@ -574,9 +575,71 @@ int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resi
 }
 
 
+// 在 BGR 图上绘制水印（时间、通道名、点位）
+// 用于无差异存无框原图时保留水印；diff 对比仍使用未加水印的原图与 baseline 比较
+void ax_model_damage::draw_watermark_bgr(cv::Mat &bgr, int cur_point, bool is_moving)
+{
+    if (bgr.empty()) return;
+
+    auto *cam = CameraController::getInstance()->getCamera(camera_id);
+
+    int font_face = cv::FONT_HERSHEY_SIMPLEX;
+    double font_scale = 0.8;
+    int text_thickness = 2;
+    int baseline = 0;
+
+    // 时间字符串（左上角）
+    time_t now_ts = time(nullptr) + 8 * 3600;
+    tm *t_info = gmtime(&now_ts);
+    char time_str[64] = {0};
+    snprintf(time_str, sizeof(time_str), "%04d-%02d-%02d %02d:%02d:%02d",
+             t_info->tm_year + 1900, t_info->tm_mon + 1, t_info->tm_mday,
+             t_info->tm_hour, t_info->tm_min, t_info->tm_sec);
+    cv::putText(bgr, time_str, cv::Point(10, 30), font_face, font_scale, cv::Scalar(139, 0, 0), text_thickness);
+
+    // 通道名称/摄像机名称（左下角，使用预渲染的 FreeType 位图，BGRA alpha 合成到 BGR）
+    if (!m_channel_name_bmp.empty()) {
+        int text_x = 10;
+        int text_y = bgr.rows - 30;
+        int w = std::min(m_channel_name_bmp.cols, bgr.cols - text_x);
+        int h = std::min(m_channel_name_bmp.rows, text_y);
+        if (w > 0 && h > 0) {
+            cv::Mat roi = bgr(cv::Rect(text_x, text_y - h, w, h));
+            for (int y = 0; y < h; ++y) {
+                const cv::Vec4b* src = m_channel_name_bmp.ptr<cv::Vec4b>(y);
+                cv::Vec3b* dst = roi.ptr<cv::Vec3b>(y);
+                for (int x = 0; x < w; ++x) {
+                    uint8_t a = src[x][3];
+                    if (!a) continue;
+                    float fa = a / 255.f;
+                    for (int c = 0; c < 3; ++c)
+                        dst[x][c] = cv::saturate_cast<uint8_t>(src[x][c] * fa + dst[x][c] * (1 - fa));
+                }
+            }
+        }
+    }
+
+    // 点位信息（正下方居中）：仅巡逻状态且到达点位时绘制
+    if (cam && cam->is_patroling() && cur_point > 0) {
+        char point_str[128] = {0};
+        snprintf(point_str, sizeof(point_str), "Point: %d (%s)", cur_point,
+                 is_moving ? "moving..." : "arrived");
+        cv::Size point_size = cv::getTextSize(point_str, font_face, font_scale, text_thickness, &baseline);
+        int text_x = (bgr.cols - point_size.width) / 2;
+        int text_y = bgr.rows - baseline - 10;
+        cv::putText(bgr, point_str, cv::Point(text_x, text_y + baseline), font_face, font_scale,
+                    cv::Scalar(139, 0, 0), text_thickness);
+    }
+}
+
 void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y)
 {
-    draw_bbox(image, results, fontscale, thickness, offset_x, offset_y);
+    auto *cam = CameraController::getInstance()->getCamera(camera_id);
+
+    // 仅在到达点位且灯光相位就绪时绘制当前帧 AI 检测框；移动/回位/灯光切换中不绘制
+    if (cam && cam->posture_completed && cam->phase_ready_ms.load() > 0) {
+        draw_bbox(image, results, fontscale, thickness, offset_x, offset_y);
+    }
 
     /* ---------- 绘制时间和点位信息 ---------- */
     time_t now_ts = time(nullptr) + 8 * 3600;
@@ -586,7 +649,6 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
              t_info->tm_year + 1900, t_info->tm_mon + 1, t_info->tm_mday,
              t_info->tm_hour, t_info->tm_min, t_info->tm_sec);
 
-    auto *cam = CameraController::getInstance()->getCamera(camera_id);
     int cur_point = cam->now_point_id;
     char point_str[128] = {0};
     bool is_moving = false;
@@ -650,25 +712,36 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
 
     cv::putText(image, point_str, cv::Point(text_x, text_y + baseline), font_face, font_scale, cv::Scalar(point_color[0], point_color[1], point_color[2], 255), text_thickness);
 
-    // ★ 每帧累积检测结果（到位后、拍照前的所有帧）
-    if (cam->posture_completed && results->nObjSize > 0) {
+    // 灯光状态：light_phase_changed 由巡检线程在灯光稳定后设置
+    // L0 拍照时 light_phase_changed=false，L1 拍照时 light_phase_changed=true
+    int cur_light_flag = cam->light_phase_changed ? 1 : 0;
+    int fired_key = cur_point * 10 + cur_light_flag;
+
+    // 相位就绪：到位 + 灯光正确 + 巡检线程已 arm + 额外流延迟余量
+    // 避免在 RTSP 解码缓冲中的旧帧上累积/拍照（例如灯光切换后还未实际呈现的画面）
+    const long long STREAM_LATENCY_SETTLE_MS = 800; // 流延迟余量，可调
+    long long phase_ready = cam->phase_ready_ms.load();
+    long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::system_clock::now().time_since_epoch()).count();
+    bool phase_settled = (phase_ready > 0) && (now_ms - phase_ready >= STREAM_LATENCY_SETTLE_MS);
+
+    // ★ 每帧累积检测结果（只有相位真正就绪后才累积，避免灯光/移动过程中的误累积）
+    if (cam->posture_completed && phase_settled && results->nObjSize > 0) {
         cam->accumulate_detection(results);
     }
 
     // 每个点位触发两次拍照（有灯照+无灯照）：
     // - 使用 photo_fired_keys 记录已拍照的 (point_id, light_flag) 组合
     // - key = point_id * 10 + light_flag，巡检开始时清空
-    // 灯光状态：light_phase_changed 由巡检线程在灯光稳定后设置
-    // L0 拍照时 light_phase_changed=false，L1 拍照时 light_phase_changed=true
-    int cur_light_flag = cam->light_phase_changed ? 1 : 0;
-    int fired_key = cur_point * 10 + cur_light_flag;
-
     if (cam->photo_fired_keys.count(fired_key)) {
         return; // 同点位同灯光状态已触发过，跳过
     }
 
     if (!cam->posture_completed)
-        return; //未到点位，跳过
+        return; // 未到点位，跳过
+
+    if (!phase_settled)
+        return; // 灯光/流延迟未就绪，跳过，避免拍到旧帧
 
     // 重新获取点位ID，确保与 posture_completed 检查一致
     cur_point = cam->now_point_id;
@@ -741,6 +814,36 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
         } else {
             cv::cvtColor(image, raw_image, cv::COLOR_RGBA2BGR);
             merged_image = raw_image.clone();
+        }
+    }
+
+    // ★ diff 门控：当前图与基线对比，改变量达到阈值才执行模型识别（不产生独立 diff 告警，不绘制 diff 框）
+    //   - 基线存在且改变量未达阈值 → 存无框原图，不识别不告警，直接返回
+    //   - 基线存在且改变量达阈值 → 不绘制 diff 框，继续走模型累积框 + 告警
+    //   - 基线不存在（未标定）→ 无法门控，照常存图告警（并由巡检结束后建基线）
+    //   - 标定模式 → 跳过门控，强制存图并入队用于建/更新基线
+    if (!cam->is_calibrating()) {
+        std::string base_path = make_baseline_path(cam->orga_name, cam->getName(),
+                                                   cur_point, cur_light_flag);
+        cv::Mat base_bgr = cv::imread(base_path, cv::IMREAD_COLOR);
+        if (!base_bgr.empty()) {
+            auto diff_regions = diff_against_baseline(raw_image, base_bgr);
+            if (diff_regions.empty()) {
+                // 无差异 → 存无框原图（保留点位记录），不告警
+                // 注意：diff 对比已用未加水印的 raw_image 完成，此处对副本加水印后再存，
+                //       避免污染 baseline 对比（baseline 无水印）
+                cv::Mat wm_image = raw_image.clone();
+                draw_watermark_bgr(wm_image, cur_point, false);
+                cam->captureSnapshot(wm_image, cur_point, cur_light_flag);
+                cam->photo_captured.store(true);       // 放行巡检线程，避免拍照超时
+                cam->photo_fired_keys.insert(fired_key);
+                if (cur_light_flag == 1) cam->light_phase_changed = false;
+                WTALOGI("[damage] 点位[%d] L%d 与基线一致，存无框原图，不告警", cur_point, cur_light_flag);
+                return;
+            }
+            // 有差异 → 不绘制 diff 标示框，仅作为触发模型识别/告警的门控
+            WTALOGI("[damage] 点位[%d] L%d 与基线差异 %zu 处，触发模型识别与告警",
+                    cur_point, cur_light_flag, diff_regions.size());
         }
     }
 
@@ -817,11 +920,9 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
 }
 
 // ============================================================================
-// 巡检结束后批量执行点位前后对比（同光照↔同光照）
-//   - 由 Camera::patrol_with_calibration_loop 在录像停止后调用
-//   - 命中差异：生成告警（early_warning_process），并在快照同目录下写一张
-//                带紫框的 diff_<原文件名>.png 标注复核图
-//   - 无告警（模型 + diff 都为空）时才覆盖基线，避免把已损伤"洗成"正常基线
+// 巡检/标定结束后的基线维护（diff 已前移到 draw_custom 拍照时门控，此处只建/更新基线）
+//   - update_baseline=true（标定模式）：用不带框的原图覆盖更新基线
+//   - update_baseline=false（巡检模式）：仅在基线缺失时补建，已存在则不动
 // ============================================================================
 void run_post_patrol_diff(Camera* cam, bool update_baseline)
 {
@@ -830,12 +931,11 @@ void run_post_patrol_diff(Camera* cam, bool update_baseline)
     auto tasks = cam->drain_diff_queue();
     if (tasks.empty()) return;
 
-    WTALOGI("[damage-diff] 摄像机[%s] 巡检结束，开始批量对比 %zu 个点位快照",
+    WTALOGI("[damage-diff] 摄像机[%s] 结束，开始维护 %zu 个点位基线",
             cam->getName().c_str(), tasks.size());
 
-    int hit_count = 0;
+    int write_count = 0;
     for (const auto& t : tasks) {
-        // 使用不带检测框的原图进行 diff 对比（直接从内存获取）
         if (t.raw_image.empty()) {
             WTALOGI("[damage-diff] 原图为空，跳过点位[%d] L%d", t.point_id, t.light_flag);
             continue;
@@ -844,84 +944,25 @@ void run_post_patrol_diff(Camera* cam, bool update_baseline)
 
         std::string base_path = make_baseline_path(cam->orga_name, cam->getName(),
                                                    t.point_id, t.light_flag);
-        cv::Mat base_bgr = cv::imread(base_path, cv::IMREAD_COLOR);
+        bool base_exists = (access(base_path.c_str(), 0) == 0);
 
-        bool hit = false;
-
-        if (!base_bgr.empty()) {
-            auto regions = diff_against_baseline(raw_bgr, base_bgr);
-            if (!regions.empty()) {
-                hit = true;
-                ++hit_count;
-
-                // ★ 对比检出损伤时标记 damage_seen，确保损伤片段落盘
-                //cam->mark_damage_seen();
-
-                // 读取带检测框的展示图，在其上绘制紫色差异框
-                cv::Mat display_bgr = cv::imread(t.display_path, cv::IMREAD_COLOR);
-                if (display_bgr.empty()) {
-                    display_bgr = raw_bgr.clone(); // 回退到原图
-                }
-
-                // 在展示图尺寸坐标系下绘制紫框（基线 → 展示图尺寸映射）
-                const float sx = (float)display_bgr.cols / (float)base_bgr.cols;
-                const float sy = (float)display_bgr.rows / (float)base_bgr.rows;
-                const int   max_draw = std::min<int>((int)regions.size(), 8);
-
-                for (int i = 0; i < max_draw; ++i) {
-                    const auto& r = regions[i];
-                    cv::Rect rr(cvRound(r.bbox.x * sx), cvRound(r.bbox.y * sy),
-                                cvRound(r.bbox.width * sx), cvRound(r.bbox.height * sy));
-                    rr &= cv::Rect(0, 0, display_bgr.cols, display_bgr.rows);
-                    if (rr.area() <= 0) continue;
-                    cv::rectangle(display_bgr, rr, cv::Scalar(255, 0, 255), 2);
-                    char tag[32] = {0};
-                    snprintf(tag, sizeof(tag), "diff %.2f", r.score);
-                    cv::putText(display_bgr, tag, cv::Point(rr.x, std::max(15, rr.y - 5)),
-                                cv::FONT_HERSHEY_SIMPLEX, 0.5,
-                                cv::Scalar(255, 0, 255), 1);
-                }
-
-                // 将带 AI 检测框 + 紫色差异框的图片覆盖展示图
-                if (!cv::imwrite(t.display_path, display_bgr)) {
-                    WTALOGI("[damage-diff] 标注图写入失败: %s", t.display_path.c_str());
-                }
-
-                // 触发告警（使用差异对比专用接口，不检查posture_completed）
-                CameraController::getInstance()->diff_warning_process(cam->get_id(), t.point_id, t.light_flag, t.display_path);
-                WTALOGI("[damage-diff] 摄像机[%d] 点位[%d] L%d 检出 %zu 处差异 -> %s",
+        // 需要写基线的情形：标定模式（覆盖更新） 或 基线缺失（补建）
+        if (update_baseline || !base_exists) {
+            ensure_parent_dir(base_path);
+            if (!cv::imwrite(base_path, raw_bgr)) {
+                WTALOGI("[damage-diff] 摄像机[%d] 点位[%d] L%d 基线写入失败: %s",
+                        cam->get_id(), t.point_id, t.light_flag, base_path.c_str());
+            } else {
+                ++write_count;
+                WTALOGI("[damage-diff] 摄像机[%d] 点位[%d] L%d 基线%s: %s",
                         cam->get_id(), t.point_id, t.light_flag,
-                        regions.size(), t.display_path.c_str());
-            } else {
-                WTALOGI("[damage-diff] 摄像机[%d] 点位[%d] L%d 与基线一致",
-                        cam->get_id(), t.point_id, t.light_flag);
-            }
-        } else {
-            // 基线不存在时，无论标定还是巡检模式都需要生成基线
-            ensure_parent_dir(base_path);
-            if (!cv::imwrite(base_path, raw_bgr)) {
-                WTALOGI("[damage-diff] 摄像机[%d] 点位[%d] L%d 基线不存在，写入失败: %s",
-                        cam->get_id(), t.point_id, t.light_flag, base_path.c_str());
-            } else {
-                WTALOGI("[damage-diff] 摄像机[%d] 点位[%d] L%d 基线不存在，已生成基线: %s",
-                        cam->get_id(), t.point_id, t.light_flag, base_path.c_str());
-            }
-            continue; // 首次生成基线，无需后续更新逻辑
-        }
-
-        // 基线更新：仅在标定模式覆盖（使用不带检测框的原图作为基线）
-        if (update_baseline) {
-            ensure_parent_dir(base_path);
-            if (!cv::imwrite(base_path, raw_bgr)) {
-                WTALOGI("[damage-diff] 基线写入失败: %s", base_path.c_str());
-            } else {
-                WTALOGI("[damage-diff] 基线已更新: %s", base_path.c_str());
+                        update_baseline ? "已更新" : "已补建", base_path.c_str());
             }
         }
     }
 
-    WTALOGI("[damage-diff] 摄像机[%s] 批量对比结束，命中 %d 处",
-            cam->getName().c_str(), hit_count);
+    WTALOGI("[damage-diff] 摄像机[%s] 基线维护结束，写入 %d 张",
+            cam->getName().c_str(), write_count);
 }
 
 int ax_model_damage::sub_init(void *json_obj)
@@ -1113,6 +1154,14 @@ int wt_damage_multi_model_recognize::inference(axdl_image_t *pstFrame, axdl_bbox
     int result = 0;
 
     if (m_damage_models.empty()) {
+        return 0;
+    }
+
+    // ★ 相位门控：仅在到达点位且灯光相位就绪时执行推理；
+    //   移动/回位/灯光切换中跳过，节省算力（此期间不产生检测结果，也不绘制/累积）
+    auto *cam = CameraController::getInstance()->getCamera(camera_id);
+    if (!cam || !cam->posture_completed || cam->phase_ready_ms.load() <= 0) {
+        results->nObjSize = 0;
         return 0;
     }
 

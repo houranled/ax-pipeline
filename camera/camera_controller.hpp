@@ -40,7 +40,6 @@ public:
     int start();
     int stop(); // 关闭处理线程
     bool early_warning_process(int camera_id, int point_id, int light_flag, const std::string& damage_type = ""); // 对摄像机id为camera_id触发预警，返回是否真正生成告警
-    bool diff_warning_process(int camera_id, int point_id, int light_flag, const std::string& pic_path); // 差异对比告警（不检查posture_completed）
     Camera* getCamera(int camera_id); // 根据id获取相机对象
     std::vector<Camera*> getAllCameras(); // 获取所有摄像机实例
     void forEachCamera(std::function<void(Camera*)> func)
@@ -115,6 +114,10 @@ public:
     std::atomic<bool> posture_completed{true}; // 是否到达指定位置
     bool light_phase_changed = false; // 灯光状态变更标志，用于同一点位触发两次拍照
     std::atomic<bool> photo_captured{false}; // 拍照完成标志（L0/L1 复用）
+    // 相位就绪时刻(ms since epoch)：到位且灯光稳定/armed后由巡检线程置为当前时刻；
+    // 移动/回位时置 0。draw_custom 据此 + 流延迟余量判定，只有真正就绪后才累积/拍照，
+    // 避免把移动过程、灯光切换过程或视频流缓冲中的旧帧误当作当前点位画面。
+    std::atomic<long long> phase_ready_ms{0};
     std::set<int> photo_fired_keys; // 已拍照点位+灯光状态（key = point_id * 10 + light_flag）
 
     // 累积检测结果：停留期间所有帧的检测结果合并，拍照时使用
@@ -143,6 +146,7 @@ public:
     int fetch_remote_status();
     int get_id() const;
     bool is_patroling() const; // 获取是否在巡逻中
+    bool is_calibrating() const { return calibrating.load(); } // 是否处于标定模式
     void finish_patrolling(); // 告知巡逻结束
     // 请求中断当前巡检/标定循环：循环会在最近的可打断点退出
     void request_stop_patrol() {
@@ -224,6 +228,7 @@ private:
 
     bool running;
     bool patrolling = false;  // 是否在巡逻中
+    std::atomic<bool> calibrating{false}; // 是否处于标定模式（标定时跳过 diff 门控，强制建/更新基线）
     time_t patrol_start_time = 0; // 巡检开始时间戳（东八区已修正），用于本轮巡检所有路径统一时间基准
     std::atomic<bool> stop_requested{false}; // 收到停止巡检指令
     std::mutex              stop_mtx;        // 配合 stop_cv 使用

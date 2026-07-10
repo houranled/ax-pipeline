@@ -46,7 +46,6 @@ public:
 
 
     bool generateAlarm(AlarmType type, const std::string& message, float confidence, Camera *camera, int point_id, int light_flag); // 生成告警
-    bool generateDiffAlarm(Camera *camera, int point_id, int light_flag, const std::string& pic_path); // 批量差异对比专用告警（不检查posture_completed）
     std::string output_alarms(int camera_id); // 输出对应id的摄像机的告警信息
 
     static uint32_t cooldown;  // 同(相机,类型)告警冷却时间(秒)

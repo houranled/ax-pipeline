@@ -61,52 +61,6 @@ bool AlarmManager::generateAlarm(AlarmType type, const std::string& message, flo
     return true;
 }
 
-bool AlarmManager::generateDiffAlarm(Camera *camera, int point_id, int light_flag, const std::string& pic_path)
-{
-    if (camera == nullptr)
-        return false;
-
-    int cameraId = camera->get_id();
-
-    std::lock_guard<std::mutex> lock(queueMutex);
-
-    // ★ 入队前去重：检查是否已存在相同 camera_id + point_id + light_flag 的告警
-    auto& q = alarm_map_datas[cameraId];
-    std::queue<Alarm> temp_q;
-    bool exists = false;
-    while (!q.empty()) {
-        Alarm& a = q.front();
-        if (a.point_id == point_id && a.light_flag == light_flag) {
-            exists = true;
-        }
-        temp_q.push(std::move(a));
-        q.pop();
-    }
-    alarm_map_datas[cameraId] = std::move(temp_q);
-
-    if (exists) {
-        WTALOGI("摄像头[%d] 点位[%d] L%d 差异告警已存在，跳过重复入队", cameraId, point_id, light_flag);
-        return false;
-    }
-
-    Alarm alarm;
-    alarm.cameraId = cameraId;
-    alarm.channel_name = camera->getName();
-    alarm.point_id = point_id;
-    alarm.light_flag = light_flag;
-    alarm.damage_type = AlarmType::LINE_CROSSING;
-    alarm.type = "Baseline_Diff";
-    alarm.timestamp = time(nullptr);
-    alarm.confidence = 1.0f;
-    alarm.picPath = pic_path;
-
-    alarm_map_datas[cameraId].push(alarm);
-    WTALOGI("为摄像头[%d] 点位[%d] L%d 生成差异对比告警!", cameraId, point_id, light_flag);
-
-    queueCondition.notify_one();
-    return true;
-}
-
 std::string AlarmManager::output_alarms(int camera_id)
 {
     std::unique_lock<std::mutex> lock(queueMutex);
