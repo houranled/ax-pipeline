@@ -1117,8 +1117,17 @@ std::string Camera::captureSnapshot(const cv::Mat& image, int point_id, int ligh
             orga_name.c_str(), name.c_str(), point_id);
     }
 
-    std::vector<int> jpg_params = { cv::IMWRITE_JPEG_QUALITY, 90 };
-    if (!cv::imwrite(filepath, image, jpg_params)) {
+    // 根据文件扩展名选择正确的压缩参数
+    std::vector<int> params;
+    size_t len = strlen(filepath);
+    if (len >= 4 && filepath[len - 4] == '.' && filepath[len - 3] == 'p' && filepath[len - 2] == 'n' && filepath[len - 1] == 'g') {
+        // PNG 文件使用 PNG 压缩参数
+        params = { cv::IMWRITE_PNG_COMPRESSION, 9 };  // 压缩级别 0-9，9 为最高压缩
+    } else {
+        // JPEG 文件使用 JPEG 质量参数
+        params = { cv::IMWRITE_JPEG_QUALITY, 90 };
+    }
+    if (!cv::imwrite(filepath, image, params)) {
         WTALOGI("[Camera] 点位[%d] cv::imwrite 失败: %s", now_point_id, filepath);
         return "";
     }
