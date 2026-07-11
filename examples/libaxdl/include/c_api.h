@@ -2,6 +2,7 @@
 #define _AXDL_H_
 #include <vector>
 #include <string>
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C"
@@ -142,6 +143,13 @@ extern "C"
         axdl_point_t *mCrowdCountPts;
 
         int niFps /*inference*/, noFps /*osd*/;
+
+        /* 帧级巡检状态：由 ai_inference_func 在收到帧时填充，draw_custom 使用本帧自带状态而不是实时查相机，减少视频流延迟错位 */
+        int frame_point_id;             // 该帧对应的点位
+        bool frame_posture_completed;   // 该帧处理时是否已到位
+        int frame_light_flag;           // 0=L0(开灯), 1=L1(关灯/低照)
+        long long frame_phase_ready_ms; // 该帧处理时点位就绪时刻
+        long long frame_capture_ts_ms;  // 该帧处理时间戳
 
     } axdl_results_t;
 

@@ -637,7 +637,8 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
     auto *cam = CameraController::getInstance()->getCamera(camera_id);
 
     // 仅在到达点位且灯光相位就绪时绘制当前帧 AI 检测框；移动/回位/灯光切换中不绘制
-    if (cam && cam->posture_completed && cam->phase_ready_ms.load() > 0) {
+    // 使用本帧自带的帧状态，避免实时查相机状态导致视频流延迟错位
+    if (cam && results->frame_posture_completed && results->frame_phase_ready_ms > 0) {
         draw_bbox(image, results, fontscale, thickness, offset_x, offset_y);
     }
 
@@ -649,10 +650,10 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
              t_info->tm_year + 1900, t_info->tm_mon + 1, t_info->tm_mday,
              t_info->tm_hour, t_info->tm_min, t_info->tm_sec);
 
-    int cur_point = cam->now_point_id;
+    int cur_point = results->frame_point_id;
     char point_str[128] = {0};
     bool is_moving = false;
-    if (cam && cam->posture_completed) {
+    if (cam && results->frame_posture_completed) {
         snprintf(point_str, sizeof(point_str), "Point: %d (arrived)", cur_point);
     } else {
         snprintf(point_str, sizeof(point_str), "Point: %d (moving...)", cur_point);
@@ -712,49 +713,60 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
 
     cv::putText(image, point_str, cv::Point(text_x, text_y + baseline), font_face, font_scale, cv::Scalar(point_color[0], point_color[1], point_color[2], 255), text_thickness);
 
-    // 灯光状态：light_phase_changed 由巡检线程在灯光稳定后设置
-    // L0 拍照时 light_phase_changed=false，L1 拍照时 light_phase_changed=true
-    int cur_light_flag = cam->light_phase_changed ? 1 : 0;
+    // 灯光状态：使用本帧自带的帧状态，0=L0(开灯), 1=L1(关灯/低照)
+    int cur_light_flag = results->frame_light_flag;
     int fired_key = cur_point * 10 + cur_light_flag;
 
     // 相位就绪：到位 + 灯光正确 + 巡检线程已 arm + 额外流延迟余量
     // 避免在 RTSP 解码缓冲中的旧帧上累积/拍照（例如灯光切换后还未实际呈现的画面）
-    const long long STREAM_LATENCY_SETTLE_MS = 800; // 流延迟余量，可调
-    long long phase_ready = cam->phase_ready_ms.load();
-    long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                           std::chrono::system_clock::now().time_since_epoch()).count();
+    const long long STREAM_LATENCY_SETTLE_MS = 90; // 流延迟余量，可调
+    // 相位就绪：使用本帧自带的 phase_ready_ms 和 capture_ts_ms，避免用当前系统时间判断旧帧
+    long long phase_ready = results->frame_phase_ready_ms;
+    long long now_ms = results->frame_capture_ts_ms;
     bool phase_settled = (phase_ready > 0) && (now_ms - phase_ready >= STREAM_LATENCY_SETTLE_MS);
 
     // ★ 每帧累积检测结果（只有相位真正就绪后才累积，避免灯光/移动过程中的误累积）
-    if (cam->posture_completed && phase_settled && results->nObjSize > 0) {
+    if (results->frame_posture_completed && phase_settled && results->nObjSize > 0) {
         cam->accumulate_detection(results);
     }
 
     // 每个点位触发两次拍照（有灯照+无灯照）：
     // - 使用 photo_fired_keys 记录已拍照的 (point_id, light_flag) 组合
     // - key = point_id * 10 + light_flag，巡检开始时清空
+    // - 推理线程已判断并设置 photo_captured，draw_custom 只负责保存图片
     if (cam->photo_fired_keys.count(fired_key)) {
+        WTALOGI("[draw_custom] 跳过拍照: 点位[%d] L%d, 已拍照过", cur_point, cur_light_flag);
         return; // 同点位同灯光状态已触发过，跳过
     }
 
-    if (!cam->posture_completed)
+    if (!results->frame_posture_completed) {
+        WTALOGI("[draw_custom] 跳过拍照: 点位[%d] L%d, 未到位", cur_point, cur_light_flag);
         return; // 未到点位，跳过
+    }
 
-    if (!phase_settled)
+    if (!phase_settled) {
+        WTALOGI("[draw_custom] 跳过拍照: 点位[%d] L%d, phase_settled=false, phase_ready=%lld, now_ms=%lld, diff=%lldms",
+                cur_point, cur_light_flag, phase_ready, now_ms, now_ms - phase_ready);
         return; // 灯光/流延迟未就绪，跳过，避免拍到旧帧
+    }
 
-    // 重新获取点位ID，确保与 posture_completed 检查一致
-    cur_point = cam->now_point_id;
+    // 重新获取点位ID，使用本帧自带状态避免时序变化
+    cur_point = results->frame_point_id;
     fired_key = cur_point * 10 + cur_light_flag; // 重新计算 key
 
     // 点位ID必须有效（>=1），防止巡检未开始时误拍
-    if (cur_point < 1)
+    if (cur_point < 1) {
+        WTALOGI("[draw_custom] 跳过拍照: 点位ID无效[%d]", cur_point);
         return;
+    }
 
     // 再次检查去重（防止 cur_point 变化后重复拍照）
     if (cam->photo_fired_keys.count(fired_key)) {
+        WTALOGI("[draw_custom] 跳过拍照: 点位[%d] L%d, 已拍照过（二次检查）", cur_point, cur_light_flag);
         return;
     }
+
+    WTALOGI("[draw_custom] 进入拍照逻辑: 点位[%d] L%d", cur_point, cur_light_flag);
 
     // 保存两份图片：
     // 1. 原图（不带检测框）→ _raw.png，用于 diff 对比
@@ -835,7 +847,6 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
                 cv::Mat wm_image = raw_image.clone();
                 draw_watermark_bgr(wm_image, cur_point, false);
                 cam->captureSnapshot(wm_image, cur_point, cur_light_flag);
-                cam->photo_captured.store(true);       // 放行巡检线程，避免拍照超时
                 cam->photo_fired_keys.insert(fired_key);
                 if (cur_light_flag == 1) cam->light_phase_changed = false;
                 WTALOGI("[damage] 点位[%d] L%d 与基线一致，存无框原图，不告警", cur_point, cur_light_flag);
@@ -874,9 +885,6 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
 
     // 保存带框图（用于展示告警），使用当前点位 cur_point 而非可能已变化的 now_point_id
     std::string saved_path = cam->captureSnapshot(merged_image, cur_point, cur_light_flag);
-
-    // 标记拍照完成（通知巡检线程可以继续）
-    cam->photo_captured.store(true);
 
     // ★ 使用累积结果触发告警（而非仅当前帧）
     if (!accumulated.empty()) {

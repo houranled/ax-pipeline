@@ -14,7 +14,7 @@ bool AlarmManager::isAlarmTriggered(AlarmType type, const std::string &message, 
 
 bool AlarmManager::generateAlarm(AlarmType type, const std::string& message, float confidence, Camera *camera, int point_id, int light_flag)
 {
-    if (camera == nullptr || !camera->is_patroling() || !camera->posture_completed)
+    if (camera == nullptr)
         return false;
 
     int cameraId = camera->get_id();

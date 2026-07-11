@@ -36,6 +36,7 @@
 #include "signal.h"
 #include "vector"
 #include "map"
+#include <chrono>
 
 #include "opencv2/opencv.hpp"
 #include "../../../camera/camera_controller.hpp"
@@ -167,6 +168,23 @@ void ai_inference_func(pipeline_buffer_t *buff)
             // 初始化合并后的结果
             mResults[pipe->pipeid].nObjSize = 0;
 
+            // ★ 把当前帧关联的相机状态快照写入结果，避免 draw_custom 再实时查相机状态导致视频流延迟错位
+            // 先清零，防止 m_pcamera 为空时残留旧状态
+            mResults[pipe->pipeid].frame_point_id = 0;
+            mResults[pipe->pipeid].frame_posture_completed = false;
+            mResults[pipe->pipeid].frame_light_flag = 0;
+            mResults[pipe->pipeid].frame_phase_ready_ms = 0;
+            mResults[pipe->pipeid].frame_capture_ts_ms = 0;
+            if (pipe->m_pcamera) {
+                Camera *cam = pipe->m_pcamera;
+                mResults[pipe->pipeid].frame_point_id = cam->now_point_id;
+                mResults[pipe->pipeid].frame_posture_completed = cam->posture_completed.load();
+                mResults[pipe->pipeid].frame_light_flag = cam->light_phase_changed ? 1 : 0;
+                mResults[pipe->pipeid].frame_phase_ready_ms = cam->phase_ready_ms.load();
+                mResults[pipe->pipeid].frame_capture_ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                                 std::chrono::system_clock::now().time_since_epoch()).count();
+            }
+
             if (pipe->m_pcamera && (pipe->m_pcamera->ptz_ip.empty() || pipe->m_pcamera->is_patroling())) {
                 // 使用所有模型对同一帧图像进行推理，并合并结果
                 int max_obj_per_model = SAMPLE_MAX_BBOX_COUNT / g_sample.osd_target_map[pipe->pipeid]->gModels.size();
@@ -186,6 +204,28 @@ void ai_inference_func(pipeline_buffer_t *buff)
                         } else break;
                     }
                     mResults[pipe->pipeid].niFps = model_result.niFps; // 保存推理FPS
+                }
+
+                // 推理线程判断是否满足拍照条件（无延迟，立即设置 photo_captured）
+                // 条件：到位 + 相位就绪 + 未拍照过
+                Camera *cam = pipe->m_pcamera;
+                if (cam) {
+                    int cur_point = mResults[pipe->pipeid].frame_point_id;
+                    int cur_light_flag = mResults[pipe->pipeid].frame_light_flag;
+                    int fired_key = cur_point * 10 + cur_light_flag;
+
+                    // 相位就绪判断（使用帧自带的 phase_ready_ms 和 capture_ts_ms）
+                    const long long STREAM_LATENCY_SETTLE_MS = 90;
+                    long long phase_ready = mResults[pipe->pipeid].frame_phase_ready_ms;
+                    long long now_ms = mResults[pipe->pipeid].frame_capture_ts_ms;
+                    bool phase_settled = (phase_ready > 0) && (now_ms - phase_ready >= STREAM_LATENCY_SETTLE_MS);
+
+                    // 判断是否满足拍照条件
+                    if (mResults[pipe->pipeid].frame_posture_completed && phase_settled &&
+                        cur_point >= 1 && !cam->photo_fired_keys.count(fired_key)) {
+                        cam->photo_captured.store(true);
+                        if (cur_light_flag == 1) cam->light_phase_changed = false;
+                    }
                 }
 
             }
