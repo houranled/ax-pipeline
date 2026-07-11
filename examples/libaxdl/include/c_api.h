@@ -150,6 +150,7 @@ extern "C"
         int frame_light_flag;           // 0=L0(开灯), 1=L1(关灯/低照)
         long long frame_phase_ready_ms; // 该帧处理时点位就绪时刻
         long long frame_capture_ts_ms;  // 该帧处理时间戳
+        int frame_should_capture;      // 0=不拍照, 1=L0, 2=L1，由巡检线程设置
 
     } axdl_results_t;
 

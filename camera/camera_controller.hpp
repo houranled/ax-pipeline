@@ -113,11 +113,11 @@ public:
     int now_point_id=0; // 当前所在点位id
     std::atomic<bool> posture_completed{true}; // 是否到达指定位置
     bool light_phase_changed = false; // 灯光状态变更标志，用于同一点位触发两次拍照
-    std::atomic<bool> photo_captured{false}; // 拍照完成标志（L0/L1 复用）
     // 相位就绪时刻(ms since epoch)：到位且灯光稳定/armed后由巡检线程置为当前时刻；
     // 移动/回位时置 0。draw_custom 据此 + 流延迟余量判定，只有真正就绪后才累积/拍照，
     // 避免把移动过程、灯光切换过程或视频流缓冲中的旧帧误当作当前点位画面。
     std::atomic<long long> phase_ready_ms{0};
+    std::atomic<int> frame_should_capture{0}; // 0=不拍照, 1=L0, 2=L1，由巡检线程设置
     std::set<int> photo_fired_keys; // 已拍照点位+灯光状态（key = point_id * 10 + light_flag）
 
     // 累积检测结果：停留期间所有帧的检测结果合并，拍照时使用

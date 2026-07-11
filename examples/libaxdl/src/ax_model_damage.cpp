@@ -14,6 +14,31 @@
 #include "../../utilities/json.hpp"
 #include "../../camera/camera_controller.hpp"
 
+// 把当前帧关联的相机巡检状态快照写入 results，避免 draw_custom 再实时查相机状态导致视频流延迟错位
+static void fill_camera_frame_state(axdl_results_t *results, int camera_id)
+{
+    if (!results) return;
+
+    // 先清零，防止没有关联 camera 时残留旧状态
+    results->frame_point_id = 0;
+    results->frame_posture_completed = false;
+    results->frame_light_flag = 0;
+    results->frame_phase_ready_ms = 0;
+    results->frame_capture_ts_ms = 0;
+    results->frame_should_capture = 0;
+
+    auto *cam = CameraController::getInstance()->getCamera(camera_id);
+    if (!cam) return;
+
+    results->frame_point_id = cam->now_point_id;
+    results->frame_posture_completed = cam->posture_completed.load();
+    results->frame_light_flag = cam->light_phase_changed ? 1 : 0;
+    results->frame_phase_ready_ms = cam->phase_ready_ms.load();
+    results->frame_capture_ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                        std::chrono::system_clock::now().time_since_epoch()).count();
+    results->frame_should_capture = cam->frame_should_capture.load();
+}
+
 // ---------- 点位前后对比（同光照↔同光照）小工具 ----------
 namespace {
     // 基线图永久路径：/wt_tech/conf/baseline/<orga>/<camera>/point<id>_L<flag>.png
@@ -733,36 +758,17 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
     // 每个点位触发两次拍照（有灯照+无灯照）：
     // - 使用 photo_fired_keys 记录已拍照的 (point_id, light_flag) 组合
     // - key = point_id * 10 + light_flag，巡检开始时清空
-    // - 推理线程已判断并设置 photo_captured，draw_custom 只负责保存图片
+    // - 直接使用 frame_should_capture 标记，由巡检线程控制
+    if (results->frame_should_capture == 0) {
+        return; // 巡检线程未标记拍照，跳过
+    }
+
+    // 根据 frame_should_capture 确定 cur_light_flag
+    cur_light_flag = (results->frame_should_capture == 1) ? 0 : 1;
+    fired_key = cur_point * 10 + cur_light_flag;
+
+    // 去重检查
     if (cam->photo_fired_keys.count(fired_key)) {
-        WTALOGI("[draw_custom] 跳过拍照: 点位[%d] L%d, 已拍照过", cur_point, cur_light_flag);
-        return; // 同点位同灯光状态已触发过，跳过
-    }
-
-    if (!results->frame_posture_completed) {
-        WTALOGI("[draw_custom] 跳过拍照: 点位[%d] L%d, 未到位", cur_point, cur_light_flag);
-        return; // 未到点位，跳过
-    }
-
-    if (!phase_settled) {
-        WTALOGI("[draw_custom] 跳过拍照: 点位[%d] L%d, phase_settled=false, phase_ready=%lld, now_ms=%lld, diff=%lldms",
-                cur_point, cur_light_flag, phase_ready, now_ms, now_ms - phase_ready);
-        return; // 灯光/流延迟未就绪，跳过，避免拍到旧帧
-    }
-
-    // 重新获取点位ID，使用本帧自带状态避免时序变化
-    cur_point = results->frame_point_id;
-    fired_key = cur_point * 10 + cur_light_flag; // 重新计算 key
-
-    // 点位ID必须有效（>=1），防止巡检未开始时误拍
-    if (cur_point < 1) {
-        WTALOGI("[draw_custom] 跳过拍照: 点位ID无效[%d]", cur_point);
-        return;
-    }
-
-    // 再次检查去重（防止 cur_point 变化后重复拍照）
-    if (cam->photo_fired_keys.count(fired_key)) {
-        WTALOGI("[draw_custom] 跳过拍照: 点位[%d] L%d, 已拍照过（二次检查）", cur_point, cur_light_flag);
         return;
     }
 
@@ -1164,6 +1170,9 @@ int wt_damage_multi_model_recognize::inference(axdl_image_t *pstFrame, axdl_bbox
     if (m_damage_models.empty()) {
         return 0;
     }
+
+    // 先填充相机巡检状态快照，供 draw_custom 使用
+    fill_camera_frame_state(results, camera_id);
 
     // ★ 相位门控：仅在到达点位且灯光相位就绪时执行推理；
     //   移动/回位/灯光切换中跳过，节省算力（此期间不产生检测结果，也不绘制/累积）
