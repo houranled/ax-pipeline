@@ -1096,7 +1096,9 @@ std::string Camera::captureSnapshot(const cv::Mat& image, int point_id, int ligh
 {
     // 使用巡检开始时冻结的时间戳（系统时间已是东八区），保证整轮巡检所有快照在同一分钟目录下
     time_t base_time = patrol_start_time > 0 ? patrol_start_time : time(nullptr);
-    tm *t = localtime(&base_time);  // 使用 localtime 处理本地时间
+    struct tm tmbuf;
+    localtime_r(&base_time, &tmbuf);  // 线程安全：使用私有 tm 缓冲区，避免 localtime 静态缓冲区被并发覆盖
+    tm *t = &tmbuf;
     char ymd[16] = {0};
     snprintf(ymd, sizeof(ymd), "%04d%02d%02d", t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
 
@@ -1193,7 +1195,9 @@ std::string Camera::generateCustomVideoPath(VideoPathType type= VideoPathType::V
     } else {
         time(&timeReal);  // 系统时间已是东八区
     }
-    tm *t = localtime(&timeReal);  // 使用 localtime 处理本地时间
+    struct tm tmbuf;
+    localtime_r(&timeReal, &tmbuf);  // 线程安全：使用私有 tm 缓冲区，避免 localtime 静态缓冲区被并发覆盖
+    tm *t = &tmbuf;
 
     char dateStr[16] = {0};
     sprintf(dateStr, "%04d%02d%02d", t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
