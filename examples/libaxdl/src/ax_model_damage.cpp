@@ -1072,8 +1072,7 @@ int wt_damage_multi_model_recognize::scan_and_load_models(const std::string& pos
             model_json["CLASS_NAMES"] = nlohmann::json::array({damage_type});
             model_json["PROB_THRESHOLD"] = 0.4;
             model_json["NMS_THRESHOLD"] = 0.45;
-            WTALOGI("模型 '%s' 无独立配置，使用默认(CLASS_NUM=1, CLASS_NAMES=['%s'])",
-                    fname.c_str(), damage_type.c_str());
+            WTALOGI("模型 '%s' 无独立配置，使用默认(CLASS_NUM=1, CLASS_NAMES=['%s'])", fname.c_str(), damage_type.c_str());
         }
 
         // 确保必要字段
@@ -1130,13 +1129,24 @@ int wt_damage_multi_model_recognize::init(void *json_obj)
         return -1;
     }
 
-    // 解析部署时指定的部位名称
-    if (jsondata.contains("POSITION")) {
+    // 部位名称：根据云台类型自动选择（big=大云台→outside，small=小云台→inside），
+    // 无需在配置里冗余指定 POSITION。取不到相机时回退到配置中的 POSITION（可选，用于覆盖/调试）。
+    std::string ptz_type;
+    if (auto *cam = CameraController::getInstance()->getCamera(camera_id)) {
+        ptz_type = cam->ptz_type;
+    }
+    if (ptz_type == "big") {
+        m_position_name = "outside";
+    } else if (ptz_type == "small") {
+        m_position_name = "inside";
+    } else if (jsondata.contains("POSITION")) {
         m_position_name = jsondata["POSITION"].get<std::string>();
+        WTALOGI("相机[%d] 未取到云台类型，回退使用配置 POSITION=%s", camera_id, m_position_name.c_str());
     } else {
-        WTALOGI("配置中缺少 POSITION（部位名称）");
+        WTALOGI("相机[%d] 无法确定类型：ptz_type 为空且配置缺少 POSITION", camera_id);
         return -1;
     }
+    WTALOGI("相机[%d] 按云台类型[%s]选择: %s", camera_id, ptz_type.c_str(), m_position_name.c_str());
 
     // 直接访问指定部位的子目录
     std::string position_dir = m_model_root_dir + "/" + m_position_name;
