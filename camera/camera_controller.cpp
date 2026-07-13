@@ -1651,6 +1651,7 @@ int Camera::set_brighten(int brightness)
     this->brightness = brightness;
 
     // 阶梯式分配：0-500 单灯递增，500-1000 主灯满+副灯递增
+    // 前端亮度 0-1000 映射到灯珠功率 0-750（灯珠满功率上限 750，1000 功率过高不可用）
     // 只在开灯时切换主副灯，避免频繁闪烁
     if (last_brightness == 0 && brightness > 0) {
         lamp_toggle = 1 - lamp_toggle; // 仅在开灯时切换
@@ -1659,11 +1660,11 @@ int Camera::set_brighten(int brightness)
 
     int lamp_main = 0, lamp_sub = 0;
     if (brightness <= 500) {
-        lamp_main = brightness * 2;  // 主灯 0-1000
-        lamp_sub = 0;                // 副灯不亮
+        lamp_main = brightness * 3 / 2;  // 主灯 0-750
+        lamp_sub = 0;                    // 副灯不亮
     } else {
-        lamp_main = 1000;                      // 主灯满
-        lamp_sub = (brightness - 500) * 2;    // 副灯 0-1000
+        lamp_main = 750;                          // 主灯满(750)
+        lamp_sub = (brightness - 500) * 3 / 2;    // 副灯 0-750
     }
 
     // 根据 toggle 决定哪个灯做主灯
@@ -1917,18 +1918,18 @@ int Camera::fetch_remote_status()
         if (rc == -1) {
             res2 = -1;
         } else {
-            // 逆运算：根据两灯亮度还原 brightness
+            // 逆运算：根据两灯亮度还原 brightness（灯珠 0-750 还原前端 0-1000）
             // 阶梯式分配：0-500 单灯，500-1000 双灯
-            int lamp_A = regs[0];  // 灯A 0-1000
-            int lamp_B = regs[1];  // 灯B 0-1000
+            int lamp_A = regs[0];  // 灯A 0-750
+            int lamp_B = regs[1];  // 灯B 0-750
             int lamp_main = std::max(lamp_A, lamp_B);
             int lamp_sub = std::min(lamp_A, lamp_B);
             if (lamp_sub == 0) {
-                // 单灯模式：brightness = lamp_main / 2
-                this->brightness = lamp_main / 2;
+                // 单灯模式：brightness = lamp_main * 2 / 3
+                this->brightness = lamp_main * 2 / 3;
             } else {
-                // 双灯模式：brightness = 500 + lamp_sub / 2
-                this->brightness = 500 + lamp_sub / 2;
+                // 双灯模式：brightness = 500 + lamp_sub * 2 / 3
+                this->brightness = 500 + lamp_sub * 2 / 3;
             }
         }
 
