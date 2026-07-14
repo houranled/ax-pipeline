@@ -854,6 +854,7 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
                 draw_watermark_bgr(wm_image, cur_point, false);
                 cam->captureSnapshot(wm_image, cur_point, cur_light_flag);
                 cam->photo_fired_keys.insert(fired_key);
+                cam->frame_should_capture.store(0); // 通知巡检线程本相位拍照完成
                 if (cur_light_flag == 1) cam->light_phase_changed = false;
                 WTALOGI("[damage] 点位[%d] L%d 与基线一致，存无框原图，不告警", cur_point, cur_light_flag);
                 return;
@@ -925,6 +926,7 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
 
     // 标记该点位+灯光状态已处理
     cam->photo_fired_keys.insert(fired_key);
+    cam->frame_should_capture.store(0); // 通知巡检线程本相位拍照完成
 
     // L1 拍照完成后消费掉标志（必须在拍照成功后才消费，避免提前消费导致状态错乱）
     if (cur_light_flag == 1) {

@@ -200,14 +200,6 @@ void ai_inference_func(pipeline_buffer_t *buff)
                         mResults[pipe->pipeid].frame_should_capture    = model_result.frame_should_capture;
                     }
                 }
-
-                // 推理线程判断是否满足拍照条件（无延迟，立即设置 frame_should_capture = 0）
-                // 直接使用 frame_should_capture 标记，由巡检线程控制
-                Camera *cam = pipe->m_pcamera;
-                if (cam && mResults[pipe->pipeid].frame_should_capture > 0) {
-                    cam->frame_should_capture.store(0); // 标记拍照完成
-                }
-
             }
 
             // ALOGI("pipe=%d detect%d", pipe->pipeid, mResults[pipe->pipeid].nObjSize);
