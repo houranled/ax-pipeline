@@ -124,6 +124,15 @@ namespace {
 
     struct DiffRegion { cv::Rect bbox; float score; };
 
+    // diff 门控全局阈值（默认值即原硬编码值）。由 wt_rtsp.json 模型配置在 init 时覆盖，全局生效。
+    struct DiffThresholds {
+        float ssim_th    = 0.45f; // 严格：改小  宽松：改大
+        float absd_ratio = 0.30f; // 像素差 > 该比例才算
+        int   block      = 96;    // 分块尺寸
+        int   min_area   = 2000;  // 过滤小区域噪点
+    };
+    static DiffThresholds g_diff_th;
+
     // 当前帧 vs 基线帧 → 差异区域（基线坐标系）
     static std::vector<DiffRegion> diff_against_baseline(
         const cv::Mat& cur_bgr, const cv::Mat& base_bgr)
@@ -131,10 +140,10 @@ namespace {
         std::vector<DiffRegion> out;
         if (cur_bgr.empty() || base_bgr.empty()) return out;
 
-        const float SSIM_TH   = 0.45f; // 严格：改小  宽松：改大
-        const float ABSD_RATIO = 0.30f; // 像素差 > 30% 才算
-        const int   BLOCK     = 96;
-        const int   MIN_AREA  = 2000; // 过滤小区域噪点
+        const float SSIM_TH    = g_diff_th.ssim_th;
+        const float ABSD_RATIO = g_diff_th.absd_ratio;
+        const int   BLOCK      = g_diff_th.block > 0 ? g_diff_th.block : 96;
+        const int   MIN_AREA   = g_diff_th.min_area;
 
         cv::Mat cur = cur_bgr;
         if (cur.size() != base_bgr.size())
@@ -1219,6 +1228,14 @@ int wt_damage_multi_model_recognize::init(void *json_obj)
         WTALOGI("配置中缺少 MODEL_ROOT_DIR");
         return -1;
     }
+
+    // diff 门控全局阈值（可选，缺省用默认值）。放在 wt_rtsp.json，全局生效。
+    if (jsondata.contains("DIFF_SSIM_TH"))    g_diff_th.ssim_th    = jsondata["DIFF_SSIM_TH"].get<float>();
+    if (jsondata.contains("DIFF_ABSD_RATIO")) g_diff_th.absd_ratio = jsondata["DIFF_ABSD_RATIO"].get<float>();
+    if (jsondata.contains("DIFF_BLOCK"))      g_diff_th.block      = jsondata["DIFF_BLOCK"].get<int>();
+    if (jsondata.contains("DIFF_MIN_AREA"))   g_diff_th.min_area   = jsondata["DIFF_MIN_AREA"].get<int>();
+    WTALOGI("diff 阈值: SSIM_TH=%.3f ABSD_RATIO=%.3f BLOCK=%d MIN_AREA=%d",
+            g_diff_th.ssim_th, g_diff_th.absd_ratio, g_diff_th.block, g_diff_th.min_area);
 
     // 部位名称：根据云台类型自动选择（big=大云台→outside，small=小云台→inside），
     // 无需在配置里冗余指定 POSITION。取不到相机时回退到配置中的 POSITION（可选，用于覆盖/调试）。
