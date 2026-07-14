@@ -7,6 +7,8 @@
 #include <cmath>
 #include <opencv2/opencv.hpp>
 #include <string>
+#include <map>
+#include <set>
 #include <mutex>
 #include <thread>
 #include <future>
@@ -85,8 +87,17 @@ private:
         std::shared_ptr<ax_model_base> model;
     };
 
-    // 当前部位下所有损伤模型
+    // 当前部位下所有通用损伤模型（big=outside/ small=inside 目录，每个点位都跑）
     std::vector<DamageModelInfo> m_damage_models;
+
+    // 专用模型缓存：文件名(含扩展名) -> 模型信息。
+    // init 时从本相机各点位 rt.json models[] 的并集预加载，位于 <position_dir>/specialized。
+    std::map<std::string, DamageModelInfo> m_specialized_models;
+
+    // 点位id -> 该点位专用模型指针列表（指向 m_specialized_models 中的条目，map 节点地址稳定）。
+    // init 时预计算，inference 时直接查表，避免每帧线性扫描点位+字符串规范化，
+    // 且不再在推理热路径读取可能被热加载改写的 preset_positions（消除潜在数据竞争）。
+    std::map<int, std::vector<const DamageModelInfo*>> m_point_specialized;
 
     // 模型根目录
     std::string m_model_root_dir;
@@ -94,7 +105,17 @@ private:
     // 部署时指定的部位名称（对应子目录名）
     std::string m_position_name;
 
-    // 扫描指定目录下的所有 .axmodel 文件并加载
+    // 当前部位目录（m_model_root_dir/m_position_name），specialized 子目录在其下
+    std::string m_position_dir;
+
+    // 扫描指定目录下的所有 .axmodel 文件并加载（通用模型）
     int scan_and_load_models(const std::string& position_dir);
+
+    // 加载单个 .axmodel：dir 为所在目录（用于查找同名 .json 配置），fname 为文件名(含.axmodel)。
+    // 成功返回 model 非空的 DamageModelInfo，失败返回的 info.model 为 nullptr。
+    DamageModelInfo load_model_file(const std::string& dir, const std::string& fname);
+
+    // 预加载本相机所有点位 models[] 引用的专用模型（位于 <position_dir>/specialized）
+    int load_specialized_models();
 };
 REGISTER(WT_DAMAGE_MULTI_MODEL_RECOGNIZE, wt_damage_multi_model_recognize)

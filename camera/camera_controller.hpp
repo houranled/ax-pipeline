@@ -105,6 +105,7 @@ public:
         int zoom;
         int focus;
         int brightness;
+        std::vector<std::string> models; // 该点位专用模型文件名列表（rt.json 的 models[]），在通用模型之上额外叠加
     };
 
     std::string ip;  // 相机ip地址

@@ -13,6 +13,24 @@
 // update_baseline: true=标定模式更新基线，false=巡检模式不更新基线
 void run_post_patrol_diff(class Camera* cam, bool update_baseline);
 
+// 解析点位专用模型字段 pointModels：逗号分隔的模型名字符串（如 "a,b,c"），
+// 按逗号拆分并去除每项首尾空白后追加到 out（空项忽略）。
+static void parse_point_models(const std::string& csv, std::vector<std::string>& out)
+{
+    size_t start = 0;
+    while (start <= csv.size()) {
+        size_t comma = csv.find(',', start);
+        std::string item = (comma == std::string::npos)
+                               ? csv.substr(start)
+                               : csv.substr(start, comma - start);
+        size_t b = item.find_first_not_of(" \t\r\n");
+        size_t e = item.find_last_not_of(" \t\r\n");
+        if (b != std::string::npos) out.push_back(item.substr(b, e - b + 1));
+        if (comma == std::string::npos) break;
+        start = comma + 1;
+    }
+}
+
 
 void CameraController::addCamera(int id, std::string channel_name, std::string rtsp_url)
 {
@@ -572,6 +590,10 @@ int CameraController::load_config_from_file(const std::string& config_file_path)
                         pos.zoom = point["zoom"];
                         pos.focus = point["focus"];
                         pos.brightness = point["brightness"];
+                        // 该点位专用模型（可选）：pointModels 为逗号分隔的模型名字符串，在通用模型之上额外叠加
+                        if (point.contains("pointModels") && point["pointModels"].is_string()) {
+                            parse_point_models(point["pointModels"].get<std::string>(), pos.models);
+                        }
                         camera->add_preset_position(pos); // 设置点位信息
                     }
                 }
@@ -689,6 +711,10 @@ int CameraController::reload_config()
                     pos.zoom = point["zoom"];
                     pos.focus = point["focus"];
                     pos.brightness = point["brightness"];
+                    // 该点位专用模型（可选）：pointModels 为逗号分隔的模型名字符串，在通用模型之上额外叠加
+                    if (point.contains("pointModels") && point["pointModels"].is_string()) {
+                        parse_point_models(point["pointModels"].get<std::string>(), pos.models);
+                    }
                     camera->clamp_preset_y(pos);
                     new_positions.push_back(pos);
                 }

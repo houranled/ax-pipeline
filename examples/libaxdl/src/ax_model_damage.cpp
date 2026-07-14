@@ -1032,6 +1032,81 @@ wt_damage_multi_model_recognize::wt_damage_multi_model_recognize()
     WTALOGI("Instance wt_damage_multi_model_recognize object");
 }
 
+wt_damage_multi_model_recognize::DamageModelInfo
+wt_damage_multi_model_recognize::load_model_file(const std::string& dir, const std::string& fname)
+{
+    DamageModelInfo info;
+    info.model = nullptr;
+
+    // 文件名必须以 .axmodel 结尾
+    if (fname.length() < 9 || fname.substr(fname.length() - 8) != ".axmodel") {
+        WTALOGI("非法模型文件名(需以 .axmodel 结尾): %s", fname.c_str());
+        return info;
+    }
+
+    // 损伤类型 = 文件名去掉 .axmodel 后缀
+    std::string damage_type = fname.substr(0, fname.length() - 8);
+    std::string model_path = dir + "/" + fname;
+    std::string config_path = dir + "/" + damage_type + ".json";
+
+    // 模型文件必须存在
+    struct stat mst;
+    if (stat(model_path.c_str(), &mst) != 0) {
+        WTALOGI("模型文件不存在: %s", model_path.c_str());
+        return info;
+    }
+
+    // 尝试加载独立配置文件，不存在则使用默认配置
+    nlohmann::json model_json;
+    std::ifstream config_file(config_path);
+    if (config_file.good()) {
+        try {
+            model_json = nlohmann::json::parse(config_file);
+            WTALOGI("加载模型独立配置: %s", config_path.c_str());
+        } catch (const std::exception& e) {
+            WTALOGI("解析配置失败 %s: %s", config_path.c_str(), e.what());
+            config_file.close();
+            return info;
+        }
+        config_file.close();
+    } else {
+        // 默认配置：CLASS_NUM=1，CLASS_NAMES=模型文件名（损伤类型）
+        model_json["CLASS_NUM"] = 1;
+        model_json["CLASS_NAMES"] = nlohmann::json::array({damage_type});
+        model_json["PROB_THRESHOLD"] = 0.4;
+        model_json["NMS_THRESHOLD"] = 0.45;
+        WTALOGI("模型 '%s' 无独立配置，使用默认(CLASS_NUM=1, CLASS_NAMES=['%s'])", fname.c_str(), damage_type.c_str());
+    }
+
+    // 确保必要字段
+    if (!model_json.contains("MODEL_TYPE")) {
+        model_json["MODEL_TYPE"] = "MT_DAMAGE_MODEL";
+    }
+    model_json["MODEL_PATH"] = model_path;
+    model_json["DAMAGE_TYPE"] = damage_type;
+
+    // 创建模型实例
+    std::string strModelType;
+    int mt = get_model_type(&model_json, strModelType);
+    std::shared_ptr<ax_model_base> model((ax_model_base *)OBJFactory::getInstance().getObjectByID(mt));
+    if (!model) {
+        WTALOGI("创建模型实例失败: %s", model_path.c_str());
+        return info;
+    }
+
+    // 初始化模型
+    int ret = model->init((void *)&model_json);
+    if (ret != 0) {
+        WTALOGI("初始化模型失败: %s, ret=%d", model_path.c_str(), ret);
+        return info;
+    }
+    model->set_channel_init_info(channel_name, camera_id);
+
+    info.damage_type_name = damage_type;
+    info.model = model;
+    return info;
+}
+
 int wt_damage_multi_model_recognize::scan_and_load_models(const std::string& position_dir)
 {
     DIR *dir = opendir(position_dir.c_str());
@@ -1044,77 +1119,91 @@ int wt_damage_multi_model_recognize::scan_and_load_models(const std::string& pos
     int loaded_count = 0;
     while ((entry = readdir(dir)) != nullptr) {
         std::string fname = entry->d_name;
-        // 只加载 .axmodel 文件
+        // 只加载 .axmodel 文件（子目录如 specialized 会因扩展名不匹配被自然跳过）
         if (fname.length() < 9) continue; // 至少 "x.axmodel"
-        std::string ext = fname.substr(fname.length() - 8);
-        if (ext != ".axmodel") continue;
+        if (fname.substr(fname.length() - 8) != ".axmodel") continue;
 
-        // 损伤类型 = 文件名去掉 .axmodel 后缀
-        std::string damage_type = fname.substr(0, fname.length() - 8);
-        std::string model_path = position_dir + "/" + fname;
-        std::string config_path = position_dir + "/" + damage_type + ".json";
+        DamageModelInfo info = load_model_file(position_dir, fname);
+        if (!info.model) continue;
 
-        // 尝试加载独立配置文件，不存在则使用默认配置
-        nlohmann::json model_json;
-        std::ifstream config_file(config_path);
-        if (config_file.good()) {
-            try {
-                model_json = nlohmann::json::parse(config_file);
-                WTALOGI("加载模型独立配置: %s", config_path.c_str());
-            } catch (const std::exception& e) {
-                WTALOGI("解析配置失败 %s: %s，退出", config_path.c_str(), e.what());
-                config_file.close();
-                closedir(dir);
-                return -1;
-            }
-            config_file.close();
-        } else {
-            // 默认配置：CLASS_NUM=1，CLASS_NAMES=模型文件名（损伤类型）
-            model_json["CLASS_NUM"] = 1;
-            model_json["CLASS_NAMES"] = nlohmann::json::array({damage_type});
-            model_json["PROB_THRESHOLD"] = 0.4;
-            model_json["NMS_THRESHOLD"] = 0.45;
-            WTALOGI("模型 '%s' 无独立配置，使用默认(CLASS_NUM=1, CLASS_NAMES=['%s'])", fname.c_str(), damage_type.c_str());
-        }
-
-        // 确保必要字段
-        if (!model_json.contains("MODEL_TYPE")) {
-            model_json["MODEL_TYPE"] = "MT_DAMAGE_MODEL";
-        }
-        model_json["MODEL_PATH"] = model_path;
-        model_json["DAMAGE_TYPE"] = damage_type;
-
-        // 创建模型实例
-        std::string strModelType;
-        int mt = get_model_type(&model_json, strModelType);
-        std::shared_ptr<ax_model_base> model((ax_model_base *)OBJFactory::getInstance().getObjectByID(mt));
-        if (!model) {
-            WTALOGI("创建模型实例失败: %s", model_path.c_str());
-            continue;
-        }
-
-        // 初始化模型
-        int ret = model->init((void *)&model_json);
-        if (ret != 0) {
-            WTALOGI("初始化模型失败: %s, ret=%d", model_path.c_str(), ret);
-            continue;
-        }
-        model->set_channel_init_info(channel_name, camera_id);
-
-        // 添加到模型列表
-        DamageModelInfo info;
-        info.damage_type_name = damage_type;
-        info.model = model;
         m_damage_models.push_back(info);
-        m_models.push_back(model); // 保持父类兼容
+        m_models.push_back(info.model); // 保持父类兼容
 
         loaded_count++;
-        WTALOGI("加载模型: 部位='%s', 损伤类型='%s', 路径='%s'",
-                m_position_name.c_str(), damage_type.c_str(), model_path.c_str());
+        WTALOGI("加载通用模型: 部位='%s', 损伤类型='%s'",
+                m_position_name.c_str(), info.damage_type_name.c_str());
     }
     closedir(dir);
 
-    WTALOGI("部位 '%s' 共加载 %d 个损伤模型", m_position_name.c_str(), loaded_count);
+    WTALOGI("部位 '%s' 共加载 %d 个通用损伤模型", m_position_name.c_str(), loaded_count);
+    return 0;
+}
+
+int wt_damage_multi_model_recognize::load_specialized_models()
+{
+    auto *cam = CameraController::getInstance()->getCamera(camera_id);
+    if (!cam) {
+        WTALOGI("相机[%d] 不存在，跳过专用模型加载", camera_id);
+        return 0;
+    }
+
+    // 收集本相机所有点位 models[] 的并集（去重），规范化为带 .axmodel 的文件名
+    std::set<std::string> names;
+    for (const auto& pos : cam->getPresetPositions()) {
+        for (const auto& raw : pos.models) {
+            if (raw.empty()) continue;
+            std::string fname = raw;
+            if (fname.length() < 8 || fname.substr(fname.length() - 8) != ".axmodel") {
+                fname += ".axmodel";
+            }
+            names.insert(fname);
+        }
+    }
+    if (names.empty()) {
+        WTALOGI("相机[%d] 无点位配置专用模型", camera_id);
+        return 0;
+    }
+
+    std::string specialized_dir = m_position_dir + "/specialized";
+    struct stat st;
+    if (stat(specialized_dir.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) {
+        WTALOGI("专用模型目录不存在: %s（%zu 个专用模型无法加载，仅运行通用模型）",
+                specialized_dir.c_str(), names.size());
+        return 0; // 不致命：通用模型仍可运行
+    }
+
+    int loaded = 0;
+    for (const auto& fname : names) {
+        if (m_specialized_models.count(fname)) continue;
+        DamageModelInfo info = load_model_file(specialized_dir, fname);
+        if (!info.model) {
+            WTALOGI("专用模型加载失败或不存在: %s/%s", specialized_dir.c_str(), fname.c_str());
+            continue;
+        }
+        m_specialized_models[fname] = info;
+        m_models.push_back(info.model); // 保持父类兼容（deinit 时统一释放）
+        loaded++;
+        WTALOGI("加载专用模型: '%s' (损伤类型='%s')", fname.c_str(), info.damage_type_name.c_str());
+    }
+    WTALOGI("相机[%d] 专用模型加载完成: %d/%zu", camera_id, loaded, names.size());
+
+    // 预计算 点位id -> 专用模型指针列表（供 inference O(logN) 查表，避免每帧扫描点位+字符串规范化）。
+    // 此时 m_specialized_models 已全部加载完成，map 节点地址稳定，可安全存指针。
+    for (const auto& pos : cam->getPresetPositions()) {
+        std::vector<const DamageModelInfo*> vec;
+        for (const auto& raw : pos.models) {
+            if (raw.empty()) continue;
+            std::string fname = raw;
+            if (fname.length() < 8 || fname.substr(fname.length() - 8) != ".axmodel") {
+                fname += ".axmodel";
+            }
+            auto it = m_specialized_models.find(fname);
+            if (it != m_specialized_models.end() && it->second.model) {
+                vec.push_back(&it->second);
+            }
+        }
+        if (!vec.empty()) m_point_specialized[pos.id] = std::move(vec);
+    }
     return 0;
 }
 
@@ -1157,19 +1246,27 @@ int wt_damage_multi_model_recognize::init(void *json_obj)
         WTALOGI("部位目录不存在: %s", position_dir.c_str());
         return -1;
     }
+    m_position_dir = position_dir; // 记录部位目录，specialized 子目录在其下
 
-    // 加载该部位目录下的所有模型
+    // 加载该部位目录下的所有通用模型（每个点位都跑）
     int ret = scan_and_load_models(position_dir);
     if (ret != 0) {
         WTALOGI("部位 '%s' 模型加载失败", m_position_name.c_str());
         return -1;
     }
 
+    // 预加载本相机各点位 rt.json models[] 引用的专用模型（在通用模型之上按点位额外叠加）
+    load_specialized_models();
+
     // 输出加载摘要
     WTALOGI("=== 多模型加载摘要 ===");
-    WTALOGI("  部位 '%s': %zu 个模型", m_position_name.c_str(), m_damage_models.size());
+    WTALOGI("  部位 '%s': %zu 个通用模型, %zu 个专用模型",
+            m_position_name.c_str(), m_damage_models.size(), m_specialized_models.size());
     for (const auto& info : m_damage_models) {
-        WTALOGI("    - 损伤类型: '%s'", info.damage_type_name.c_str());
+        WTALOGI("    - 通用: '%s'", info.damage_type_name.c_str());
+    }
+    for (const auto& kv : m_specialized_models) {
+        WTALOGI("    - 专用: '%s'", kv.first.c_str());
     }
 
     return 0;
@@ -1179,7 +1276,7 @@ int wt_damage_multi_model_recognize::inference(axdl_image_t *pstFrame, axdl_bbox
 {
     int result = 0;
 
-    if (m_damage_models.empty()) {
+    if (m_damage_models.empty() && m_specialized_models.empty()) {
         return 0;
     }
 
@@ -1194,6 +1291,25 @@ int wt_damage_multi_model_recognize::inference(axdl_image_t *pstFrame, axdl_bbox
         return 0;
     }
 
+    // 组装本次点位要跑的模型：通用模型（每个点位都跑） + 当前点位 rt.json 配置的专用模型
+    std::vector<const DamageModelInfo*> run_models;
+    run_models.reserve(m_damage_models.size() + 4);
+    for (const auto& mi : m_damage_models) run_models.push_back(&mi);
+
+    // 当前点位的专用模型：init 时已按 点位id 预计算好，这里直接查表（O(logN)，无字符串处理，
+    // 也不读取可能被热加载改写的 preset_positions）。
+    if (!m_point_specialized.empty()) {
+        auto it = m_point_specialized.find(cam->now_point_id);
+        if (it != m_point_specialized.end()) {
+            for (const auto* mi : it->second) run_models.push_back(mi);
+        }
+    }
+
+    if (run_models.empty()) {
+        results->nObjSize = 0;
+        return 0;
+    }
+
     // 并行推理：每个模型在独立线程中执行
     struct ModelResult {
         axdl_results_t results;
@@ -1202,14 +1318,14 @@ int wt_damage_multi_model_recognize::inference(axdl_image_t *pstFrame, axdl_bbox
     };
 
     std::vector<std::future<ModelResult>> futures; //
-    futures.reserve(m_damage_models.size());
+    futures.reserve(run_models.size());
 
-    for (const auto& model_info : m_damage_models) {
+    for (const auto* model_info : run_models) {
         futures.push_back(std::async(std::launch::async,
-            [&model_info, pstFrame, crop_resize_box]() -> ModelResult {
+            [model_info, pstFrame, crop_resize_box]() -> ModelResult {
                 ModelResult mr = {};
-                mr.damage_type = model_info.damage_type_name;
-                mr.ret = model_info.model->inference(pstFrame, crop_resize_box, &mr.results);
+                mr.damage_type = model_info->damage_type_name;
+                mr.ret = model_info->model->inference(pstFrame, crop_resize_box, &mr.results);
                 return mr;
             }));
     }
@@ -1254,6 +1370,19 @@ int wt_damage_multi_model_recognize::inference(axdl_image_t *pstFrame, axdl_bbox
 void wt_damage_multi_model_recognize::draw_custom(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y)
 {
     this->m_damage_models.begin()->model->draw_results(image, results, fontscale, thickness, offset_x, offset_y);
+
+    /*
+    // 用任一已加载模型的绘制实现即可（优先通用模型，退化到专用模型）
+    std::shared_ptr<ax_model_base> drawer;
+    if (!m_damage_models.empty()) {
+        drawer = m_damage_models.begin()->model;
+    } else if (!m_specialized_models.empty()) {
+        drawer = m_specialized_models.begin()->second.model;
+    }
+    if (drawer) {
+        drawer->draw_results(image, results, fontscale, thickness, offset_x, offset_y);
+    }
+    */
 }
 
 
