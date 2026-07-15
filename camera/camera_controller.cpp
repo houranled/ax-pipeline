@@ -1450,16 +1450,14 @@ int Camera::patrol_with_calibration_loop(bool is_calibrate, time_t start_time) /
             int half_duration = std::max(1, position->duration / 2);
             int wait_ms = 0;
             const int max_wait_ms = half_duration * 1000;
-            while (frame_should_capture.load() != 0 && !stop_requested.load() && wait_ms < max_wait_ms) {
+            while (frame_should_capture.load() != 0 && !stop_requested.load()) {
                 interruptible_sleep_ms(50); // stop 时会被 notify 立刻唤醒
                 wait_ms += 50;
             }
 
             if (stop_requested.load()) break;
 
-            if (frame_should_capture.load() != 0) {
-                WTALOGI("摄像机[%d] 点位[%d] L0 拍照超时", id, now_point_id);
-            } else if (wait_ms < max_wait_ms) {
+            if (wait_ms < max_wait_ms) {
                 // L0 拍完后继续等待剩余时间，确保有灯照阶段占满 duration/2 秒
                 if (!interruptible_sleep_ms(max_wait_ms - wait_ms)) break;
             }
@@ -1479,16 +1477,14 @@ int Camera::patrol_with_calibration_loop(bool is_calibrate, time_t start_time) /
 
             // 无灯照拍照：等待推理线程设置 frame_should_capture = 0
             wait_ms = 0;
-            while (frame_should_capture.load() != 0 && !stop_requested.load() && wait_ms < max_wait_ms) {
+            while (frame_should_capture.load() != 0 && !stop_requested.load()) {
                 interruptible_sleep_ms(50); // stop 时会被 notify 立刻唤醒
                 wait_ms += 50;
             }
 
             if (stop_requested.load()) break;
 
-            if (frame_should_capture.load() != 0) {
-                WTALOGI("摄像机[%d] 点位[%d] L1 拍照超时", id, now_point_id);
-            } else if (wait_ms < max_wait_ms) {
+            if (wait_ms < max_wait_ms) {
                 // L1 拍完后继续等待剩余时间，确保无灯照阶段占满 duration/2 秒
                 if (!interruptible_sleep_ms(max_wait_ms - wait_ms)) break;
             }
@@ -1508,7 +1504,7 @@ int Camera::patrol_with_calibration_loop(bool is_calibrate, time_t start_time) /
 
         if (is_calibrate)
             if (!interruptible_sleep_ms(2000)) break; //进行标定的话可以快速切换点位
-    }
+    } //point finished
 
     // 所有点位巡检完成：立即关闭巡逻状态，释放 NPU/CPU 给后续差异对比算法
     // （ai_inference_func 通过 is_patroling() 判断是否跑模型）
