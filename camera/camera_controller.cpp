@@ -329,7 +329,16 @@ int CameraController::receive_input_loop() {
                     // 将warnings字符串解析为JSON对象，然后提取其中的warnings数组
                     nlohmann::json warn_json = nlohmann::json::parse(warnstr);
                     result["warnings"] = warn_json["warnings"];
-                    result["path"] = cameras.size()>0 ? cameras.begin()->second->pic_dirname: "";
+                    // 取第一个非空 pic_dirname：首台相机可能未巡检（无 pipeline 被跳过），其 pic_dirname 为空。
+                    // 路径按风场/日期组织、不区分摄像头，任一已巡检相机的目录即可代表本轮。
+                    std::string pic_path;
+                    for (auto& kv : cameras) {
+                        if (kv.second->pic_dirname[0] != '\0') {
+                            pic_path = kv.second->pic_dirname;
+                            break;
+                        }
+                    }
+                    result["path"] = pic_path;
                     if (res) {
                         result["msg"] = "巡检过程可能受限，请检查设备连接";
                     } else {
@@ -439,6 +448,9 @@ int CameraController::all_cameras_patrol()
 {
     reload_config(); // 巡检前热加载配置（点位+基础字段）
 
+    // 统一本轮巡检时间基准：所有相机共用同一时间戳，避免各相机启动时刻恰好跨分钟而落到不同目录。
+    time_t unified_start = time(nullptr);
+
     // 遍历所有摄像机，设置不标定模式并启动巡逻
     std::vector<std::thread> threads;
     bool res = false;
@@ -447,9 +459,9 @@ int CameraController::all_cameras_patrol()
         if (!pair.second->m_pipeline)
             continue;
 
-        threads.emplace_back([camera = pair.second, &res]() {
+        threads.emplace_back([camera = pair.second, &res, unified_start]() {
             // 一次巡检：每个点位内部分为无灯照和有灯照两阶段拍照
-            res = camera->patrol_with_calibration_loop(false);
+            res = camera->patrol_with_calibration_loop(false, unified_start);
         });
     }
 
@@ -1118,22 +1130,33 @@ bool Camera::start_take_a_picture(int kind)
     return false;
 }
 
-std::string Camera::captureSnapshot(const cv::Mat& image, int point_id, int light_flag)
+void Camera::prepare_snapshot_dir()
 {
     // 使用巡检开始时冻结的时间戳（系统时间已是东八区），保证整轮巡检所有快照在同一分钟目录下
+    time_t base_time = patrol_start_time > 0 ? patrol_start_time : time(nullptr);
+    struct tm tmbuf;
+    localtime_r(&base_time, &tmbuf);  // 线程安全：使用私有 tm 缓冲区
+    char ymd[16] = {0};
+    snprintf(ymd, sizeof(ymd), "%04d%02d%02d", tmbuf.tm_year + 1900, tmbuf.tm_mon + 1, tmbuf.tm_mday);
+
+    snprintf(pic_dirname, sizeof(pic_dirname), "/wt_tech/data/%s/%s/%s_%02d%02d/image",
+        orga_name.c_str(), ymd, ymd, tmbuf.tm_hour, tmbuf.tm_min);
+    if (access(pic_dirname, 0) != 0) {
+        char mk[256] = {0};
+        snprintf(mk, sizeof(mk), "mkdir -p %s", pic_dirname);
+        system(mk);
+    }
+}
+
+std::string Camera::captureSnapshot(const cv::Mat& image, int point_id, int light_flag)
+{
+    // 使用巡检开始时冻结的时间戳（系统时间已是东八区），文件名与目录保持同一时间基准
     time_t base_time = patrol_start_time > 0 ? patrol_start_time : time(nullptr);
     struct tm tmbuf;
     localtime_r(&base_time, &tmbuf);  // 线程安全：使用私有 tm 缓冲区，避免 localtime 静态缓冲区被并发覆盖
     tm *t = &tmbuf;
     char ymd[16] = {0};
     snprintf(ymd, sizeof(ymd), "%04d%02d%02d", t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
-
-    snprintf(pic_dirname, sizeof(pic_dirname), "/wt_tech/data/%s/%s/%s_%02d%02d/image", orga_name.c_str(), ymd, ymd, t->tm_hour, t->tm_min);
-    if (access(pic_dirname, 0) != 0) {
-        char mk[256] = {0};
-        snprintf(mk, sizeof(mk), "mkdir -p %s", pic_dirname);
-        system(mk);
-    }
 
     char filepath[320] = {0};
     // 文件名加入灯光状态 L0（无灯照）或 L1（有灯照），使用传入的 point_id 而非 now_point_id
@@ -1286,14 +1309,16 @@ void Camera::set_camera_rtsp_url(const std::string& url)
     camera_rtsp_url = url;
 }
 
-int Camera::patrol_with_calibration_loop(bool is_calibrate) //return 0表示正常 非0表示异常
+int Camera::patrol_with_calibration_loop(bool is_calibrate, time_t start_time) //return 0表示正常 非0表示异常
 {
     patrolling = true; // 标识进入巡逻模式
     calibrating.store(is_calibrate); // 标定模式标志：标定时 draw_custom 跳过 diff 门控强制建/更新基线
     stop_requested.store(false); // 每轮巡检开始时清掉上一次的停止请求
     photo_fired_keys.clear(); // 清空拍照去重状态，避免跨轮次误判
-    // 冻结本轮巡检时间戳（系统时间已是东八区），保证所有路径在同一分钟目录下
-    patrol_start_time = time(nullptr);
+    // 冻结本轮巡检时间戳（系统时间已是东八区），保证所有路径在同一分钟目录下。
+    // 多相机并行巡检由 all_cameras_patrol 传入统一 start_time，避免各相机跨分钟落到不同目录。
+    patrol_start_time = start_time > 0 ? start_time : time(nullptr);
+    prepare_snapshot_dir(); // 巡检开始即固定本轮图片目录
     WTALOGI("开始巡逻...");
 
     int res = 0;

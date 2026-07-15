@@ -172,6 +172,10 @@ public:
      */
     std::string captureSnapshot(const cv::Mat& image, int point_id, int light_flag = -1);
 
+    // 在巡检开始时（patrol_start_time 冻结后）一次性构造并创建本轮图片目录 pic_dirname，
+    // 避免每次 captureSnapshot 重复拼路径 + mkdir。
+    void prepare_snapshot_dir();
+
 
     std::string getName(); // 获取相机名称
     std::string get_pic_path() const; // 获取当前录制图片路径
@@ -256,7 +260,9 @@ private:
     // 姿态轮询防重入：避免同一 Camera 起多条 update_posture_state 轮询线程
     std::atomic<bool>    m_posture_polling{false};
 
-    int patrol_with_calibration_loop(bool is_calibrate);  // 摄像机巡检(可伴随标定)
+    // 摄像机巡检(可伴随标定)。start_time>0 时使用外部统一时间基准（多相机同一分钟目录），
+    // 缺省 0 表示由本函数自取当前时间（单相机巡检/标定）。
+    int patrol_with_calibration_loop(bool is_calibrate, time_t start_time = 0);
     // 可被 stop_requested 打断的等待；返回 true 表示等满 ms，false 表示被打断
     bool interruptible_sleep_ms(int ms);
     void update_posture_state(int x, int y); // 判断是否到达指定位置
