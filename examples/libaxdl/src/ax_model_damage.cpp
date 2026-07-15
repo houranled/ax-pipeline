@@ -420,26 +420,76 @@ namespace {
     }
 }
 
+// 缓存原图用于快照合成/ diff 门控（将 NV12/RGB/BGR 转换为 BGR）。
+// 抽成独立方法：跳过推理时也能由巡检调度器主动刷新缓存，避免拍照用到旧点位残帧。
+void ax_model_damage::cache_source_frame(axdl_image_t *pstFrame)
+{
+    if (!pstFrame || !pstFrame->pVir) return;
+    std::lock_guard<std::mutex> lk(m_frame_mutex);
+    try {
+        if (pstFrame->eDtype == axdl_color_space_nv12) {
+            cv::Mat nv12(pstFrame->nHeight * 3 / 2, pstFrame->nWidth, CV_8UC1, pstFrame->pVir);
+            cv::cvtColor(nv12, m_cached_frame_bgr, cv::COLOR_YUV2BGR_NV12);
+        } else if (pstFrame->eDtype == axdl_color_space_rgb) {
+            cv::Mat rgb(pstFrame->nHeight, pstFrame->nWidth, CV_8UC3, pstFrame->pVir);
+            cv::cvtColor(rgb, m_cached_frame_bgr, cv::COLOR_RGB2BGR);
+        } else if (pstFrame->eDtype == axdl_color_space_bgr) {
+            cv::Mat bgr(pstFrame->nHeight, pstFrame->nWidth, CV_8UC3, pstFrame->pVir);
+            m_cached_frame_bgr = bgr.clone();
+        }
+    } catch (...) {
+        // 转换失败时保持旧缓存
+    }
+}
+
+// 推理前 diff 门控：判断当前缓存帧相对基线是否有变化。
+// true=有变化需推理（或无基线/标定，保守推理）；false=与基线一致可跳过 NPU。
+bool ax_model_damage::diff_gate_should_infer(int point_id, int light_flag, bool is_calibrating)
+{
+    // 标定模式：强制推理（并由巡检结束后建/更新基线）
+    if (is_calibrating) return true;
+
+    auto *cam = CameraController::getInstance()->getCamera(camera_id);
+    if (!cam) return true; // 无相机上下文，保守推理
+
+    // 基线不存在（尚未标定）→ 无法门控，保守推理（并由巡检结束补建基线）
+    std::string base_path = make_baseline_path(cam->orga_name, cam->getName(), point_id, light_flag);
+    cv::Mat base_bgr = cv::imread(base_path, cv::IMREAD_COLOR);
+    if (base_bgr.empty()) return true;
+
+    // 取缓存原图并裁掉 letterbox 黑边（与拍照路径一致，保证与 baseline 对齐）
+    cv::Mat raw;
+    {
+        std::lock_guard<std::mutex> lk(m_frame_mutex);
+        if (m_cached_frame_bgr.empty()) return true; // 无帧可判，保守推理
+        int src_h = m_cached_frame_bgr.rows;
+        int src_w = m_cached_frame_bgr.cols;
+        int dst_h = HEIGHT_DET_BBOX_RESTORE;
+        int dst_w = WIDTH_DET_BBOX_RESTORE;
+        if (dst_h > 0 && dst_w > 0) {
+            float scale = std::min((float)src_w / dst_w, (float)src_h / dst_h);
+            int new_w = (int)(dst_w * scale);
+            int new_h = (int)(dst_h * scale);
+            int pad_x = (src_w - new_w) / 2;
+            int pad_y = (src_h - new_h) / 2;
+            cv::Rect valid_roi(pad_x, pad_y, new_w, new_h);
+            valid_roi &= cv::Rect(0, 0, src_w, src_h);
+            raw = (valid_roi.area() > 0) ? m_cached_frame_bgr(valid_roi).clone()
+                                         : m_cached_frame_bgr.clone();
+        } else {
+            raw = m_cached_frame_bgr.clone();
+        }
+    }
+
+    // diff_against_baseline 内部会把 raw resize 到 baseline 尺寸再比对
+    auto diff_regions = diff_against_baseline(raw, base_bgr);
+    return !diff_regions.empty();
+}
+
 int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results)
 {
     // 缓存原图用于快照合成（将 NV12/RGB/BGR 转换为 BGR）
-    if (pstFrame && pstFrame->pVir) {
-        std::lock_guard<std::mutex> lk(m_frame_mutex);
-        try {
-            if (pstFrame->eDtype == axdl_color_space_nv12) {
-                cv::Mat nv12(pstFrame->nHeight * 3 / 2, pstFrame->nWidth, CV_8UC1, pstFrame->pVir);
-                cv::cvtColor(nv12, m_cached_frame_bgr, cv::COLOR_YUV2BGR_NV12);
-            } else if (pstFrame->eDtype == axdl_color_space_rgb) {
-                cv::Mat rgb(pstFrame->nHeight, pstFrame->nWidth, CV_8UC3, pstFrame->pVir);
-                cv::cvtColor(rgb, m_cached_frame_bgr, cv::COLOR_RGB2BGR);
-            } else if (pstFrame->eDtype == axdl_color_space_bgr) {
-                cv::Mat bgr(pstFrame->nHeight, pstFrame->nWidth, CV_8UC3, pstFrame->pVir);
-                m_cached_frame_bgr = bgr.clone();
-            }
-        } catch (...) {
-            // 转换失败时保持旧缓存
-        }
-    }
+    cache_source_frame(pstFrame);
 
     // 获取模型输出
     const ax_runner_tensor_t *pOutputsInfo = m_runner->get_outputs_ptr();
@@ -844,33 +894,26 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
         }
     }
 
-    // ★ diff 门控：当前图与基线对比，改变量达到阈值才执行模型识别（不产生独立 diff 告警，不绘制 diff 框）
-    //   - 基线存在且改变量未达阈值 → 存无框原图，不识别不告警，直接返回
-    //   - 基线存在且改变量达阈值 → 不绘制 diff 框，继续走模型累积框 + 告警
-    //   - 基线不存在（未标定）→ 无法门控，照常存图告警（并由巡检结束后建基线）
+    // ★ diff 门控：复用推理阶段已缓存的决策，避免重复 diff 计算
+    //   - 推理阶段已对当前相位做 diff 决策并缓存在 phase_infer_decision
+    //   - 决策为 0（无变化）→ 存无框原图，不告警，直接返回
+    //   - 决策为 1（有变化）→ 继续走模型累积框 + 告警
+    //   - 无决策（异常情况）→ 保守处理，继续走模型累积框 + 告警
     //   - 标定模式 → 跳过门控，强制存图并入队用于建/更新基线
     if (!cam->is_calibrating()) {
-        std::string base_path = make_baseline_path(cam->orga_name, cam->getName(),
-                                                   cur_point, cur_light_flag);
-        cv::Mat base_bgr = cv::imread(base_path, cv::IMREAD_COLOR);
-        if (!base_bgr.empty()) {
-            auto diff_regions = diff_against_baseline(raw_image, base_bgr);
-            if (diff_regions.empty()) {
-                // 无差异 → 存无框原图（保留点位记录），不告警
-                // 注意：diff 对比已用未加水印的 raw_image 完成，此处对副本加水印后再存，
-                //       避免污染 baseline 对比（baseline 无水印）
-                cv::Mat wm_image = raw_image.clone();
-                draw_watermark_bgr(wm_image, cur_point, false);
-                cam->captureSnapshot(wm_image, cur_point, cur_light_flag);
-                cam->photo_fired_keys.insert(fired_key);
-                cam->frame_should_capture.store(0); // 通知巡检线程本相位拍照完成
-                if (cur_light_flag == 1) cam->light_phase_changed = false;
-                WTALOGI("[damage] 点位[%d] L%d 与基线一致，存无框原图，不告警", cur_point, cur_light_flag);
-                return;
-            }
-            // 有差异 → 不绘制 diff 标示框，仅作为触发模型识别/告警的门控
-            WTALOGI("[damage] 点位[%d] L%d 与基线差异 %zu 处，触发模型识别与告警",
-                    cur_point, cur_light_flag, diff_regions.size());
+        int key = cur_point * 10 + cur_light_flag;
+        auto it = cam->phase_infer_decision.find(key);
+        if (it != cam->phase_infer_decision.end() && it->second == 0) {
+            // 推理阶段判定无变化 → 存无框原图，不告警
+            cv::Mat wm_image = raw_image.clone();
+            draw_watermark_bgr(wm_image, cur_point, false);
+            cam->captureSnapshot(wm_image, cur_point, cur_light_flag);
+            cam->photo_fired_keys.insert(fired_key);
+            cam->frame_should_capture.store(0); // 通知巡检线程本相位拍照完成
+            if (cur_light_flag == 1) cam->light_phase_changed = false;
+            WTALOGI("[damage] 点位[%d] L%d 与基线一致（推理阶段已判定），存无框原图，不告警",
+                    cur_point, cur_light_flag);
+            return;
         }
     }
 
@@ -1327,6 +1370,46 @@ int wt_damage_multi_model_recognize::inference(axdl_image_t *pstFrame, axdl_bbox
         return 0;
     }
 
+    // ★ 推理前 diff 门控（每相位一次，缓存决策）：
+    //   仅当当前帧相对基线有变化时才推理；无变化则跳过 NPU（省算力）。
+    //   移动过程已被上面的相位门控挡掉，这里只处理"到位且相位就绪"的帧。
+    if (!m_damage_models.empty()) {
+        // 等待流延迟余量，避免在 RTSP 缓冲中的旧灯光帧上做 diff 决策（与拍照 phase_settled 一致）
+        const long long STREAM_LATENCY_SETTLE_MS = 90;
+        long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        if (now_ms - cam->phase_ready_ms.load() < STREAM_LATENCY_SETTLE_MS) {
+            results->nObjSize = 0;
+            return 0; // 相位尚未稳定，暂不推理也不决策（下一帧再判）
+        }
+
+        int light_flag = cam->light_phase_changed ? 1 : 0;
+        int key = cam->now_point_id * 10 + light_flag;
+
+        // 以第一个通用损伤模型作为帧缓存/门控载体（拍照 draw_custom 也用它的 m_cached_frame_bgr）
+        auto gate = std::dynamic_pointer_cast<ax_model_damage>(m_damage_models.begin()->model);
+        if (gate) {
+            // 无论是否推理，都刷新原图缓存，供拍照复用，避免跳过推理时存到旧点位残帧
+            gate->cache_source_frame(pstFrame);
+
+            int decision;
+            auto it = cam->phase_infer_decision.find(key);
+            if (it != cam->phase_infer_decision.end()) {
+                decision = it->second;
+            } else {
+                decision = gate->diff_gate_should_infer(cam->now_point_id, light_flag,
+                                                        cam->is_calibrating()) ? 1 : 0;
+                cam->phase_infer_decision[key] = decision;
+                WTALOGI("摄像机[%d] 点位[%d] L%d diff推理门控: %s",
+                        camera_id, cam->now_point_id, light_flag, decision ? "有变化→推理" : "无变化→跳过NPU");
+            }
+            if (decision == 0) {
+                results->nObjSize = 0;
+                return 0; // 与基线一致，跳过推理
+            }
+        }
+    }
+
     // 并行推理：每个模型在独立线程中执行
     struct ModelResult {
         axdl_results_t results;
@@ -1359,9 +1442,8 @@ int wt_damage_multi_model_recognize::inference(axdl_image_t *pstFrame, axdl_bbox
 
         // 将该模型检出的目标名称设为损伤类型（用于告警类型）
         for (int i = 0; i < (int)mr.results.nObjSize; i++) {
-            strncpy(mr.results.mObjects[i].objname,
-                    mr.damage_type.c_str(),
-                    sizeof(mr.results.mObjects[i].objname) - 1);
+            strncpy(mr.results.mObjects[i].objname, mr.damage_type.c_str(),
+                sizeof(mr.results.mObjects[i].objname) - 1);
             mr.results.mObjects[i].objname[sizeof(mr.results.mObjects[i].objname) - 1] = '\0';
         }
 

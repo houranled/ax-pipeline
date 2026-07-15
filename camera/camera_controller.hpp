@@ -121,6 +121,10 @@ public:
     std::atomic<int> frame_should_capture{0}; // 0=不拍照, 1=L0, 2=L1，由巡检线程设置
     std::set<int> photo_fired_keys; // 已拍照点位+灯光状态（key = point_id * 10 + light_flag）
 
+    // 每相位 diff 推理门控决策：key = point_id * 10 + light_flag，值：1=有变化需推理, 0=与基线一致可跳过。
+    // 每个(点位,灯光)相位只计算一次 diff 并缓存，避免每帧重复 diff；巡检开始时清空。
+    std::map<int,int> phase_infer_decision;
+
     // 累积检测结果：停留期间所有帧的检测结果合并，拍照时使用
     std::mutex accumulated_mutex;
     std::vector<axdl_object_t> accumulated_objects; // 累积的检测目标

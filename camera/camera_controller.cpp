@@ -1315,6 +1315,7 @@ int Camera::patrol_with_calibration_loop(bool is_calibrate, time_t start_time) /
     calibrating.store(is_calibrate); // 标定模式标志：标定时 draw_custom 跳过 diff 门控强制建/更新基线
     stop_requested.store(false); // 每轮巡检开始时清掉上一次的停止请求
     photo_fired_keys.clear(); // 清空拍照去重状态，避免跨轮次误判
+    phase_infer_decision.clear(); // 清空每相位 diff 推理门控决策，避免跨轮次复用
     // 冻结本轮巡检时间戳（系统时间已是东八区），保证所有路径在同一分钟目录下。
     // 多相机并行巡检由 all_cameras_patrol 传入统一 start_time，避免各相机跨分钟落到不同目录。
     patrol_start_time = start_time > 0 ? start_time : time(nullptr);

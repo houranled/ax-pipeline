@@ -44,6 +44,14 @@ public:
     // Get damage type (损伤类型，即模型文件名去后缀)
     std::string get_damage_type() const { return damage_type; }
 
+    // 推理前 diff 门控辅助：刷新原图缓存（供拍照与 diff 门控复用），
+    // 无论本帧是否推理都应调用，避免跳过推理时拍照用到旧点位的残帧。
+    void cache_source_frame(axdl_image_t *pstFrame);
+
+    // 推理前 diff 门控：判断当前缓存帧相对基线是否有变化。
+    // 返回 true=有变化需推理（或无基线/标定模式，保守推理），false=与基线一致可跳过 NPU。
+    bool diff_gate_should_infer(int point_id, int light_flag, bool is_calibrating);
+
 protected:
     // 在这里添加自定义属性
     int post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resize_box, axdl_results_t *results) override;
