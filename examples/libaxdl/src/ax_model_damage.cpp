@@ -14,31 +14,6 @@
 #include "../../utilities/json.hpp"
 #include "../../camera/camera_controller.hpp"
 
-// 把当前帧关联的相机巡检状态快照写入 results，避免 draw_custom 再实时查相机状态导致视频流延迟错位
-static void fill_camera_frame_state(axdl_results_t *results, int camera_id)
-{
-    if (!results) return;
-
-    // 先清零，防止没有关联 camera 时残留旧状态
-    results->frame_point_id = 0;
-    results->frame_posture_completed = false;
-    results->frame_light_flag = 0;
-    results->frame_phase_ready_ms = 0;
-    results->frame_capture_ts_ms = 0;
-    results->frame_should_capture = 0;
-
-    auto *cam = CameraController::getInstance()->getCamera(camera_id);
-    if (!cam) return;
-
-    results->frame_point_id = cam->now_point_id;
-    results->frame_posture_completed = cam->posture_completed.load();
-    results->frame_light_flag = cam->light_phase_changed ? 1 : 0;
-    results->frame_phase_ready_ms = cam->phase_ready_ms.load();
-    results->frame_capture_ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                        std::chrono::system_clock::now().time_since_epoch()).count();
-    results->frame_should_capture = cam->frame_should_capture.load();
-}
-
 // ---------- 点位前后对比（同光照↔同光照）小工具 ----------
 namespace {
     // 基线图永久路径：/wt_tech/conf/baseline/<orga>/<camera>/point<id>_L<flag>.png
@@ -721,8 +696,7 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
     auto *cam = CameraController::getInstance()->getCamera(camera_id);
 
     // 仅在到达点位且灯光相位就绪时绘制当前帧 AI 检测框；移动/回位/灯光切换中不绘制
-    // 使用本帧自带的帧状态，避免实时查相机状态导致视频流延迟错位
-    if (cam && results->frame_posture_completed && results->frame_phase_ready_ms > 0) {
+    if (cam && cam->posture_completed.load() && cam->phase_ready_ms.load() > 0) {
         draw_bbox(image, results, fontscale, thickness, offset_x, offset_y);
     }
 
@@ -734,10 +708,10 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
              t_info->tm_year + 1900, t_info->tm_mon + 1, t_info->tm_mday,
              t_info->tm_hour, t_info->tm_min, t_info->tm_sec);
 
-    int cur_point = results->frame_point_id;
+    int cur_point = cam ? cam->now_point_id : 0;
     char point_str[128] = {0};
     bool is_moving = false;
-    if (cam && results->frame_posture_completed) {
+    if (cam && cam->posture_completed.load()) {
         snprintf(point_str, sizeof(point_str), "Point: %d (arrived)", cur_point);
     } else {
         snprintf(point_str, sizeof(point_str), "Point: %d (moving...)", cur_point);
@@ -797,20 +771,20 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
 
     cv::putText(image, point_str, cv::Point(text_x, text_y + baseline), font_face, font_scale, cv::Scalar(point_color[0], point_color[1], point_color[2], 255), text_thickness);
 
-    // 灯光状态：使用本帧自带的帧状态，0=L0(开灯), 1=L1(关灯/低照)
-    int cur_light_flag = results->frame_light_flag;
+    // 灯光状态：0=L0(开灯), 1=L1(关灯/低照)
+    int cur_light_flag = cam ? (cam->light_phase_changed ? 1 : 0) : 0;
     int fired_key = cur_point * 10 + cur_light_flag;
 
     // 相位就绪：到位 + 灯光正确 + 巡检线程已 arm + 额外流延迟余量
     // 避免在 RTSP 解码缓冲中的旧帧上累积/拍照（例如灯光切换后还未实际呈现的画面）
     const long long STREAM_LATENCY_SETTLE_MS = 90; // 流延迟余量，可调
-    // 相位就绪：使用本帧自带的 phase_ready_ms 和 capture_ts_ms，避免用当前系统时间判断旧帧
-    long long phase_ready = results->frame_phase_ready_ms;
-    long long now_ms = results->frame_capture_ts_ms;
+    long long phase_ready = cam ? cam->phase_ready_ms.load() : 0;
+    long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::system_clock::now().time_since_epoch()).count();
     bool phase_settled = (phase_ready > 0) && (now_ms - phase_ready >= STREAM_LATENCY_SETTLE_MS);
 
     // ★ 每帧累积检测结果（只有相位真正就绪后才累积，避免灯光/移动过程中的误累积）
-    if (results->frame_posture_completed && phase_settled && results->nObjSize > 0) {
+    if (cam && cam->posture_completed.load() && phase_settled && results->nObjSize > 0) {
         cam->accumulate_detection(results);
     }
 
@@ -818,12 +792,13 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
     // - 使用 photo_fired_keys 记录已拍照的 (point_id, light_flag) 组合
     // - key = point_id * 10 + light_flag，巡检开始时清空
     // - 直接使用 frame_should_capture 标记，由巡检线程控制
-    if (results->frame_should_capture == 0) {
+    int should_capture = cam ? cam->frame_should_capture.load() : 0;
+    if (should_capture == 0) {
         return; // 巡检线程未标记拍照，跳过
     }
 
     // 根据 frame_should_capture 确定 cur_light_flag
-    cur_light_flag = (results->frame_should_capture == 1) ? 0 : 1;
+    cur_light_flag = (should_capture == 1) ? 0 : 1;
     fired_key = cur_point * 10 + cur_light_flag;
 
     // 去重检查
@@ -1339,9 +1314,6 @@ int wt_damage_multi_model_recognize::inference(axdl_image_t *pstFrame, axdl_bbox
     if (m_damage_models.empty() && m_specialized_models.empty()) {
         return 0;
     }
-
-    // 先填充相机巡检状态快照，供 draw_custom 使用
-    fill_camera_frame_state(results, camera_id);
 
     // ★ 相位门控：仅在到达点位且灯光相位就绪时执行推理；
     //   移动/回位/灯光切换中跳过，节省算力（此期间不产生检测结果，也不绘制/累积）
