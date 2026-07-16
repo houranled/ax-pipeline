@@ -61,6 +61,9 @@ private:
 
     // 缓存原图用于快照合成（在 post_process 中更新）
     cv::Mat m_cached_frame_bgr;
+    // 缓存帧所属相位标识：取缓存时刻 Camera::phase_ready_ms 的值（每次相位 arm 唯一）。
+    // 拍照时据此严格校验缓存帧是否来自当前相位，杜绝拍到上一相位的滞后帧。
+    long long m_cached_phase_ms = 0;
     std::mutex m_frame_mutex;
 
     // 缓存通道名称位图（FreeType 预渲染）

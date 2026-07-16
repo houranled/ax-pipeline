@@ -471,19 +471,7 @@ int CameraController::receive_input_loop() {
                 ALOGE("RThread creation failed: %s", e.what());
                 is_patrolling = false; // 线程创建失败也要释放状态
             }
-        }
-        /* else if (cmd == "photograph") { //拍照指令
-            if (camera_id > 0 && camera != NULL) {
-                camera->capture_reference_image(); // 拍照
-            } else if (camera_id<=0){ // (camera == NULL) && (camera_id<=0) // 所有相机拍照
-                for (auto& pair : cameras) {
-                    auto& camera = pair.second;
-                    camera->capture_reference_image(); // 无论是否巡逻模式下都允许外部指令操作拍照
-                }
-            }
-
-        } */
-       else { //unknown action
+        } else { //unknown action
             response["status"] = "fail";
             response["message"] = "unknown cmd.";
         }
@@ -1362,7 +1350,8 @@ void Camera::set_camera_rtsp_url(const std::string& url)
     camera_rtsp_url = url;
 }
 
-int Camera::patrol_with_calibration_loop(bool is_calibrate, time_t start_time, int target_point_id) //return 0表示正常 非0表示异常
+//return 0表示正常 非0表示异常
+int Camera::patrol_with_calibration_loop(bool is_calibrate, time_t start_time, int target_point_id)
 {
     patrolling = true; // 标识进入巡逻模式
     calibrating.store(is_calibrate); // 标定模式标志：标定时 draw_custom 跳过 diff 门控强制建/更新基线

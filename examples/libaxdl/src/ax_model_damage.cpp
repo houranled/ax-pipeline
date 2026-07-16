@@ -400,6 +400,11 @@ namespace {
 void ax_model_damage::cache_source_frame(axdl_image_t *pstFrame)
 {
     if (!pstFrame || !pstFrame->pVir) return;
+    // 读取该帧所属相位（cache 发生在 inference 相位门控之后，帧确属当前相位）
+    long long phase_ms = 0;
+    auto *cam = CameraController::getInstance()->getCamera(camera_id);
+    if (cam) phase_ms = cam->phase_ready_ms.load();
+
     std::lock_guard<std::mutex> lk(m_frame_mutex);
     try {
         if (pstFrame->eDtype == axdl_color_space_nv12) {
@@ -412,6 +417,7 @@ void ax_model_damage::cache_source_frame(axdl_image_t *pstFrame)
             cv::Mat bgr(pstFrame->nHeight, pstFrame->nWidth, CV_8UC3, pstFrame->pVir);
             m_cached_frame_bgr = bgr.clone();
         }
+        m_cached_phase_ms = phase_ms; // 记录该帧所属相位，供拍照时严格校验
     } catch (...) {
         // 转换失败时保持旧缓存
     }
@@ -751,6 +757,17 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
     int should_capture = cam ? cam->frame_should_capture.load() : 0;
     if (should_capture == 0) {
         return; // 巡检线程未标记拍照，跳过
+    }
+
+    // ★ 严格相位绑定：缓存帧必须来自当前相位，否则说明推理线程尚未把当前相位的帧
+    //   刷新进 m_cached_frame_bgr，此时拍照会拍到上一相位的滞后帧（表现为 L1 与
+    //   下一点位 L0 画面相同）。不依赖时间余量，直接用相位身份匹配：不一致则放弃本次，等下一帧。
+    long long cur_phase = cam ? cam->phase_ready_ms.load() : 0;
+    {
+        std::lock_guard<std::mutex> lk(m_frame_mutex);
+        if (cur_phase == 0 || m_cached_frame_bgr.empty() || m_cached_phase_ms != cur_phase) {
+            return; // 缓存帧不属于当前相位，等推理线程刷新后再拍
+        }
     }
 
     // 根据 frame_should_capture 确定 cur_light_flag
