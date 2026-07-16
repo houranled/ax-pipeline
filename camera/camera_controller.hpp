@@ -71,7 +71,9 @@ private:
     // a function for executing in new thread to receive the input read from std-io
     int receive_input_loop();
     int all_cameras_patrol(); // 巡逻
-    int calibrate(int camera_id); // 标定
+    // 标定。target_point_id>0 时仅标定该相机的指定点位（转到该点位拍摄 L0/L1 基线），
+    // 缺省 -1 表示标定该相机（或全部相机）的所有点位。
+    int calibrate(int camera_id, int target_point_id = -1);
     int load_config_from_file(const std::string& config_file_path); //根据配置文件信息自构建所有相机对象
     time_t last_config_mtime = 0; // 配置文件最后修改时间，用于热加载判断
 
@@ -266,7 +268,8 @@ private:
 
     // 摄像机巡检(可伴随标定)。start_time>0 时使用外部统一时间基准（多相机同一分钟目录），
     // 缺省 0 表示由本函数自取当前时间（单相机巡检/标定）。
-    int patrol_with_calibration_loop(bool is_calibrate, time_t start_time = 0);
+    // target_point_id>0 时仅处理该点位（1-based，对应巡检顺序编号），缺省 -1 处理全部点位。
+    int patrol_with_calibration_loop(bool is_calibrate, time_t start_time = 0, int target_point_id = -1);
     // 可被 stop_requested 打断的等待；返回 true 表示等满 ms，false 表示被打断
     bool interruptible_sleep_ms(int ms);
     void update_posture_state(int x, int y); // 判断是否到达指定位置

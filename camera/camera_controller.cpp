@@ -380,24 +380,74 @@ int CameraController::receive_input_loop() {
             std::string currentReqId = reqId; // 捕获当前的reqId值
             int currentCameraId = camera_id; // 捕获当前的camera_id值
 
+            // 巡检/标定互斥：is_patroling() 在巡检或标定期间均为 true，
+            // 目标相机正忙则拒绝本次标定，避免同一相机并发运行两个 patrol_with_calibration_loop。
+            if (currentCameraId > 0 && cameras.find(currentCameraId) != cameras.end()) { // 指定相机
+                if (getCamera(currentCameraId)->is_patroling()) {
+                    response["status"] = 500;
+                    response["msg"] = "相机[" + std::to_string(currentCameraId) + "]正在巡检/标定中，无法开始标定";
+                    goto Finish;
+                }
+            } else { // 未指定相机（标定全部）：任一相机在巡检/标定则拒绝
+                if (is_patrolling) {
+                    response["status"] = 500;
+                    response["msg"] = "存在正在巡检/标定的相机，无法开始标定";
+                    goto Finish;
+                }
+            }
+
+            // 可选的点位ID：指定后仅标定该摄像头的该点位（转到点位拍摄 L0/L1 基线）。
+            // 兼容顶层 point_id 与 data.point_id，支持数字或字符串。-1 表示标定全部点位。
+            int currentPointId = -1;
+
+            auto parse_point_id = [](const nlohmann::json& j) -> int {
+                if (!j.is_null()) {
+                    if (j.is_number_integer()) return j.get<int>();
+                    if (j.is_string()) {
+                        try { return std::stoi(j.get<std::string>()); } catch (...) {}
+                    }
+                }
+                return -1;
+            };
+
+            if (json_request.contains("point")) {
+                currentPointId = parse_point_id(json_request["point"]);
+            }
+
+            // 指定点位标定必须同时指定有效摄像头
+            if (currentPointId > 0 && !(camera_id > 0 && cameras.find(camera_id) != cameras.end())) {
+                response["status"] = 500;
+                response["msg"] = "指定点位标定必须同时指定有效的摄像头id";
+                goto Finish;
+            }
+
             // 根据是否指定了有效的摄像机ID返回不同的消息
             if (camera_id > 0 && cameras.find(camera_id) != cameras.end()) {
-                response["msg"] = "Camera " + std::to_string(camera_id) + " calibration started in background...";
+                if (currentPointId > 0) {
+                    response["msg"] = "Camera " + std::to_string(camera_id) + " point " + std::to_string(currentPointId) + " calibration started in background...";
+                } else {
+                    response["msg"] = "Camera " + std::to_string(camera_id) + " calibration started in background...";
+                }
             } else {
                 response["msg"] = "All cameras calibration are starting in background...";
             }
             response["status"] = 200;
+            is_patrolling = true; // 标定占用全局状态，使 action/stopwhen 能正确感知标定进行中
 
             // 创建后台线程执行标定任务
             try {
-                std::thread calibrate_thread([this, currentReqId, currentCameraId]() {
+                std::thread calibrate_thread([this, currentReqId, currentCameraId, currentPointId]() {
                     // 如果指定了有效的摄像机ID，则只标定该摄像机；否则标定所有摄像机
                     if (currentCameraId > 0 && cameras.find(currentCameraId) != cameras.end()) {
-                        auto res = calibrate(currentCameraId); // 标定指定摄像机
+                        auto res = calibrate(currentCameraId, currentPointId); // 标定指定摄像机（可选指定点位）
                         // 标定完成后构造JSON响应
                         nlohmann::json result;
                         result["status"] = 200;
-                        result["message"] = "Camera " + std::to_string(currentCameraId) + " calibration completed successfully";
+                        if (currentPointId > 0) {
+                            result["message"] = "Camera " + std::to_string(currentCameraId) + " point " + std::to_string(currentPointId) + " calibration completed successfully";
+                        } else {
+                            result["message"] = "Camera " + std::to_string(currentCameraId) + " calibration completed successfully";
+                        }
                         result["cmd"] = "calibrate";
                         result["reqId"] = currentReqId; // 添加reqId到响应中
                         std::cout << result.dump() << std::endl;
@@ -412,12 +462,14 @@ int CameraController::receive_input_loop() {
                         result["reqId"] = currentReqId; // 添加reqId到响应中
                         std::cout << result.dump() << std::endl;
                     }
+                    is_patrolling = false; // 标定结束释放全局状态
                 });
                 calibrate_thread.detach();
             } catch (const std::system_error& e) {
                 response["status"] = 500;
                 response["msg"] = "Failed to create calibration thread: " + std::string(e.what());
                 ALOGE("RThread creation failed: %s", e.what());
+                is_patrolling = false; // 线程创建失败也要释放状态
             }
         }
         /* else if (cmd == "photograph") { //拍照指令
@@ -475,7 +527,7 @@ int CameraController::all_cameras_patrol()
     return res;
 }
 
-int CameraController::calibrate(int camera_id) //return 0正常  非0异常
+int CameraController::calibrate(int camera_id, int target_point_id) //return 0正常  非0异常
 {
     reload_config(); // 标定前热加载配置（点位+基础字段）
 
@@ -483,9 +535,10 @@ int CameraController::calibrate(int camera_id) //return 0正常  非0异常
     // 如果指定了有效的摄像机ID，则只标定该摄像机；否则标定所有摄像机
     if (camera_id > 0 && cameras.find(camera_id) != cameras.end()) {
         Camera* camera = getCamera(camera_id);
-        res =  camera->patrol_with_calibration_loop(true);
+        // target_point_id>0 时仅标定指定点位；否则标定该相机全部点位
+        res =  camera->patrol_with_calibration_loop(true, 0, target_point_id);
     } else {
-        // 遍历所有摄像机，设置标定模式并启动标定
+        // 遍历所有摄像机，设置标定模式并启动标定（指定点位仅对单相机生效，此处忽略）
         for (auto& pair : cameras) {
             res |= pair.second->patrol_with_calibration_loop(true);
         }
@@ -1309,7 +1362,7 @@ void Camera::set_camera_rtsp_url(const std::string& url)
     camera_rtsp_url = url;
 }
 
-int Camera::patrol_with_calibration_loop(bool is_calibrate, time_t start_time) //return 0表示正常 非0表示异常
+int Camera::patrol_with_calibration_loop(bool is_calibrate, time_t start_time, int target_point_id) //return 0表示正常 非0表示异常
 {
     patrolling = true; // 标识进入巡逻模式
     calibrating.store(is_calibrate); // 标定模式标志：标定时 draw_custom 跳过 diff 门控强制建/更新基线
@@ -1349,6 +1402,10 @@ int Camera::patrol_with_calibration_loop(bool is_calibrate, time_t start_time) /
             WTALOGI("摄像机[%d] 收到停止指令，中断巡检循环", id);
             res = 2;
             break;
+        }
+        // 指定点位标定：仅处理目标点位，其余跳过（不移动云台、不拍照）
+        if (target_point_id > 0 && now_point_id != target_point_id) {
+            continue;
         }
         this->m_pipeline->point_id = now_point_id; // 设置当前点位ID
         posture_completed = false;
