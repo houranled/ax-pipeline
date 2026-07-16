@@ -186,19 +186,6 @@ void ai_inference_func(pipeline_buffer_t *buff)
                         } else break;
                     }
                     mResults[pipe->pipeid].niFps = model_result.niFps; // 保存推理FPS
-
-                    // 透传帧关联的相机巡检状态（点位/姿态/灯光相位等），供 OSD draw_custom 绘制点位水印与检测框。
-                    // 多模型合并只复制了 mObjects，若不单独透传 frame_*，OSD 端读到的全是 0，
-                    // 会导致点位水印(cur_point<=0)和损伤框(phase_ready<=0)都不绘制。
-                    // 仅从填充了该状态的模型(frame_capture_ts_ms>0，即损伤主模型)取值，避免被未填充的模型覆盖为 0。
-                    if (model_result.frame_capture_ts_ms > 0) {
-                        mResults[pipe->pipeid].frame_point_id          = model_result.frame_point_id;
-                        mResults[pipe->pipeid].frame_posture_completed = model_result.frame_posture_completed;
-                        mResults[pipe->pipeid].frame_light_flag        = model_result.frame_light_flag;
-                        mResults[pipe->pipeid].frame_phase_ready_ms    = model_result.frame_phase_ready_ms;
-                        mResults[pipe->pipeid].frame_capture_ts_ms     = model_result.frame_capture_ts_ms;
-                        mResults[pipe->pipeid].frame_should_capture    = model_result.frame_should_capture;
-                    }
                 }
             }
 

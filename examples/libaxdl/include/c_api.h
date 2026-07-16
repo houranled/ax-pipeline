@@ -144,14 +144,6 @@ extern "C"
 
         int niFps /*inference*/, noFps /*osd*/;
 
-        /* 帧级巡检状态：由 ai_inference_func 在收到帧时填充，draw_custom 使用本帧自带状态而不是实时查相机，减少视频流延迟错位 */
-        int frame_point_id;             // 该帧对应的点位
-        bool frame_posture_completed;   // 该帧处理时是否已到位
-        int frame_light_flag;           // 0=L0(开灯), 1=L1(关灯/低照)
-        long long frame_phase_ready_ms; // 该帧处理时点位就绪时刻
-        long long frame_capture_ts_ms;  // 该帧处理时间戳
-        int frame_should_capture;      // 0=不拍照, 1=L0, 2=L1，由巡检线程设置
-
     } axdl_results_t;
 
     typedef struct _canvas_t
