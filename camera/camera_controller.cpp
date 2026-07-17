@@ -137,8 +137,8 @@ int CameraController::receive_input_loop() {
                 resp_first_camera_data["point_id"] = camera->now_point_id;
                 resp_first_camera_data["patrol"] = camera->patrolling;
                 resp_first_camera_data["wiper"] = std::to_string(camera->wiper_switch); // 雨刷开关
-                resp_first_camera_data["photosensitive"] = camera->photosensitive;
-                resp_first_camera_data["photosensitiveThreshold"] = camera->photosensitiveThreshold;
+                resp_first_camera_data["photosensitive"] = camera->photosensitive; // 光敏亮度
+                resp_first_camera_data["photosensitiveThreshold"] = camera->photosensitiveThreshold; // 光敏阈值
             } else if (camera_id > 0) {
                 response["msg"] = "该相机不存在!";
                 response["status"] = 500;
@@ -1478,9 +1478,7 @@ int Camera::patrol_with_calibration_loop(bool is_calibrate, time_t start_time, i
             auto point_start = std::chrono::steady_clock::now();
 
             // 先等待画面稳定，再设置拍照条件（避免在画面未稳定时触发拍照）
-            if (!interruptible_sleep_ms(2500)) break; // 等待灯点亮稳定 + 补偿画面延迟
-
-            // 额外等待 800ms，确保从 phase_ready_ms 设置到推理开始有足够时间差
+            // 确保从 phase_ready_ms 设置到推理开始有足够时间差
             // 避免推理开始时刻离就绪时刻太近导致 phase_settled 判断失败
             if (!interruptible_sleep_ms(800)) break;
 
@@ -1867,9 +1865,9 @@ int Camera::set_zoom_and_focus(int zoom, int focus)
         return 0;
 
     WTALOGI("摄像头[%d]设置镜头url串: %s", id, url.c_str());
+
+    std::lock_guard<std::mutex> curl_lk(m_curl_mtx);
     // 设置请求URL
-    curl_easy_setopt(curl_handle, CURLOPT_URL, url.c_str());
-    // 向curl设置请求URL
     curl_easy_setopt(curl_handle, CURLOPT_URL, url.c_str());
 
     curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteCallback);
@@ -1897,6 +1895,7 @@ int Camera::fetch_remote_status()
     std::thread th1([this, &res1](){
         bool error = false;
         std::string url = "http://" + ip + "/cgi-bin/param.cgi?action=list&group=CAMPOS&channel=0";
+        std::lock_guard<std::mutex> curl_lk(m_curl_mtx);
         curl_easy_setopt(curl_handle, CURLOPT_URL, url.c_str());
 
         // 创建一个缓冲区来存储响应数据

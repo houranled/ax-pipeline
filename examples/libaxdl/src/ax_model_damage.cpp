@@ -1405,6 +1405,7 @@ int wt_damage_multi_model_recognize::inference(axdl_image_t *pstFrame, axdl_bbox
 
 void wt_damage_multi_model_recognize::draw_custom(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y)
 {
+    if (m_damage_models.empty()) return;
     this->m_damage_models.begin()->model->draw_results(image, results, fontscale, thickness, offset_x, offset_y);
 
     /*

@@ -251,6 +251,7 @@ private:
     pipeline_t *m_pipeline;
 
     CURL *curl_handle;  // 持久化的curl句柄
+    std::mutex m_curl_mtx;  // 保护 curl_handle 的并发访问
     modbus_t *modbus_ctx = nullptr;
 
     // === Modbus 线程安全 & 后台重连 ===
