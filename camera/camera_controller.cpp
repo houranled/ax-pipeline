@@ -1086,7 +1086,7 @@ int Camera::clamp_y_angle(int orig) const
     // 先归一化到 (-180, 180]，让同一姿态只有一种数值表达；再按硬件可动范围 clamp。
     int y = orig % 360;       // 归一化到 (-360, 360)
     if (y > 180)        y -= 360;  // (180, 360)   -> (-180, 0)
-    else if (y <= -180) y += 360;  // (-360, -180] -> (0, 180]
+    else if (y < -180) y += 360;  // (-360, -180] -> (0, 180]
 
     if (y < lo)      y = lo;
     else if (y > hi) y = hi;
@@ -2008,6 +2008,7 @@ int Camera::fetch_remote_status()
             } else if (18000 < rotation_y && rotation_y<=36000) {
                 web_rotation_y = (rotation_y - 36000)/100;
             }
+            web_rotation_y = clamp_y_angle(web_rotation_y);
             WTALOGI("摄像机[%d]同步当前姿态: x=%d, y=%d",id, web_rotation_x, web_rotation_y);
         }
 

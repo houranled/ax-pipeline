@@ -36,6 +36,8 @@
 #include "signal.h"
 #include "vector"
 #include "map"
+#include <thread>
+#include <string>
 
 #include "opencv2/opencv.hpp"
 #include "../../../camera/camera_controller.hpp"
@@ -210,11 +212,12 @@ void h265_save_func(pipeline_buffer_t *buff)
     size_t one_frame_size = buff->n_size;
     void *one_frame_data = buff->p_vir;
 
+    bool is_key = false;
     // ===== 3 秒滚动预录缓冲（常驻维护） =====
     // 不论 IsRecordVideo / damage_state 是否激活，都维护预录缓冲，
     // 以便"人员检测录像"和"损伤片段录像"都能从更早的 I 帧切入，包含触发前 3 秒画面。
     if (one_frame_data != NULL && one_frame_size > 0) {
-        bool is_key = is_hevc_keyframe((const uint8_t*)one_frame_data, one_frame_size);
+        is_key = is_hevc_keyframe((const uint8_t*)one_frame_data, one_frame_size);
 
         pthread_mutex_lock(&pipe->damage_mutex);
         // 首次进入时按 fps 计算 max_frames（3 秒）
@@ -288,9 +291,7 @@ void h265_save_func(pipeline_buffer_t *buff)
                 }
             }
 
-            // 将帧数据复制到 vector 并添加到列表
-            std::vector<uint8_t> frame_vec((uint8_t*)one_frame_data, (uint8_t*)one_frame_data + one_frame_size);
-            pipe->frame_list.push_back(std::move(frame_vec));
+            pipe->frame_list.emplace_back((const uint8_t*)one_frame_data, (const uint8_t*)one_frame_data + one_frame_size);
             pipe->total_cached_size += one_frame_size;
         }
 
@@ -338,7 +339,7 @@ void h265_save_func(pipeline_buffer_t *buff)
 
     // 处理人检测快照请求：等到 I 帧后用 ffmpeg 解码保存为 PNG
     if (pipe->person_snapshot_requested && one_frame_data != NULL && one_frame_size > 0) {
-        if (is_hevc_keyframe((const uint8_t*)one_frame_data, one_frame_size)) {
+        if (is_key) {
             char cmd[512];
             sprintf(cmd, "ffmpeg -y -loglevel quiet -f hevc -i - -vframes 1 %s 2>/dev/null",
                     pipe->person_snapshot_filename);
@@ -752,7 +753,7 @@ void damage_pipeline_on_leaving(pipeline_t* pipe)
     pthread_mutex_lock(&pipe->damage_mutex);
     if (pipe->damage_state == DC_STAYING) {
         int fps = pipe->m_ivps_attr.n_ivps_fps > 0 ? pipe->m_ivps_attr.n_ivps_fps : 25;
-        pipe->damage_post_remaining = fps * 3;
+        pipe->damage_post_remaining = fps * 3; // 再录3秒
         pipe->damage_state = DC_POST;
         WTALOGI("损伤片段进入 POST，再录 %d 帧, damage_seen=%d", pipe->damage_post_remaining, (int)pipe->damage_seen);
     } else if (pipe->damage_state == DC_POST) {
