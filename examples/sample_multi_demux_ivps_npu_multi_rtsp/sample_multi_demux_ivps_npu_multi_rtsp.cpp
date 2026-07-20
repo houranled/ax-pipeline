@@ -220,10 +220,10 @@ void h265_save_func(pipeline_buffer_t *buff)
         is_key = is_hevc_keyframe((const uint8_t*)one_frame_data, one_frame_size);
 
         pthread_mutex_lock(&pipe->damage_mutex);
-        // 首次进入时按 fps 计算 max_frames（3 秒）
+        // 首次进入时按 fps 计算 max_frames（1 秒）
         if (pipe->damage_pre_max_frames == 0) {
             int fps = pipe->m_ivps_attr.n_ivps_fps > 0 ? pipe->m_ivps_attr.n_ivps_fps : 25;
-            pipe->damage_pre_max_frames = (size_t)(fps * 3);
+            pipe->damage_pre_max_frames = (size_t)(fps * 1);
         }
         damage_push_pre_buf(pipe, (const uint8_t*)one_frame_data, one_frame_size, is_key);
 
@@ -753,7 +753,7 @@ void damage_pipeline_on_leaving(pipeline_t* pipe)
     pthread_mutex_lock(&pipe->damage_mutex);
     if (pipe->damage_state == DC_STAYING) {
         int fps = pipe->m_ivps_attr.n_ivps_fps > 0 ? pipe->m_ivps_attr.n_ivps_fps : 25;
-        pipe->damage_post_remaining = fps * 3; // 再录3秒
+        pipe->damage_post_remaining = fps * 1; // 再录1秒
         pipe->damage_state = DC_POST;
         WTALOGI("损伤片段进入 POST，再录 %d 帧, damage_seen=%d", pipe->damage_post_remaining, (int)pipe->damage_seen);
     } else if (pipe->damage_state == DC_POST) {

@@ -1491,9 +1491,11 @@ int Camera::patrol_with_calibration_loop(bool is_calibrate, time_t start_time, i
             WTALOGI("摄像机[%d] 点位[%d] 开灯拍摄 L0", id, now_point_id);
 
             // 有灯照拍照：等待推理线程设置 frame_should_capture = 0
-            int half_duration = std::max(1, position->duration / 2);
+            // 开灯(L0)占 3/4，关灯(L1)占 1/4
+            int l0_duration = std::max(1, position->duration * 3 / 4);
+            int l1_duration = std::max(1, position->duration - l0_duration);
             int wait_ms = 0;
-            const int max_wait_ms = half_duration * 1000;
+            const int l0_wait_ms = l0_duration * 1000;
             while (frame_should_capture.load() != 0 && !stop_requested.load()) {
                 interruptible_sleep_ms(50); // stop 时会被 notify 立刻唤醒
                 wait_ms += 50;
@@ -1501,9 +1503,9 @@ int Camera::patrol_with_calibration_loop(bool is_calibrate, time_t start_time, i
 
             if (stop_requested.load()) break;
 
-            if (wait_ms < max_wait_ms) {
-                // L0 拍完后继续等待剩余时间，确保有灯照阶段占满 duration/2 秒
-                if (!interruptible_sleep_ms(max_wait_ms - wait_ms)) break;
+            if (wait_ms < l0_wait_ms) {
+                // L0 拍完后继续等待剩余时间，确保有灯照阶段占满 3/4 duration 秒
+                if (!interruptible_sleep_ms(l0_wait_ms - wait_ms)) break;
             }
 
             // 第二阶段：关灯拍照（L1 = 无灯照）
@@ -1521,6 +1523,7 @@ int Camera::patrol_with_calibration_loop(bool is_calibrate, time_t start_time, i
 
             // 无灯照拍照：等待推理线程设置 frame_should_capture = 0
             wait_ms = 0;
+            const int l1_wait_ms = l1_duration * 1000;
             while (frame_should_capture.load() != 0 && !stop_requested.load()) {
                 interruptible_sleep_ms(50); // stop 时会被 notify 立刻唤醒
                 wait_ms += 50;
@@ -1528,9 +1531,9 @@ int Camera::patrol_with_calibration_loop(bool is_calibrate, time_t start_time, i
 
             if (stop_requested.load()) break;
 
-            if (wait_ms < max_wait_ms) {
-                // L1 拍完后继续等待剩余时间，确保无灯照阶段占满 duration/2 秒
-                if (!interruptible_sleep_ms(max_wait_ms - wait_ms)) break;
+            if (wait_ms < l1_wait_ms) {
+                // L1 拍完后继续等待剩余时间，确保无灯照阶段占满 1/4 duration 秒
+                if (!interruptible_sleep_ms(l1_wait_ms - wait_ms)) break;
             }
 
             // 补足剩余停留时间，确保录像达到配置的 duration 秒
