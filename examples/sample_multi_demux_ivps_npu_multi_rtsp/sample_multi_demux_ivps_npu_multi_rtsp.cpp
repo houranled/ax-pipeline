@@ -609,6 +609,10 @@ static void damage_finalize_clip(pipeline_t* pipe)
     } else {
         if (!pipe->damage_seen) {
             WTALOGI("点位停留期间未检出损伤，丢弃片段 %zu 帧", pipe->damage_clip_frames.size());
+        } else if (pipe->damage_writer_running) {
+            // 兜底诊断：正常情况下 on_arrived 已等待上一写入线程结束，此分支不应触发。
+            // 若仍触发说明写盘超时(>10s)，记录以便定位慢磁盘/大文件问题。
+            WTALOGI("上一片段写入线程仍在运行，本片段无法落盘被丢弃 %zu 帧！！！", pipe->damage_clip_frames.size());
         }
         pipe->damage_clip_frames.clear();
     }
@@ -715,6 +719,25 @@ void damage_pipeline_on_arrived(pipeline_t* pipe, const char* clip_filename)
     }
     if (wait_count > 0) {
         WTALOGI("on_arrived 等待上一点位落盘完成，等待了 %d ms", wait_count * 50);
+    }
+
+    // ★ 再等待上一个点位的写入线程真正结束：damage_finalize_clip 创建写线程后会立即
+    //   把状态置为 DC_IDLE，上面的 DC_POST 等待并不覆盖异步写盘阶段。若此处不等待，
+    //   新片段在其 finalize 时 writer 仍在运行，会命中 !damage_writer_running 分支被
+    //   静默丢弃（表现为：有告警但无视频）。此等待仅发生在巡检线程的点位切换间隙，
+    //   不触及视频线程(h265_save_func)与推理线程(draw_custom)的热路径。
+    int writer_wait = 0;
+    const int max_writer_wait = 200; // 最多等待 10 秒 (200 * 50ms)
+    for (;;) {
+        pthread_mutex_lock(&pipe->damage_mutex);
+        bool busy = pipe->damage_writer_running;
+        pthread_mutex_unlock(&pipe->damage_mutex);
+        if (!busy || writer_wait >= max_writer_wait) break;
+        usleep(50 * 1000); // 50ms
+        writer_wait++;
+    }
+    if (writer_wait > 0) {
+        WTALOGI("on_arrived 等待上一点位写入线程完成，等待了 %d ms", writer_wait * 50);
     }
 
     pthread_mutex_lock(&pipe->damage_mutex);

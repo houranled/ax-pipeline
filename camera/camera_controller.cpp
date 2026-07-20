@@ -1557,6 +1557,13 @@ int Camera::patrol_with_calibration_loop(bool is_calibrate, time_t start_time, i
             if (!interruptible_sleep_ms(2000)) break; //进行标定的话可以快速切换点位
     } //point finished
 
+    // 兜底：若因 stop 中途 break 跳过了点位末尾的 on_leaving_point，
+    // 此处再触发一次，确保进行中的损伤片段（DC_STAYING）能进入 POST 并落盘。
+    // on_leaving_point 幂等：仅当状态为 DC_STAYING 时才生效。
+    if (!is_calibrate) {
+        on_leaving_point();
+    }
+
     // 所有点位巡检完成：立即关闭巡逻状态，释放 NPU/CPU 给后续差异对比算法
     // （ai_inference_func 通过 is_patroling() 判断是否跑模型）
     finish_patrolling();

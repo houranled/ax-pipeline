@@ -743,6 +743,7 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
     long long phase_ready = cam ? cam->phase_ready_ms.load() : 0;
     long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                             std::chrono::system_clock::now().time_since_epoch()).count();
+
     bool phase_settled = (phase_ready > 0) && (now_ms - phase_ready >= STREAM_LATENCY_SETTLE_MS);
 
     // ★ 每帧累积检测结果（只有相位真正就绪后才累积，避免灯光/移动过程中的误累积）
@@ -884,16 +885,16 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
             seen_types.insert(damage_type);
         }
 
-        bool any_alarm = false;
         for (const auto& dt : seen_types) {
             if (CameraController::getInstance()->early_warning_process(camera_id, cur_point, cur_light_flag, dt)) {
-                any_alarm = true;
                 WTALOGI("[damage] 点位[%d] L%d 已拍照并告警: %s (损伤类型: %s, 累积检测数: %zu)",
                         cur_point, cur_light_flag, saved_path.c_str(), dt.c_str(), accumulated.size());
             }
         }
-        if (any_alarm) {
-            // 标记当前停留期间检出损伤：pipeline 状态机会在离开点位 3 秒后落盘 MP4
+        // 标记当前停留期间检出损伤：只要本相位检出损伤目标就标记，用于保存现场视频。
+        // 与告警去重解耦——early_warning_process 因去重返回 false 时，损伤依然真实存在，
+        // 视频仍应落盘（告警列表去重是上报层策略，与取证录像是两回事）。
+        if (!seen_types.empty()) {
             cam->mark_damage_seen();
         }
     }
@@ -972,8 +973,9 @@ void run_post_patrol_diff(Camera* cam, bool update_baseline)
                     }
                     // 覆盖保存展示图并写回 pic_filename（captureSnapshot 命名与 display_path 一致）
                     cam->captureSnapshot(show, t.point_id, t.light_flag);
-                    if (CameraController::getInstance()->early_warning_process(
-                            cam->get_id(), t.point_id, t.light_flag, "差异变化")) {
+                    if (CameraController::getInstance()->early_warning_process(cam->get_id(), t.point_id,
+                        t.light_flag, "差异变化"))
+                    {
                         ++alarm_count;
                         WTALOGI("[damage-diff] 摄像机[%d] 点位[%d] L%d 差异告警，差异区域数=%zu",
                                 cam->get_id(), t.point_id, t.light_flag, regions.size());
