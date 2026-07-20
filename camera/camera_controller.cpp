@@ -1405,12 +1405,8 @@ int Camera::patrol_with_calibration_loop(bool is_calibrate, time_t start_time, i
         auto px = (360+position->web_rotation_x)%360 * 100;
         auto py = (360+position->web_rotation_y)%360 * 100;
 
-        // ★ 点位移动开始时即进入"到位"状态，开始累积帧（包含完整开关灯画面）
         // 清空上一个点位的累积检测结果
         clear_accumulated_detections();
-        if (!is_calibrate) {
-            on_arrived_at_point();
-        }
 
         // 第一阶段：开灯拍照L0
         set_ptz(px, py, position->brightness);
@@ -1473,6 +1469,10 @@ int Camera::patrol_with_calibration_loop(bool is_calibrate, time_t start_time, i
             }
             light_phase_changed = false; // 拍完后再重置
         } else { //巡航模式且到位成功
+
+            // ★ 云台真正到位后再进入"到位"状态：预录缓冲最近1秒即"到位前1秒"
+            // 避免把上个点位到当前点位的云台移动过程录入损伤片段
+            on_arrived_at_point();
 
             // 记录到位时刻，用于补足剩余停留时间
             auto point_start = std::chrono::steady_clock::now();
