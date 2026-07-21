@@ -418,6 +418,13 @@ void ax_model_damage::cache_source_frame(axdl_image_t *pstFrame)
             m_cached_frame_bgr = bgr.clone();
         }
         m_cached_phase_ms = phase_ms; // 记录该帧所属相位，供拍照时严格校验
+        // [DIAG] 节流日志：确认推理线程是否仍在刷新缓存及缓存到的相位
+        {
+            static int diag_cnt = 0;
+            if (diag_cnt++ % 30 == 0) {
+                WTALOGI("[DIAG cache] cam[%d] 刷新缓存 phase=%lld (第%d次)", camera_id, phase_ms, diag_cnt);
+            }
+        }
     } catch (...) {
         // 转换失败时保持旧缓存
     }
@@ -767,6 +774,13 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
     {
         std::lock_guard<std::mutex> lk(m_frame_mutex);
         if (cur_phase == 0 || m_cached_frame_bgr.empty() || m_cached_phase_ms != cur_phase) {
+            // [DIAG] 节流日志：拍照被标记(should_capture!=0)但相位绑定不通过，打印具体原因
+            static int diag_cnt = 0;
+            if (diag_cnt++ % 30 == 0) {
+                WTALOGI("[DIAG mismatch] cam[%d] 点位[%d] should=%d 相位失配: cur_phase=%lld cached_phase=%lld 差=%lld empty=%d (第%d次)",
+                        camera_id, cur_point, should_capture, cur_phase, m_cached_phase_ms,
+                        cur_phase - m_cached_phase_ms, (int)m_cached_frame_bgr.empty(), diag_cnt);
+            }
             return; // 缓存帧不属于当前相位，等推理线程刷新后再拍
         }
     }
@@ -1308,6 +1322,20 @@ int wt_damage_multi_model_recognize::inference(axdl_image_t *pstFrame, axdl_bbox
 {
     int result = 0;
 
+    // [DIAG] 节流日志：确认推理线程是否仍被调用（判断 IVPS 是否断供 / 推理是否停摆）
+    {
+        static int diag_cnt = 0;
+        if (diag_cnt++ % 30 == 0) {
+            auto *dcam = CameraController::getInstance()->getCamera(camera_id);
+            long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+            WTALOGI("[DIAG infer] cam[%d] inference被调用 posture=%d phase_ready=%lld now-phase=%lld (第%d次)",
+                    camera_id, dcam ? (int)dcam->posture_completed.load() : -1,
+                    dcam ? dcam->phase_ready_ms.load() : -1,
+                    dcam ? (now_ms - dcam->phase_ready_ms.load()) : -1, diag_cnt);
+        }
+    }
+
     if (m_damage_models.empty() && m_specialized_models.empty()) {
         return 0;
     }
@@ -1347,9 +1375,18 @@ int wt_damage_multi_model_recognize::inference(axdl_image_t *pstFrame, axdl_bbox
     //   等待流延迟余量，避免在 RTSP 缓冲中的旧灯光帧上做推理（与拍照 phase_settled 一致）。
     const long long STREAM_LATENCY_SETTLE_MS = 40;
     if (now_ms - cam->phase_ready_ms.load() < STREAM_LATENCY_SETTLE_MS) {
+        // [DIAG] 节流日志：被 90ms 稳定门控挡下（若持续刷此日志说明 phase_ready 被反复刷新）
+        static int diag_cnt = 0;
+        if (diag_cnt++ % 30 == 0) {
+            WTALOGI("[DIAG settle] cam[%d] 未过稳定门控 now-phase=%lld < %lld (第%d次)",
+                    camera_id, now_ms - cam->phase_ready_ms.load(), STREAM_LATENCY_SETTLE_MS, diag_cnt);
+        }
         results->nObjSize = 0;
         return 0; // 相位尚未稳定，暂不推理（下一帧再判）
     }
+
+    // 计时：仅统计通过门控后真正执行模型推理的帧耗时
+    auto t_infer_start = std::chrono::steady_clock::now();
 
     // 并行推理：每个模型在独立线程中执行
     struct ModelResult {
@@ -1401,6 +1438,16 @@ int wt_damage_multi_model_recognize::inference(axdl_image_t *pstFrame, axdl_bbox
         if (results->nObjSize >= SAMPLE_MAX_BBOX_COUNT) {
             WTALOGI("结果缓冲区已满，跳过剩余模型结果");
             break;
+        }
+    }
+
+    {
+        auto t_infer_end = std::chrono::steady_clock::now();
+        auto infer_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t_infer_end - t_infer_start).count();
+        static int infer_log_cnt = 0;
+        if (infer_log_cnt++ % 30 == 0) {
+            WTALOGI("[DIAG infer-time] cam[%d] 模型数=%d 检出=%d 耗时=%lldms (第%d次)",
+                    camera_id, (int)run_models.size(), (int)results->nObjSize, infer_ms, infer_log_cnt);
         }
     }
 

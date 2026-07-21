@@ -2,7 +2,6 @@
 #define _CAMERA_CONTROLLER_H_
 
 #include <thread>
-#include <chrono>
 #include <map>
 #include <set>
 #include <vector>
@@ -11,7 +10,6 @@
 #include <atomic>
 #include <condition_variable>
 #include <ctime>
-#include <fstream>
 #include <sys/stat.h>
 #include "../alarm/alarm.hpp"
 #include <curl/curl.h>
