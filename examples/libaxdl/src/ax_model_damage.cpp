@@ -739,7 +739,7 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
 
     // 相位就绪：到位 + 灯光正确 + 巡检线程已 arm + 额外流延迟余量
     // 避免在 RTSP 解码缓冲中的旧帧上累积/拍照（例如灯光切换后还未实际呈现的画面）
-    const long long STREAM_LATENCY_SETTLE_MS = 90; // 流延迟余量，可调
+    const long long STREAM_LATENCY_SETTLE_MS = 40; // 流延迟余量，可调
     long long phase_ready = cam ? cam->phase_ready_ms.load() : 0;
     long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                             std::chrono::system_clock::now().time_since_epoch()).count();
@@ -1343,7 +1343,7 @@ int wt_damage_multi_model_recognize::inference(axdl_image_t *pstFrame, axdl_bbox
     // ★ 差异 diff 与模型并行：无论有无差异都执行模型推理；
     //   diff 比对不再前置门控，而是在巡检结束后由 run_post_patrol_diff 统一处理并告警。
     //   等待流延迟余量，避免在 RTSP 缓冲中的旧灯光帧上做推理（与拍照 phase_settled 一致）。
-    const long long STREAM_LATENCY_SETTLE_MS = 90;
+    const long long STREAM_LATENCY_SETTLE_MS = 40;
     if (now_ms - cam->phase_ready_ms.load() < STREAM_LATENCY_SETTLE_MS) {
         results->nObjSize = 0;
         return 0; // 相位尚未稳定，暂不推理（下一帧再判）
