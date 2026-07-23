@@ -1123,6 +1123,10 @@ void Camera::setPipe(pipeline_t * pipe)
 bool Camera::start_record_video()
 {
     WTALOGI("摄像机[%d]启动录像", id);
+
+    // 此处在 IsRecordVideo=true 之前重置，VENC 线程尚未进入录制分支，无竞态。
+    m_pipeline->max_memory_limit = 0;
+
     m_pipeline->IsRecordVideo = true; // 标识开始录像
     return false;
 }
