@@ -5,7 +5,7 @@
 #include "../examples/utilities/sample_log.h"
 #include "../camera/camera_controller.hpp"
 
-uint32_t AlarmManager::cooldown = 5;  // 默认冷却 5 秒
+uint32_t AlarmManager::cooldown = 2;  // 默认冷却 5 小时
 
 bool AlarmManager::isAlarmTriggered(AlarmType type, const std::string &message, int cameraId, float confidence)
 {
@@ -43,6 +43,16 @@ bool AlarmManager::generateAlarm(AlarmType type, const std::string& message, flo
         return false;
     }
 
+    // 冷却：同(相机,点位,损伤类型)首次告警后 cooldown 小时内不再告警（对应损伤片段也不生成）
+    std::string cd_key = std::to_string(cameraId) + "_" + std::to_string(point_id) + "_" + message;
+    time_t now = time(nullptr);
+    auto cd_it = last_alarm_time.find(cd_key);
+    if (cd_it != last_alarm_time.end() && (now - cd_it->second) < (time_t)cooldown * 3600) {
+        // WTALOGI("摄像头[%d] 点位[%d] 损伤类型[%s] 处于冷却期(%u小时内)，跳过告警", cameraId, point_id, message.c_str(), cooldown);
+        return false;
+    }
+    last_alarm_time[cd_key] = now;
+
     Alarm alarm;
     alarm.cameraId = cameraId;
     alarm.channel_name = camera->getName();
@@ -50,7 +60,7 @@ bool AlarmManager::generateAlarm(AlarmType type, const std::string& message, flo
     alarm.light_flag = light_flag;
     alarm.damage_type = type;
     alarm.type = message;  // 使用 message 参数作为损伤类型名称
-    alarm.timestamp = time(nullptr);
+    alarm.timestamp = now;
     alarm.confidence = confidence;
     alarm.picPath = camera->get_pic_path();
 

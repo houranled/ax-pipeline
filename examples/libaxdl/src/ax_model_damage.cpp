@@ -885,16 +885,18 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
             seen_types.insert(damage_type);
         }
 
+        bool any_new_alarm = false;
         for (const auto& dt : seen_types) {
             if (CameraController::getInstance()->early_warning_process(camera_id, cur_point, cur_light_flag, dt)) {
+                any_new_alarm = true;
                 WTALOGI("[damage] 点位[%d] L%d 已拍照并告警: %s (损伤类型: %s, 累积检测数: %zu)",
                         cur_point, cur_light_flag, saved_path.c_str(), dt.c_str(), accumulated.size());
             }
         }
-        // 标记当前停留期间检出损伤：只要本相位检出损伤目标就标记，用于保存现场视频。
-        // 与告警去重解耦——early_warning_process 因去重返回 false 时，损伤依然真实存在，
-        // 视频仍应落盘（告警列表去重是上报层策略，与取证录像是两回事）。
-        if (!seen_types.empty()) {
+
+        // 冷却期内(同点位同类型)不再告警，对应损伤片段也不落盘：
+        // 仅当本次存在过冷却期的新告警时才标记 damage_seen 以生成现场片段。
+        if (any_new_alarm) {
             cam->mark_damage_seen();
         }
     }

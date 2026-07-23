@@ -1530,7 +1530,7 @@ int Camera::patrol_with_calibration_loop(bool is_calibrate, time_t start_time, i
             light_phase_changed = true; // 灯已关闭，允许 draw_custom 触发无灯照拍照
             WTALOGI("摄像机[%d] 点位[%d] 关灯拍摄 L1", id, now_point_id);
 
-            // 无灯照拍照：等待推理线程设置 frame_should_capture = 0
+            // 无灯照拍照：等待绘制线程设置 frame_should_capture = 0
             const int l1_wait_ms = l1_duration * 1000;
             while (frame_should_capture.load() != 0 && !stop_requested.load()) {  // stop 时会被 notify 立刻唤醒
                 interruptible_sleep_ms(50);

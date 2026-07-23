@@ -7,6 +7,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <map>
+#include <ctime>
 
 
 // 添加 Camera 类的前置声明
@@ -48,10 +49,11 @@ public:
     bool generateAlarm(AlarmType type, const std::string& message, float confidence, Camera *camera, int point_id, int light_flag); // 生成告警
     std::string output_alarms(int camera_id); // 输出对应id的摄像机的告警信息
 
-    static uint32_t cooldown;  // 同(相机,类型)告警冷却时间(秒)
+    static uint32_t cooldown;  // 同(相机,点位,类型)告警冷却时间(小时)
 
 private:
     std::map<int, std::queue<Alarm>> alarm_map_datas;  // 按通道ID分别存储的告警队列
+    std::map<std::string, time_t> last_alarm_time;     // 键=相机_点位_损伤类型，值=上次告警时间戳
     std::mutex queueMutex;         // 队列互斥锁
     std::condition_variable queueCondition;  // 队列条件变量
 };
