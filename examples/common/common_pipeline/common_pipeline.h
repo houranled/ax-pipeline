@@ -33,6 +33,14 @@
 
 class Camera;
 
+// 损伤片段待写任务：writer 忙时暂存于队列，写盘线程结束后链式取出落盘。
+typedef struct
+{
+    std::vector<std::vector<uint8_t>> frames; // 该片段的全部编码帧
+    char   filename[256];                     // 输出 MP4 全路径
+    size_t total_size;                        // 帧总字节数（仅用于日志）
+} damage_clip_task_t;
+
 #if __cplusplus
 extern "C"
 {
@@ -260,6 +268,10 @@ extern "C"
         pthread_mutex_t damage_mutex;     // 保护 damage_* 字段
         pthread_t       damage_writer_thread;
         bool            damage_writer_running;
+
+        // 待写队列：writer 忙时暂存后续待落盘片段，写盘线程结束后链式取出，
+        // 避免连续点位都检出损伤时后来的片段被直接丢弃。
+        std::deque<damage_clip_task_t> damage_pending;
 
         // ====== 人检测快照 ======
         bool person_snapshot_requested;       // 是否请求保存快照（由模型设置）

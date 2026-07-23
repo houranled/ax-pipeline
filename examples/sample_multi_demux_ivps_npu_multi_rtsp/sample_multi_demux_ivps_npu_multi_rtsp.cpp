@@ -68,6 +68,7 @@ static bool is_hevc_keyframe(const uint8_t* data, size_t size);
 static void damage_push_pre_buf(pipeline_t* pipe, const uint8_t* data, size_t size, bool is_key);
 static void damage_append_clip_locked(pipeline_t* pipe, const uint8_t* data, size_t size);
 static void* damage_writer_thread_fn(void* arg);
+static bool damage_spawn_writer_locked(pipeline_t* pipe, std::vector<std::vector<uint8_t>>&& frames, const char* filename, size_t total_size); // 必须在持有 damage_mutex 时调用
 static void damage_finalize_clip(pipeline_t* pipe); // 必须在持有 damage_mutex 时调用
 void cleanup_damage_buffer(pipeline_t *pipe);
 
@@ -580,6 +581,33 @@ static void damage_append_clip_locked(pipeline_t* pipe, const uint8_t* data, siz
 }
 
 /**
+ * @brief 用给定帧集合启动一个损伤片段写盘线程。必须在持有 pipe->damage_mutex 时调用。
+ *        成功返回 true 并置 damage_writer_running=true。
+ */
+static bool damage_spawn_writer_locked(pipeline_t* pipe, std::vector<std::vector<uint8_t>>&& frames, const char* filename, size_t total_size)
+{
+    writer_thread_args_t* args = new writer_thread_args_t;
+    args->pipe = pipe;
+    args->frames = std::move(frames);
+    strncpy(args->filename, filename, sizeof(args->filename) - 1);
+    args->filename[sizeof(args->filename) - 1] = '\0';
+    sprintf(args->ffmpeg_cmd, "ffmpeg -y -loglevel quiet -f hevc -i - -c:v copy -f mp4 %s 2>/dev/null", args->filename);
+
+    size_t total_frames = args->frames.size();
+    WTALOGI("损伤片段触发落盘 %zu 帧 (%.2f MB) -> %s",
+            total_frames, total_size / (1024.0 * 1024.0), args->filename);
+
+    pipe->damage_writer_running = true;
+    if (pthread_create(&pipe->damage_writer_thread, NULL, damage_writer_thread_fn, args) != 0) {
+        WTALOGI("创建损伤片段写入线程失败");
+        pipe->damage_writer_running = false;
+        delete args;
+        return false;
+    }
+    return true;
+}
+
+/**
  * @brief 收尾损伤片段：根据 damage_seen 决定写文件或丢弃。重置状态机为 IDLE。
  * 必须在持有 pipe->damage_mutex 时调用。
  */
@@ -587,37 +615,34 @@ static void damage_finalize_clip(pipeline_t* pipe)
 {
     bool should_save = pipe->damage_seen && !pipe->damage_clip_frames.empty() && pipe->damage_clip_filename[0] != '\0';
 
-    if (should_save && !pipe->damage_writer_running) {
-        writer_thread_args_t* args = new writer_thread_args_t;
-        args->pipe = pipe;
-        args->frames = std::move(pipe->damage_clip_frames);
-        strncpy(args->filename, pipe->damage_clip_filename, sizeof(args->filename) - 1);
-        args->filename[sizeof(args->filename) - 1] = '\0';
-        sprintf(args->ffmpeg_cmd, "ffmpeg -y -loglevel quiet -f hevc -i - -c:v copy -f mp4 %s 2>/dev/null", args->filename);
-
-        size_t total_frames = args->frames.size();
-        size_t total_size = pipe->damage_clip_total_size;
-        WTALOGI("损伤片段触发落盘 %zu 帧 (%.2f MB) -> %s",
-                total_frames, total_size / (1024.0 * 1024.0), args->filename);
-
-        pipe->damage_writer_running = true;
-        if (pthread_create(&pipe->damage_writer_thread, NULL, damage_writer_thread_fn, args) != 0) {
-            WTALOGI("创建损伤片段写入线程失败");
-            pipe->damage_writer_running = false;
-            delete args;
+    if (should_save) {
+        if (!pipe->damage_writer_running) {
+            // writer 空闲：直接启动写盘
+            damage_spawn_writer_locked(pipe, std::move(pipe->damage_clip_frames),
+                                       pipe->damage_clip_filename, pipe->damage_clip_total_size);
+        } else {
+            // writer 忙：入队等待，由写盘线程结束后链式落盘，避免连续点位片段被丢弃
+            const size_t kMaxPending = 3;
+            if (pipe->damage_pending.size() >= kMaxPending) {
+                WTALOGI("损伤待写队列已满(%zu)，丢弃最旧片段 %zu 帧",
+                        pipe->damage_pending.size(), pipe->damage_pending.front().frames.size());
+                pipe->damage_pending.pop_front();
+            }
+            damage_clip_task_t task;
+            task.frames = std::move(pipe->damage_clip_frames);
+            strncpy(task.filename, pipe->damage_clip_filename, sizeof(task.filename) - 1);
+            task.filename[sizeof(task.filename) - 1] = '\0';
+            task.total_size = pipe->damage_clip_total_size;
+            size_t nframes = task.frames.size();
+            pipe->damage_pending.push_back(std::move(task));
+            WTALOGI("上一片段写盘未完成，本片段 %zu 帧入队等待，队列深度=%zu",
+                    nframes, pipe->damage_pending.size());
         }
-    } else {
-        if (!pipe->damage_seen) {
-            WTALOGI("点位停留期间未检出损伤，丢弃片段 %zu 帧", pipe->damage_clip_frames.size());
-        } else if (pipe->damage_writer_running) {
-            // 兜底诊断：正常情况下 on_arrived 已等待上一写入线程结束，此分支不应触发。
-            // 若仍触发说明写盘超时(>10s)，记录以便定位慢磁盘/大文件问题。
-            WTALOGI("上一片段写入线程仍在运行，本片段无法落盘被丢弃 %zu 帧！！！", pipe->damage_clip_frames.size());
-        }
-        pipe->damage_clip_frames.clear();
+    } else if (!pipe->damage_seen) {
+        WTALOGI("点位停留期间未检出损伤，丢弃片段 %zu 帧", pipe->damage_clip_frames.size());
     }
 
-    // 重置状态
+    // 重置状态机（frames 若已 move 走则为空，clear 无副作用）
     pipe->damage_clip_frames.clear();
     pipe->damage_clip_total_size = 0;
     pipe->damage_state = DC_IDLE;
@@ -667,6 +692,14 @@ static void* damage_writer_thread_fn(void* arg)
 
     pthread_mutex_lock(&pipe->damage_mutex);
     pipe->damage_writer_running = false;
+    // 链式落盘：若队列还有待写片段，取出下一个立即启动写盘。
+    // 先 detach 当前线程，避免其结束后 joinable 句柄被新线程覆盖导致资源泄漏。
+    if (!pipe->damage_pending.empty()) {
+        pthread_detach(pthread_self());
+        damage_clip_task_t task = std::move(pipe->damage_pending.front());
+        pipe->damage_pending.pop_front();
+        damage_spawn_writer_locked(pipe, std::move(task.frames), task.filename, task.total_size);
+    }
     pthread_mutex_unlock(&pipe->damage_mutex);
     return NULL;
 }
@@ -693,6 +726,7 @@ void cleanup_damage_buffer(pipeline_t *pipe)
     pipe->damage_clip_frames.clear();
     pipe->damage_clip_frames.shrink_to_fit();
     pipe->damage_clip_total_size = 0;
+    pipe->damage_pending.clear();
 
     pipe->damage_state = DC_IDLE;
     pipe->damage_seen = false;
