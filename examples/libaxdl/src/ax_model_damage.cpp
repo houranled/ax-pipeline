@@ -740,107 +740,40 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
 
     cv::putText(image, point_str, cv::Point(text_x, text_y + baseline), font_face, font_scale, cv::Scalar(point_color[0], point_color[1], point_color[2], 255), text_thickness);
 
-    // 灯光状态：0=L0(开灯), 1=L1(关灯/低照)
-    int cur_light_flag = cam ? (cam->light_phase_changed ? 1 : 0) : 0;
-    int fired_key = cur_point * 10 + cur_light_flag;
-
-    // 相位就绪：到位 + 灯光正确 + 巡检线程已 arm + 额外流延迟余量
-    // 避免在 RTSP 解码缓冲中的旧帧上累积/拍照（例如灯光切换后还未实际呈现的画面）
-    const long long STREAM_LATENCY_SETTLE_MS = 40; // 流延迟余量，可调
+    // 相位就绪检查（标定与巡航共用）
+    const long long STREAM_LATENCY_SETTLE_MS = 40;
     long long phase_ready = cam ? cam->phase_ready_ms.load() : 0;
     long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                             std::chrono::system_clock::now().time_since_epoch()).count();
-
     bool phase_settled = (phase_ready > 0) && (now_ms - phase_ready >= STREAM_LATENCY_SETTLE_MS);
 
-    // ★ 每帧累积检测结果（只有相位真正就绪后才累积，避免灯光/移动过程中的误累积）
-    if (cam && cam->posture_completed.load() && phase_settled && results->nObjSize > 0) {
-        cam->accumulate_detection(results);
-    }
-
-    // 每个点位触发两次拍照（有灯照+无灯照）：
-    // - 使用 photo_fired_keys 记录已拍照的 (point_id, light_flag) 组合
-    // - key = point_id * 10 + light_flag，巡检开始时清空
-    // - 直接读取 cam->frame_should_capture（atomic，跨线程安全，由巡检线程设置）
-    int should_capture = cam ? cam->frame_should_capture.load() : 0;
-    if (should_capture == 0) {
-        return; // 巡检线程未标记拍照，跳过
-    }
-
-    // ★ 严格相位绑定：缓存帧必须来自当前相位，否则说明推理线程尚未把当前相位的帧
-    //   刷新进 m_cached_frame_bgr，此时拍照会拍到上一相位的滞后帧（表现为 L1 与
-    //   下一点位 L0 画面相同）。不依赖时间余量，直接用相位身份匹配：不一致则放弃本次，等下一帧。
-    long long cur_phase = cam ? cam->phase_ready_ms.load() : 0;
-    {
-        std::lock_guard<std::mutex> lk(m_frame_mutex);
-        if (cur_phase == 0 || m_cached_frame_bgr.empty() || m_cached_phase_ms != cur_phase) {
-            // [DIAG] 节流日志：拍照被标记(should_capture!=0)但相位绑定不通过，打印具体原因
-            static int diag_cnt = 0;
-            if (diag_cnt++ % 30 == 0) {
-                WTALOGI("[DIAG mismatch] cam[%d] 点位[%d] should=%d 相位失配: cur_phase=%lld cached_phase=%lld 差=%lld empty=%d (第%d次)",
-                        camera_id, cur_point, should_capture, cur_phase, m_cached_phase_ms,
-                        cur_phase - m_cached_phase_ms, (int)m_cached_frame_bgr.empty(), diag_cnt);
-            }
-            return; // 缓存帧不属于当前相位，等推理线程刷新后再拍
-        }
-    }
-
-    // 根据 frame_should_capture 确定 cur_light_flag
-    cur_light_flag = (should_capture == 1) ? 0 : 1;
-    fired_key = cur_point * 10 + cur_light_flag;
-
-    // 去重检查
-    if (cam->photo_fired_keys.count(fired_key)) {
-        return;
-    }
-
-    WTALOGI("[draw_custom] 进入拍照逻辑: 点位[%d] L%d", cur_point, cur_light_flag);
-
-    // 保存两份图片：
-    // 1. 原图（不带检测框）→ _raw.png，用于 diff 对比
-    // 2. 带框图（原图+叠加层）→ .png，用于展示告警
-    cv::Mat raw_image;      // 不带框的原图（裁剪 letterbox 黑边后 resize）
-    cv::Mat merged_image;   // 带框的合并图
-    {
+    // 图像合成 helper：从 m_cached_frame_bgr 构建 raw（无框）和 merged（带框叠加）
+    auto build_images = [&](cv::Mat& raw_out, cv::Mat& merged_out) {
         std::lock_guard<std::mutex> lk(m_frame_mutex);
         if (!m_cached_frame_bgr.empty()) {
-            // m_cached_frame_bgr 是 letterbox 填充后的图像（如 640×640 带黑边）
-            // 需要裁剪掉黑边，只保留有效图像区域，再 resize 到 overlay 尺寸
             int src_h = m_cached_frame_bgr.rows;
             int src_w = m_cached_frame_bgr.cols;
             int dst_h = HEIGHT_DET_BBOX_RESTORE;
             int dst_w = WIDTH_DET_BBOX_RESTORE;
-
-            // 计算 letterbox 的缩放比例和 padding
             float scale = std::min((float)src_w / dst_w, (float)src_h / dst_h);
             int new_w = (int)(dst_w * scale);
             int new_h = (int)(dst_h * scale);
             int pad_x = (src_w - new_w) / 2;
             int pad_y = (src_h - new_h) / 2;
-
-            // 裁剪有效区域（去除黑边）
             cv::Rect valid_roi(pad_x, pad_y, new_w, new_h);
-            valid_roi &= cv::Rect(0, 0, src_w, src_h); // 确保不越界
+            valid_roi &= cv::Rect(0, 0, src_w, src_h);
             cv::Mat cropped = m_cached_frame_bgr(valid_roi);
-
-            // resize 到与 overlay (IVPS) 相同尺寸
             cv::Mat base_resized;
             cv::resize(cropped, base_resized, cv::Size(image.cols, image.rows));
-            raw_image = base_resized.clone();
-
-            // 将 resize 后的原图转换为 BGRA（4通道）
+            raw_out = base_resized.clone();
             cv::Mat base_bgra;
             cv::cvtColor(base_resized, base_bgra, cv::COLOR_BGR2BGRA);
-
-            // Alpha 混合：将 RGBA 叠加层合并到原图上
             cv::Mat overlay_bgra;
             cv::cvtColor(image, overlay_bgra, cv::COLOR_RGBA2BGRA);
-
-            // 逐像素 Alpha 混合
-            merged_image = base_bgra.clone();
-            for (int y = 0; y < merged_image.rows; ++y) {
-                for (int x = 0; x < merged_image.cols; ++x) {
-                    cv::Vec4b& dst = merged_image.at<cv::Vec4b>(y, x);
+            merged_out = base_bgra.clone();
+            for (int y = 0; y < merged_out.rows; ++y) {
+                for (int x = 0; x < merged_out.cols; ++x) {
+                    cv::Vec4b& dst = merged_out.at<cv::Vec4b>(y, x);
                     const cv::Vec4b& src = overlay_bgra.at<cv::Vec4b>(y, x);
                     float alpha = src[3] / 255.0f;
                     if (alpha > 0.01f) {
@@ -850,84 +783,277 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
                     }
                 }
             }
-            cv::cvtColor(merged_image, merged_image, cv::COLOR_BGRA2BGR);
+            cv::cvtColor(merged_out, merged_out, cv::COLOR_BGRA2BGR);
         } else {
-            cv::cvtColor(image, raw_image, cv::COLOR_RGBA2BGR);
-            merged_image = raw_image.clone();
+            cv::cvtColor(image, raw_out, cv::COLOR_RGBA2BGR);
+            merged_out = raw_out.clone();
         }
-    }
+    };
 
-    // ★ 差异 diff 与模型并行：此处只处理模型检测结果与告警；
-    //   diff 比对已解耦到巡检结束后的 run_post_patrol_diff 统一执行并单独告警。
-
-    // ★ 获取累积的检测结果（停留期间所有帧的合并）
-    auto accumulated = cam->get_accumulated_objects();
-
-    // ★ 在 merged_image 上绘制累积的检测框（确保所有检测到的损伤都显示在拍照图上）
-    if (!accumulated.empty()) {
+    // 累积检测框绘制 helper
+    auto draw_accumulated = [&](cv::Mat& img, const std::vector<axdl_object_t>& accumulated) {
         for (const auto& obj : accumulated) {
-            // 绘制检测框
-            int x1 = (int)(obj.bbox.x * merged_image.cols);
-            int y1 = (int)(obj.bbox.y * merged_image.rows);
-            int x2 = (int)((obj.bbox.x + obj.bbox.w) * merged_image.cols);
-            int y2 = (int)((obj.bbox.y + obj.bbox.h) * merged_image.rows);
-            cv::rectangle(merged_image, cv::Point(x1, y1), cv::Point(x2, y2), cv::Scalar(0, 0, 255), 2);
-
-            // 绘制标签
+            int x1 = (int)(obj.bbox.x * img.cols);
+            int y1 = (int)(obj.bbox.y * img.rows);
+            int x2 = (int)((obj.bbox.x + obj.bbox.w) * img.cols);
+            int y2 = (int)((obj.bbox.y + obj.bbox.h) * img.rows);
+            cv::rectangle(img, cv::Point(x1, y1), cv::Point(x2, y2), cv::Scalar(0, 0, 255), 2);
             char label[128];
             snprintf(label, sizeof(label), "%s %.2f", obj.objname, obj.prob);
             int baseline = 0;
             cv::Size text_size = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseline);
-            cv::rectangle(merged_image, cv::Point(x1, y1 - text_size.height - 4),
+            cv::rectangle(img, cv::Point(x1, y1 - text_size.height - 4),
                           cv::Point(x1 + text_size.width, y1), cv::Scalar(0, 0, 255), -1);
-            cv::putText(merged_image, label, cv::Point(x1, y1 - 2),
+            cv::putText(img, label, cv::Point(x1, y1 - 2),
                         cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255), 1);
         }
-    }
+    };
 
-    // 保存带框图（用于展示告警），使用当前点位 cur_point 而非可能已变化的 now_point_id
-    std::string saved_path = cam->captureSnapshot(merged_image, cur_point, cur_light_flag);
-
-    // ★ 使用累积结果触发模型告警（diff 差异告警由巡检结束后 run_post_patrol_diff 单独生成）
-    if (!accumulated.empty()) {
-        std::set<std::string> seen_types;
-        for (const auto& obj : accumulated) {
-            if (obj.objname[0]) seen_types.insert(obj.objname);
-        }
-        // 兜底：objname 为空时退化为当前模型的 damage_type
-        if (seen_types.empty() && !damage_type.empty()) {
-            seen_types.insert(damage_type);
+    if (cam->is_calibrating()) {
+        // ===== 标定模式：保留原有 L0/L1 逻辑 =====
+        if (cam->posture_completed.load() && phase_settled && results->nObjSize > 0) {
+            cam->accumulate_detection(results);
         }
 
-        bool any_new_alarm = false;
-        for (const auto& dt : seen_types) {
-            if (CameraController::getInstance()->early_warning_process(camera_id, cur_point, cur_light_flag, dt)) {
-                any_new_alarm = true;
-                WTALOGI("[damage] 点位[%d] L%d 已拍照并告警: %s (损伤类型: %s, 累积检测数: %zu)",
-                        cur_point, cur_light_flag, saved_path.c_str(), dt.c_str(), accumulated.size());
+        int should_capture = cam->frame_should_capture.load();
+        if (should_capture == 0) return;
+
+        long long cur_phase = cam->phase_ready_ms.load();
+        {
+            std::lock_guard<std::mutex> lk(m_frame_mutex);
+            if (cur_phase == 0 || m_cached_frame_bgr.empty() || m_cached_phase_ms != cur_phase) {
+                static int diag_cnt = 0;
+                if (diag_cnt++ % 30 == 0) {
+                    WTALOGI("[DIAG mismatch] cam[%d] 点位[%d] should=%d 相位失配: cur_phase=%lld cached_phase=%lld 差=%lld empty=%d (第%d次)",
+                            camera_id, cur_point, should_capture, cur_phase, m_cached_phase_ms,
+                            cur_phase - m_cached_phase_ms, (int)m_cached_frame_bgr.empty(), diag_cnt);
+                }
+                return;
             }
         }
 
-        // 冷却期内(同点位同类型)不再告警，对应损伤片段也不落盘：
-        // 仅当本次存在过冷却期的新告警时才标记 damage_seen 以生成现场片段。
-        if (any_new_alarm) {
-            cam->mark_damage_seen();
+        int cur_light_flag = (should_capture == 1) ? 0 : 1;
+        int fired_key = cur_point * 10 + cur_light_flag;
+        if (cam->photo_fired_keys.count(fired_key)) return;
+
+        WTALOGI("[draw_custom] 标定拍照: 点位[%d] L%d", cur_point, cur_light_flag);
+
+        cv::Mat raw_image, merged_image;
+        build_images(raw_image, merged_image);
+
+        auto accumulated = cam->get_accumulated_objects();
+        if (!accumulated.empty()) {
+            draw_accumulated(merged_image, accumulated);
         }
-    }
 
-    // 点位前后对比（同光照↔同光照）：仅在此处入队，重型 OpenCV 计算延迟到巡检结束后统一执行。
-    // 入队元数据：当前点位、当前灯光标志、原图（内存）和带框图路径
-    if (!saved_path.empty() && !raw_image.empty()) {
-        cam->enqueue_diff_task(cur_point, cur_light_flag, raw_image, saved_path);
-    }
+        std::string saved_path = cam->captureSnapshot(merged_image, cur_point, cur_light_flag);
 
-    // 标记该点位+灯光状态已处理
-    cam->photo_fired_keys.insert(fired_key);
-    cam->frame_should_capture.store(0); // 通知巡检线程本相位拍照完成
+        if (!accumulated.empty()) {
+            std::set<std::string> seen_types;
+            for (const auto& obj : accumulated) {
+                if (obj.objname[0]) seen_types.insert(obj.objname);
+            }
+            if (seen_types.empty() && !damage_type.empty()) {
+                seen_types.insert(damage_type);
+            }
+            bool any_new_alarm = false;
+            for (const auto& dt : seen_types) {
+                if (CameraController::getInstance()->early_warning_process(camera_id, cur_point, cur_light_flag, dt)) {
+                    any_new_alarm = true;
+                    WTALOGI("[damage] 点位[%d] L%d 已拍照并告警: %s (损伤类型: %s, 累积检测数: %zu)",
+                            cur_point, cur_light_flag, saved_path.c_str(), dt.c_str(), accumulated.size());
+                }
+            }
+            if (any_new_alarm) {
+                cam->mark_damage_seen();
+            }
+        }
 
-    // L1 拍照完成后消费掉标志（必须在拍照成功后才消费，避免提前消费导致状态错乱）
-    if (cur_light_flag == 1) {
-        cam->light_phase_changed = false;
+        if (!saved_path.empty() && !raw_image.empty()) {
+            cam->enqueue_diff_task(cur_point, cur_light_flag, raw_image, saved_path);
+        }
+
+        cam->photo_fired_keys.insert(fired_key);
+        cam->frame_should_capture.store(0);
+        if (cur_light_flag == 1) {
+            cam->light_phase_changed = false;
+        }
+
+    } else if (cam->ptz_type != "big") {
+        // ===== 小云台巡航模式：保留原有 L0/L1 逻辑 =====
+        if (cam->posture_completed.load() && phase_settled && results->nObjSize > 0) {
+            cam->accumulate_detection(results);
+        }
+
+        int should_capture = cam->frame_should_capture.load();
+        if (should_capture == 0) return;
+
+        long long cur_phase = cam->phase_ready_ms.load();
+        {
+            std::lock_guard<std::mutex> lk(m_frame_mutex);
+            if (cur_phase == 0 || m_cached_frame_bgr.empty() || m_cached_phase_ms != cur_phase) {
+                static int diag_cnt = 0;
+                if (diag_cnt++ % 30 == 0) {
+                    WTALOGI("[DIAG mismatch] cam[%d] 点位[%d] should=%d 相位失配: cur_phase=%lld cached_phase=%lld 差=%lld empty=%d (第%d次)",
+                            camera_id, cur_point, should_capture, cur_phase, m_cached_phase_ms,
+                            cur_phase - m_cached_phase_ms, (int)m_cached_frame_bgr.empty(), diag_cnt);
+                }
+                return;
+            }
+        }
+
+        int cur_light_flag = (should_capture == 1) ? 0 : 1;
+        int fired_key = cur_point * 10 + cur_light_flag;
+        if (cam->photo_fired_keys.count(fired_key)) return;
+
+        WTALOGI("[draw_custom] 小云台拍照: 点位[%d] L%d", cur_point, cur_light_flag);
+
+        cv::Mat raw_image, merged_image;
+        build_images(raw_image, merged_image);
+
+        auto accumulated = cam->get_accumulated_objects();
+        if (!accumulated.empty()) {
+            draw_accumulated(merged_image, accumulated);
+        }
+
+        std::string saved_path = cam->captureSnapshot(merged_image, cur_point, cur_light_flag);
+
+        if (!accumulated.empty()) {
+            std::set<std::string> seen_types;
+            for (const auto& obj : accumulated) {
+                if (obj.objname[0]) seen_types.insert(obj.objname);
+            }
+            if (seen_types.empty() && !damage_type.empty()) {
+                seen_types.insert(damage_type);
+            }
+            bool any_new_alarm = false;
+            for (const auto& dt : seen_types) {
+                if (CameraController::getInstance()->early_warning_process(camera_id, cur_point, cur_light_flag, dt)) {
+                    any_new_alarm = true;
+                    WTALOGI("[damage] 点位[%d] L%d 已拍照并告警: %s (损伤类型: %s, 累积检测数: %zu)",
+                            cur_point, cur_light_flag, saved_path.c_str(), dt.c_str(), accumulated.size());
+                }
+            }
+            if (any_new_alarm) {
+                cam->mark_damage_seen();
+            }
+        }
+
+        if (!saved_path.empty() && !raw_image.empty()) {
+            cam->enqueue_diff_task(cur_point, cur_light_flag, raw_image, saved_path);
+        }
+
+        cam->photo_fired_keys.insert(fired_key);
+        cam->frame_should_capture.store(0);
+        if (cur_light_flag == 1) {
+            cam->light_phase_changed = false;
+        }
+
+    } else {
+        // ===== 大云台巡航模式：叶片进出状态机 =====
+        // 识别到叶片进入画面才进行损伤识别；叶片离开时拍最大面积图(F1/F2/F3)并告警
+        if (!phase_settled) return;
+
+        const float BLADE_ENTER_TH = 0.02f;   // 进入阈值：面积占比 > 2%
+        const float BLADE_EXIT_TH  = 0.005f;  // 离开阈值：面积占比 < 0.5%
+        const int   BLADE_ABSENT_LIMIT = 10;  // 连续无叶片帧数上限
+
+        float max_blade_ratio = 0.f;
+        bool has_blade = false;
+        for (int i = 0; i < results->nObjSize; i++) {
+            if (strcmp(results->mObjects[i].objname, "blade") == 0) {
+                has_blade = true;
+                float ratio = results->mObjects[i].bbox.w * results->mObjects[i].bbox.h;
+                if (ratio > max_blade_ratio) max_blade_ratio = ratio;
+            }
+        }
+
+        if (has_blade && max_blade_ratio > BLADE_ENTER_TH) {
+            // ★ 叶片在画面中
+            if (!cam->blade_in_frame) {
+                cam->blade_in_frame = true;
+                WTALOGI("[blade] 点位[%d] 叶片进入画面，面积占比 %.4f", cur_point, max_blade_ratio);
+            }
+            cam->blade_absent_frames = 0;
+
+            // 更新最大面积帧缓存
+            if (max_blade_ratio > cam->best_blade_area_ratio) {
+                cam->best_blade_area_ratio = max_blade_ratio;
+                cv::Mat raw_img, merged_img;
+                build_images(raw_img, merged_img);
+                cam->best_blade_raw = raw_img;
+                cam->best_blade_merged = merged_img;
+            }
+
+            // ★ 叶片在画面中才累积损伤检测结果
+            if (results->nObjSize > 0) {
+                cam->accumulate_detection(results);
+            }
+
+        } else {
+            // ★ 无叶片或面积低于离开阈值
+            if (cam->blade_in_frame) {
+                cam->blade_absent_frames++;
+                if (max_blade_ratio < BLADE_EXIT_TH || cam->blade_absent_frames >= BLADE_ABSENT_LIMIT) {
+                    // ★ 叶片离开：完成一次进出事件
+                    cam->blade_event_count.store(cam->blade_event_count.load() + 1);
+                    int blade_idx = cam->blade_event_count.load();
+
+                    WTALOGI("[blade] 点位[%d] 叶片离开，完成第 %d 次进出，最大面积占比 %.4f",
+                            cur_point, blade_idx, cam->best_blade_area_ratio);
+
+                    // 在 best_blade_merged 上绘制累积损伤框 + F{n} 水印
+                    auto accumulated = cam->get_accumulated_objects();
+                    std::string saved_path;
+                    if (!cam->best_blade_merged.empty()) {
+                        cv::Mat merged = cam->best_blade_merged.clone();
+                        if (!accumulated.empty()) {
+                            draw_accumulated(merged, accumulated);
+                        }
+                        char f_label[32];
+                        snprintf(f_label, sizeof(f_label), "F%d", blade_idx);
+                        cv::putText(merged, f_label, cv::Point(merged.cols - 80, 30),
+                                    cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(0, 255, 0), 2);
+                        saved_path = cam->captureSnapshot(merged, cur_point, blade_idx);
+                    }
+
+                    // ★ 触发损伤告警
+                    if (!accumulated.empty()) {
+                        std::set<std::string> seen_types;
+                        for (const auto& obj : accumulated) {
+                            if (obj.objname[0]) seen_types.insert(obj.objname);
+                        }
+                        if (seen_types.empty() && !damage_type.empty()) {
+                            seen_types.insert(damage_type);
+                        }
+                        bool any_new_alarm = false;
+                        for (const auto& dt : seen_types) {
+                            if (CameraController::getInstance()->early_warning_process(camera_id, cur_point, blade_idx, dt)) {
+                                any_new_alarm = true;
+                                WTALOGI("[damage] 点位[%d] F%d 已拍照并告警: %s (损伤类型: %s, 累积检测数: %zu)",
+                                        cur_point, blade_idx, saved_path.c_str(), dt.c_str(), accumulated.size());
+                            }
+                        }
+                        if (any_new_alarm) {
+                            cam->mark_damage_seen();
+                        }
+                    }
+
+                    // 入队 diff 任务（暂时保留）
+                    if (!saved_path.empty() && !cam->best_blade_raw.empty()) {
+                        cam->enqueue_diff_task(cur_point, blade_idx, cam->best_blade_raw, saved_path);
+                    }
+
+                    // 重置叶片状态
+                    cam->clear_accumulated_detections();
+                    cam->blade_in_frame = false;
+                    cam->best_blade_area_ratio = 0.f;
+                    cam->best_blade_raw.release();
+                    cam->best_blade_merged.release();
+                    cam->blade_absent_frames = 0;
+                }
+            }
+        }
     }
 
 }

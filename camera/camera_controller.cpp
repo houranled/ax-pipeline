@@ -1043,6 +1043,10 @@ void Camera::accumulate_detection(const axdl_results_t* results)
     for (int i = 0; i < results->nObjSize; i++) {
         const axdl_object_t& obj = results->mObjects[i];
 
+        // 跳过叶片和人体检测结果，只累积损伤框
+        if (strcmp(obj.objname, "blade") == 0 || strcmp(obj.objname, "person") == 0)
+            continue;
+
         // 检查是否与已有目标重复（同类型 + IoU > 0.5）
         bool merged = false;
         for (auto& existing : accumulated_objects) {
@@ -1193,7 +1197,7 @@ void Camera::prepare_snapshot_dir()
     }
 }
 
-std::string Camera::captureSnapshot(const cv::Mat& image, int point_id, int light_flag)
+std::string Camera::captureSnapshot(const cv::Mat& image, int point_id, int blade_index)
 {
     // 使用巡检开始时冻结的时间戳（系统时间已是东八区），文件名与目录保持同一时间基准
     time_t base_time = patrol_start_time > 0 ? patrol_start_time : time(nullptr);
@@ -1204,10 +1208,10 @@ std::string Camera::captureSnapshot(const cv::Mat& image, int point_id, int ligh
     snprintf(ymd, sizeof(ymd), "%04d%02d%02d", t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
 
     char filepath[320] = {0};
-    // 文件名加入灯光状态 L0（无灯照）或 L1（有灯照），使用传入的 point_id 而非 now_point_id
-    if (light_flag >= 0) {
-        snprintf(filepath, sizeof(filepath), "%s/%s_%02d%02d_%s_%s_%d_L%d.png", pic_dirname, ymd, t->tm_hour, t->tm_min,
-            orga_name.c_str(), name.c_str(), point_id, light_flag);
+    // 文件名加入叶片编号 F1/F2/F3（blade_index >= 0），或标定模式的 L0/L1（blade_index < 0 且 light_flag 语义）
+    if (blade_index >= 0) {
+        snprintf(filepath, sizeof(filepath), "%s/%s_%02d%02d_%s_%s_%d_F%d.png", pic_dirname, ymd, t->tm_hour, t->tm_min,
+            orga_name.c_str(), name.c_str(), point_id, blade_index);
     } else {
         snprintf(filepath, sizeof(filepath), "%s/%s_%02d%02d_%s_%s_%d.png", pic_dirname, ymd, t->tm_hour, t->tm_min,
             orga_name.c_str(), name.c_str(), point_id);
@@ -1472,7 +1476,54 @@ int Camera::patrol_with_calibration_loop(bool is_calibrate, time_t start_time, i
                 wait_ms += 50;
             }
             light_phase_changed = false; // 拍完后再重置
-        } else { //巡航模式且到位成功
+        } else if (ptz_type == "big") { //大云台巡航模式且到位成功
+
+            // ★ 云台真正到位后再进入"到位"状态：预录缓冲最近1秒即"到位前1秒"
+            // 避免把上个点位到当前点位的云台移动过程录入损伤片段
+            on_arrived_at_point();
+
+            auto point_start = std::chrono::steady_clock::now();
+
+            // 等待画面稳定
+            if (!interruptible_sleep_ms(800)) break;
+
+            // 标记相位就绪：此后 draw_custom 开始叶片状态机工作
+            phase_ready_ms.store(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                     std::chrono::system_clock::now().time_since_epoch()).count());
+
+            // 重置叶片进出计数
+            blade_event_count.store(0);
+            blade_in_frame = false;
+            best_blade_area_ratio = 0.f;
+            blade_absent_frames = 0;
+            best_blade_raw.release();
+            best_blade_merged.release();
+
+            WTALOGI("摄像机[%d] 点位[%d] 开始等待叶片进出（超时 %d 秒）", id, now_point_id, position->duration);
+
+            // 停留循环：3 次叶片进出 或 超时 即结束
+            while (!stop_requested.load()) {
+                if (blade_event_count.load() >= 3) {
+                    WTALOGI("摄像机[%d] 点位[%d] 已完成 %d 次叶片进出，提前切换",
+                            id, now_point_id, blade_event_count.load());
+                    break;
+                }
+                int elapsed_sec = (int)std::chrono::duration_cast<std::chrono::seconds>(
+                    std::chrono::steady_clock::now() - point_start).count();
+                if (elapsed_sec >= position->duration) {
+                    WTALOGI("摄像机[%d] 点位[%d] 超时 %d 秒，切换点位",
+                            id, now_point_id, position->duration);
+                    break;
+                }
+                interruptible_sleep_ms(100);
+            }
+
+            if (stop_requested.load()) break;
+
+            // ★ 离开点位，触发损伤片段落盘
+            on_leaving_point();
+
+        } else { //小云台巡航模式且到位成功（保留原有 L0/L1 逻辑）
 
             // ★ 云台真正到位后再进入"到位"状态：预录缓冲最近1秒即"到位前1秒"
             // 避免把上个点位到当前点位的云台移动过程录入损伤片段

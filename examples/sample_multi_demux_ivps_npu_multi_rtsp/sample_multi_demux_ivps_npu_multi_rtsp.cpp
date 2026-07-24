@@ -100,7 +100,7 @@ static struct _g_sample_
     struct _model
     {
         int bRunJoint;
-        std::vector<void *> gModels;  // 改为支持多个模型
+        std::vector<void *> gModels;  // 已改为支持多个模型
         ax_osd_helper osd_helper;
         std::vector<pipeline_t *> pipes_need_osd;
     } gModels[rtsp_max_count];
@@ -1018,8 +1018,7 @@ int main(int argc, char *argv[])
     vpipelines.resize(CameraController::getInstance()->getAllCameras().size());
 
     int i = 0;
-    for (auto const &camera : CameraController::getInstance()->getAllCameras())
-    {
+    for (auto const &camera : CameraController::getInstance()->getAllCameras()) {
         if (camera->getName() == "tc") {
             strcpy(config_file, "/wt_tech/app/ax-pipeline/config/wt_rtsp_tc.json"); // 叶片尖专用模型
         } else {
@@ -1056,9 +1055,22 @@ int main(int argc, char *argv[])
             WTALOGI("人员识别模型初始化失败!!");
         }
 
-        // 如果两个模型都加载失败，则退出程序
+        // 加载第三个模型（叶片识别，仅大云台）
+        if (camera->ptz_type == "big") {
+            char config_file_blade[256] = "/wt_tech/app/ax-pipeline/config/wt_rtsp_blade.json";
+            void *model3 = nullptr;
+            s32Ret = axdl_parse_param_init(config_file_blade, &model3, camera->getName().c_str(), camera->get_id());
+            if (s32Ret == 0) {
+                g_sample.gModels[i].gModels.push_back(model3);
+                WTALOGI("叶片识别模型加载成功");
+            } else {
+                WTALOGI("叶片识别模型初始化失败!!");
+            }
+        }
+
+        // 如果所有模型都加载失败，则退出程序
         if (g_sample.gModels[i].gModels.empty()) {
-            WTALOGI("主模型和人员识别模型都初始化失败，退出程序");
+            WTALOGI("主模型、人员识别模型和叶片识别模型都初始化失败，退出程序");
             goto EXIT_3;
         }
 

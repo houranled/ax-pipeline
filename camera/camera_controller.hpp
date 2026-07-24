@@ -118,8 +118,18 @@ public:
     // 移动/回位时置 0。draw_custom 据此 + 流延迟余量判定，只有真正就绪后才累积/拍照，
     // 避免把移动过程、灯光切换过程或视频流缓冲中的旧帧误当作当前点位画面。
     std::atomic<long long> phase_ready_ms{0};
-    std::atomic<int> frame_should_capture{0}; // 0=不拍照, 1=L0, 2=L1，由巡检线程设置
-    std::set<int> photo_fired_keys; // 已拍照点位+灯光状态（key = point_id * 10 + light_flag）
+    std::atomic<int> frame_should_capture{0}; // 0=不拍照, 1=L0, 2=L1，由巡检线程设置（标定模式仍使用）
+    std::set<int> photo_fired_keys; // 已拍照点位+灯光状态（key = point_id * 10 + light_flag）（标定模式仍使用）
+
+    // ===== 叶片进出状态机 =====
+    // 识别到叶片进入画面→离开 构成一次进出事件，每次事件拍一张最大面积图(F1/F2/F3)
+    // 损伤识别仅在叶片进入画面期间进行
+    std::atomic<int> blade_event_count{0};       // 本点位已完成的叶片进出次数
+    bool blade_in_frame = false;                  // 叶片是否在画面中
+    float best_blade_area_ratio = 0.f;            // 当前进出事件中最大叶片面积占比
+    cv::Mat best_blade_raw;                       // 最大面积帧原图（不带框，供 diff 用）
+    cv::Mat best_blade_merged;                    // 最大面积帧带框图（用于保存展示）
+    int blade_absent_frames = 0;                  // 连续无叶片帧数
 
     // 每相位 diff 推理门控决策：key = point_id * 10 + light_flag，值：1=有变化需推理, 0=与基线一致可跳过。
     // 每个(点位,灯光)相位只计算一次 diff 并缓存，避免每帧重复 diff；巡检开始时清空。
@@ -171,10 +181,10 @@ public:
      * @brief 保存当前帧为图片，并更新 pipeline 的图片路径
      * @param image 要保存的 OpenCV 图像
      * @param point_id 点位ID（避免使用可能已变化的 now_point_id）
-     * @param light_flag 灯光状态：0=无灯照，1=有灯照
+     * @param blade_index 叶片编号：1=F1, 2=F2, 3=F3（-1=无编号，标定模式用 light_flag）
      * @return 保存的图片完整路径，失败返回空字符串
      */
-    std::string captureSnapshot(const cv::Mat& image, int point_id, int light_flag = -1);
+    std::string captureSnapshot(const cv::Mat& image, int point_id, int blade_index = -1);
 
     // 在巡检开始时（patrol_start_time 冻结后）一次性构造并创建本轮图片目录 pic_dirname，
     // 避免每次 captureSnapshot 重复拼路径 + mkdir。

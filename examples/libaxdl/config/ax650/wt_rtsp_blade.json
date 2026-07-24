@@ -1,0 +1,9 @@
+{
+    "MODEL_TYPE": "MT_DET_YOLOV8_NATIVE",
+    "MODEL_PATH": "/wt_tech/app/ax-pipeline/models/blade.axmodel",
+    "CLASS_NAMES": ["blade"],
+    "PROB_THRESHOLD": 0.4,
+    "NMS_THRESHOLD": 0.45,
+    "STRIDES": [8, 16, 32],
+    "SAMPLE_LETTER_BOX": true
+}
