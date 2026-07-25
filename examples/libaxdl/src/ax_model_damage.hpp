@@ -53,9 +53,6 @@ protected:
     void draw_custom(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y) override;
     //void draw_custom(int chn, axdl_results_t *results, float fontscale, int thickness) override;
 
-    // 在 BGR 图上绘制水印（时间、通道名、点位），用于无差异存无框原图时保留水印
-    void draw_watermark_bgr(cv::Mat &bgr, int cur_point, bool is_moving);
-
 private:
     std::string damage_type; // 损伤类型（模型文件名，如"裂缝"、"腐蚀"等）
 
@@ -69,6 +66,11 @@ private:
     // 缓存通道名称位图（FreeType 预渲染）
     cv::Mat m_channel_name_bmp;
 
+    // 缓存点位完整文字位图（FreeType 渲染，含编号+中文名+状态，按 (point_id, is_moving) 缓存）
+    std::map<std::pair<int, bool>, cv::Mat> m_point_text_bmp_cache;
+    cv::Mat getPointTextBmp(int point_id, bool is_moving);
+
+    friend class wt_damage_multi_model_recognize;
 };
 REGISTER(MT_DAMAGE_MODEL, ax_model_damage)
 

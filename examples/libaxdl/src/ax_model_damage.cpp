@@ -602,64 +602,6 @@ int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resi
     }
 }
 
-
-// 在 BGR 图上绘制水印（时间、通道名、点位）
-// 用于无差异存无框原图时保留水印；diff 对比仍使用未加水印的原图与 baseline 比较
-void ax_model_damage::draw_watermark_bgr(cv::Mat &bgr, int cur_point, bool is_moving)
-{
-    if (bgr.empty()) return;
-
-    auto *cam = CameraController::getInstance()->getCamera(camera_id);
-
-    int font_face = cv::FONT_HERSHEY_SIMPLEX;
-    double font_scale = 0.8;
-    int text_thickness = 2;
-    int baseline = 0;
-
-    // 时间字符串（左上角）
-    time_t now_ts = time(nullptr) + 8 * 3600;
-    tm *t_info = gmtime(&now_ts);
-    char time_str[64] = {0};
-    snprintf(time_str, sizeof(time_str), "%04d-%02d-%02d %02d:%02d:%02d",
-             t_info->tm_year + 1900, t_info->tm_mon + 1, t_info->tm_mday,
-             t_info->tm_hour, t_info->tm_min, t_info->tm_sec);
-    cv::putText(bgr, time_str, cv::Point(10, 30), font_face, font_scale, cv::Scalar(139, 0, 0), text_thickness);
-
-    // 通道名称/摄像机名称（左下角，使用预渲染的 FreeType 位图，BGRA alpha 合成到 BGR）
-    if (!m_channel_name_bmp.empty()) {
-        int text_x = 10;
-        int text_y = bgr.rows - 30;
-        int w = std::min(m_channel_name_bmp.cols, bgr.cols - text_x);
-        int h = std::min(m_channel_name_bmp.rows, text_y);
-        if (w > 0 && h > 0) {
-            cv::Mat roi = bgr(cv::Rect(text_x, text_y - h, w, h));
-            for (int y = 0; y < h; ++y) {
-                const cv::Vec4b* src = m_channel_name_bmp.ptr<cv::Vec4b>(y);
-                cv::Vec3b* dst = roi.ptr<cv::Vec3b>(y);
-                for (int x = 0; x < w; ++x) {
-                    uint8_t a = src[x][3];
-                    if (!a) continue;
-                    float fa = a / 255.f;
-                    for (int c = 0; c < 3; ++c)
-                        dst[x][c] = cv::saturate_cast<uint8_t>(src[x][c] * fa + dst[x][c] * (1 - fa));
-                }
-            }
-        }
-    }
-
-    // 点位信息（正下方居中）：仅巡逻状态且到达点位时绘制
-    if (cam && cam->is_patroling() && cur_point > 0) {
-        char point_str[128] = {0};
-        snprintf(point_str, sizeof(point_str), "Point: %d (%s)", cur_point,
-                 is_moving ? "moving..." : "arrived");
-        cv::Size point_size = cv::getTextSize(point_str, font_face, font_scale, text_thickness, &baseline);
-        int text_x = (bgr.cols - point_size.width) / 2;
-        int text_y = bgr.rows - baseline - 10;
-        cv::putText(bgr, point_str, cv::Point(text_x, text_y + baseline), font_face, font_scale,
-                    cv::Scalar(139, 0, 0), text_thickness);
-    }
-}
-
 void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y)
 {
     auto *cam = CameraController::getInstance()->getCamera(camera_id);
@@ -678,14 +620,6 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
              t_info->tm_hour, t_info->tm_min, t_info->tm_sec);
 
     int cur_point = cam ? cam->now_point_id : 0;
-    char point_str[128] = {0};
-    bool is_moving = false;
-    if (cam && cam->posture_completed.load()) {
-        snprintf(point_str, sizeof(point_str), "Point: %d (arrived)", cur_point);
-    } else {
-        snprintf(point_str, sizeof(point_str), "Point: %d (moving...)", cur_point);
-        is_moving = true;
-    }
 
     int text_y = 30;
     int text_x = 10;
@@ -723,22 +657,47 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
 
     if (!cam || !cam->is_patroling() || cur_point <= 0) return; // 非巡逻状态或回位中不绘制以下内容
 
-    // 画面正下方绘制点位文字背景及文字
-    cv::Size point_size = cv::getTextSize(point_str, font_face, font_scale, text_thickness, &baseline);
+    bool is_moving = !cam->posture_completed.load();
+
+    // 获取完整点位文字位图（FreeType 渲染，含编号+中文名+状态）
+    cv::Mat point_bmp = getPointTextBmp(cur_point, is_moving);
+    if (point_bmp.empty()) return;
+
+    int bmp_w = point_bmp.cols;
+    int bmp_h = point_bmp.rows;
+
     // 计算画面下方的居中位置
     int image_width = image.cols;
-    text_x = (image_width - point_size.width) / 2;  // 居中
-    text_y = image.rows - baseline - 10;  // 距离底部10像素
+    text_x = (image_width - bmp_w) / 2;
+    text_y = image.rows - bmp_h - 10;  // 距离底部10像素
 
-    // 计算呼吸灯系数 (0.2 ~ 1.0)
-    double breath_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count() / 1000.0;
-    double breath_factor = 0.2 + 0.8 * (std::sin(breath_time * 2.0 * M_PI / 2.0) + 1.0) / 2.0; // 2秒为一个周期
+    // 呼吸灯系数：移动时 0.2~1.0 呼吸，到达时固定 1.0
+    double breath_time = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count() / 1000.0;
+    float breath_factor = is_moving
+        ? (float)(0.2 + 0.8 * (std::sin(breath_time * 2.0 * M_PI / 2.0) + 1.0) / 2.0)
+        : 1.0f;
 
-    // 动态计算颜色：移动时呼吸灯效果，到达时保持原色
-    int point_color_val = is_moving ? static_cast<int>(139 * breath_factor) : 139;
-    cv::Scalar point_color = cv::Scalar(point_color_val, 0, 0);
-
-    cv::putText(image, point_str, cv::Point(text_x, text_y + baseline), font_face, font_scale, cv::Scalar(point_color[0], point_color[1], point_color[2], 255), text_thickness);
+    // alpha 合成到 BGRA
+    int w = std::min(bmp_w, image_width - text_x);
+    int h = std::min(bmp_h, image.rows - text_y);
+    if (w > 0 && h > 0) {
+        cv::Mat roi = image(cv::Rect(text_x, text_y, w, h));
+        for (int y = 0; y < h; ++y) {
+            const cv::Vec4b* src = point_bmp.ptr<cv::Vec4b>(y);
+            cv::Vec4b* dst = roi.ptr<cv::Vec4b>(y);
+            for (int x = 0; x < w; ++x) {
+                uint8_t a = src[x][3];
+                if (!a) continue;
+                a = (uint8_t)(a * breath_factor);
+                if (!a) continue;
+                float fa = a / 255.f;
+                for (int c = 0; c < 3; ++c)
+                    dst[x][c] = cv::saturate_cast<uint8_t>(src[x][c] * fa + dst[x][c] * (1 - fa));
+                dst[x][3] = std::max(dst[x][3], a);
+            }
+        }
+    }
 
     // 灯光状态：0=L0(开灯), 1=L1(关灯/低照)
     int cur_light_flag = cam ? (cam->light_phase_changed ? 1 : 0) : 0;
@@ -1065,6 +1024,46 @@ void ax_model_damage::set_channel_init_info(const std::string name, const int id
     }
 }
 
+cv::Mat ax_model_damage::getPointTextBmp(int point_id, bool is_moving)
+{
+    auto key = std::make_pair(point_id, is_moving);
+    auto it = m_point_text_bmp_cache.find(key);
+    if (it != m_point_text_bmp_cache.end()) {
+        return it->second;
+    }
+
+    auto *cam = CameraController::getInstance()->getCamera(camera_id);
+    if (!cam) return cv::Mat();
+
+    std::string point_name;
+    for (const auto& pos : cam->getPresetPositions()) {
+        if (pos.id == point_id) {
+            point_name = pos.name;
+            break;
+        }
+    }
+
+    cv::Mat bmp;
+    if (!point_name.empty()) {
+        char text[256];
+        snprintf(text, sizeof(text), "Point: %d %s (%s)", point_id, point_name.c_str(),
+                 is_moving ? "moving..." : "arrived");
+        auto& ft = FreeTypeOverlay::instance();
+        if (!ft.ready()) {
+            ft.init("/wt_tech/conf/simsun.ttc", 20);
+        }
+        if (ft.ready()) {
+            bmp = ft.renderTextRGBA(text, cv::Scalar(139, 0, 0, 255), 2);
+            if (bmp.empty()) {
+                WTALOGI("[FreeType] render point_text failed: '%s'", text);
+            }
+        }
+    }
+
+    m_point_text_bmp_cache[key] = bmp;
+    return bmp;
+}
+
 wt_damage_multi_model_recognize::wt_damage_multi_model_recognize()
 {
     WTALOGI("Instance wt_damage_multi_model_recognize object");
@@ -1313,6 +1312,35 @@ int wt_damage_multi_model_recognize::init(void *json_obj)
     }
     for (const auto& kv : m_specialized_models) {
         WTALOGI("    - 专用: '%s'", kv.first.c_str());
+    }
+
+    // 只对第一个模型实例预渲染点位文字（draw_custom 只用第一个模型）
+    if (!m_damage_models.empty()) {
+        auto *first_model = dynamic_cast<ax_model_damage *>(m_damage_models.begin()->model.get());
+        if (first_model) {
+            auto& ft = FreeTypeOverlay::instance();
+            if (!ft.ready()) {
+                ft.init("/wt_tech/conf/simsun.ttc", 20);
+            }
+            auto *cam = CameraController::getInstance()->getCamera(camera_id);
+            if (cam && ft.ready()) {
+                for (const auto& pos : cam->getPresetPositions()) {
+                    if (pos.name.empty()) continue;
+                    for (bool moving : {false, true}) {
+                        char text[256];
+                        snprintf(text, sizeof(text), "Point: %d %s (%s)", pos.id, pos.name.c_str(),
+                                 moving ? "moving..." : "arrived");
+                        cv::Mat bmp = ft.renderTextRGBA(text, cv::Scalar(139, 0, 0, 255), 2);
+                        if (bmp.empty()) {
+                            WTALOGI("[FreeType] render point_text failed: '%s'", text);
+                        } else {
+                            WTALOGI("[FreeType] point_text ready: '%s' size=%dx%d", text, bmp.cols, bmp.rows);
+                        }
+                        first_model->m_point_text_bmp_cache[{pos.id, moving}] = bmp;
+                    }
+                }
+            }
+        }
     }
 
     return 0;
