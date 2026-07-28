@@ -838,10 +838,10 @@ int CameraController::stop()
     return 0;
 }
 
-bool CameraController::early_warning_process(int camera_id, int point_id, int light_flag, const std::string& damage_type)
+bool CameraController::early_warning_process(int camera_id, int point_id, int light_flag, const std::string& damage_type, float confidence)
 {
     auto camera = getCamera(camera_id);
-    return alarm_manager.generateAlarm(AlarmType::LINE_CROSSING, damage_type, 1, camera, point_id, light_flag);
+    return alarm_manager.generateAlarm(AlarmType::LINE_CROSSING, damage_type, confidence, camera, point_id, light_flag);
 }
 
 Camera *CameraController::getCamera(int camera_id)
@@ -1218,7 +1218,7 @@ std::string Camera::captureSnapshot(const cv::Mat& image, int point_id, int ligh
     size_t len = strlen(filepath);
     if (len >= 4 && filepath[len - 4] == '.' && filepath[len - 3] == 'p' && filepath[len - 2] == 'n' && filepath[len - 1] == 'g') {
         // PNG 文件使用 PNG 压缩参数
-        params = { cv::IMWRITE_PNG_COMPRESSION, 9 };  // 压缩级别 0-9，9 为最高压缩
+        params = { cv::IMWRITE_PNG_COMPRESSION, 4 };  // 压缩级别 0-9，9 为最高压缩
     } else {
         // JPEG 文件使用 JPEG 质量参数
         params = { cv::IMWRITE_JPEG_QUALITY, 90 };

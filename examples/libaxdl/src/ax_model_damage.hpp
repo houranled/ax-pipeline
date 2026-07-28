@@ -53,6 +53,9 @@ protected:
     void draw_custom(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y) override;
     //void draw_custom(int chn, axdl_results_t *results, float fontscale, int thickness) override;
 
+    // 预览检测框标签追加置信度（隐藏基类同名函数）
+    void draw_bbox(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y);
+
 private:
     std::string damage_type; // 损伤类型（模型文件名，如"裂缝"、"腐蚀"等）
 

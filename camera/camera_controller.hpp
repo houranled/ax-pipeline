@@ -37,7 +37,7 @@ public:
 
     int start();
     int stop(); // 关闭处理线程
-    bool early_warning_process(int camera_id, int point_id, int light_flag, const std::string& damage_type = ""); // 对摄像机id为camera_id触发预警，返回是否真正生成告警
+    bool early_warning_process(int camera_id, int point_id, int light_flag, const std::string& damage_type = "", float confidence = 1.0f); // 对摄像机id为camera_id触发预警，返回是否真正生成告警
     Camera* getCamera(int camera_id); // 根据id获取相机对象
     std::vector<Camera*> getAllCameras(); // 获取所有摄像机实例
     void forEachCamera(std::function<void(Camera*)> func)

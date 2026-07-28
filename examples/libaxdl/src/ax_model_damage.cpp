@@ -527,6 +527,8 @@ int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resi
                 results->mObjects[i].bbox_vertices[j].y = obj.obb_vertices[j].y;
             }
 
+            results->mObjects[i].prob  = obj.prob; // 写入置信度
+
             // Set object name using OBB class names
             if (obj.label < (int)CLASS_NAMES.size()) {
                 strncpy(results->mObjects[i].objname, CLASS_NAMES[obj.label].c_str(), sizeof(results->mObjects[i].objname) - 1);
@@ -588,6 +590,8 @@ int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resi
                 results->mObjects[i].bbox_vertices[j].y = obj.obb_vertices[j].y;
             }
 
+            results->mObjects[i].prob  = obj.prob; // 写入置信度
+
             // Set object name using OBB class names
             if (obj.label < (int)CLASS_NAMES.size()) {
                 strncpy(results->mObjects[i].objname, CLASS_NAMES[obj.label].c_str(), sizeof(results->mObjects[i].objname) - 1);
@@ -599,6 +603,53 @@ int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resi
         }
 
         return 0;
+    }
+}
+
+// 预览检测框：在基类绘制风格基础上，标签追加置信度（隐藏基类同名函数）。
+void ax_model_damage::draw_bbox(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y)
+{
+    int baseLine = 0;
+    for (int i = 0; i < results->nObjSize; i++)
+    {
+        auto &o = results->mObjects[i];
+        char label_buf[128];
+        if (o.prob > 0.f)
+            snprintf(label_buf, sizeof(label_buf), "%s %.2f", o.objname, o.prob);
+        else
+            snprintf(label_buf, sizeof(label_buf), "%s", o.objname);
+        std::string label_str = label_buf;
+        if (b_track)
+            label_str += " " + std::to_string(o.track_id);
+
+        cv::Size label_size = cv::getTextSize(label_str, cv::FONT_HERSHEY_SIMPLEX, fontscale, thickness, &baseLine);
+        int x, y;
+        if (o.bHasBoxVertices)
+        {
+            for (int j = 0; j < 4; j++)
+                cv::line(image,
+                         cv::Point(o.bbox_vertices[j].x * image.cols + offset_x, o.bbox_vertices[j].y * image.rows + offset_y),
+                         cv::Point(o.bbox_vertices[(j + 1) % 4].x * image.cols + offset_x, o.bbox_vertices[(j + 1) % 4].y * image.rows + offset_y),
+                         cv::Scalar(128, 0, 0, 255), thickness * 2, 8, 0);
+            x = o.bbox_vertices[0].x * image.cols + offset_x;
+            y = o.bbox_vertices[0].y * image.rows + offset_y - label_size.height - baseLine;
+        }
+        else
+        {
+            cv::Rect rect(o.bbox.x * image.cols + offset_x, o.bbox.y * image.rows + offset_y,
+                          o.bbox.w * image.cols, o.bbox.h * image.rows);
+            cv::rectangle(image, rect, COCO_COLORS[o.label % COCO_COLORS.size()], thickness);
+            x = rect.x;
+            y = rect.y - label_size.height - baseLine;
+        }
+
+        if (y < 0) y = 0;
+        if (x + label_size.width > image.cols) x = image.cols - label_size.width;
+
+        cv::rectangle(image, cv::Rect(cv::Point(x, y), cv::Size(label_size.width, label_size.height + baseLine)),
+                      cv::Scalar(255, 255, 255, 255), -1);
+        cv::putText(image, label_str, cv::Point(x, y + label_size.height), cv::FONT_HERSHEY_SIMPLEX, fontscale,
+                    cv::Scalar(0, 0, 0, 255), thickness);
     }
 }
 
@@ -849,21 +900,28 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
 
     // ★ 使用累积结果触发模型告警（diff 差异告警由巡检结束后 run_post_patrol_diff 单独生成）
     if (!accumulated.empty()) {
-        std::set<std::string> seen_types;
+        // 按损伤类型记录最大置信度，用于告警字段
+        std::map<std::string, float> type_conf;
         for (const auto& obj : accumulated) {
-            if (obj.objname[0]) seen_types.insert(obj.objname);
+            if (obj.objname[0]) {
+                auto it = type_conf.find(obj.objname);
+                if (it == type_conf.end() || obj.prob > it->second)
+                    type_conf[obj.objname] = obj.prob;
+            }
         }
         // 兜底：objname 为空时退化为当前模型的 damage_type
-        if (seen_types.empty() && !damage_type.empty()) {
-            seen_types.insert(damage_type);
+        if (type_conf.empty() && !damage_type.empty()) {
+            type_conf[damage_type] = 0.f;
         }
 
         bool any_new_alarm = false;
-        for (const auto& dt : seen_types) {
-            if (CameraController::getInstance()->early_warning_process(camera_id, cur_point, cur_light_flag, dt)) {
+        for (const auto& kv : type_conf) {
+            const std::string& dt = kv.first;
+            float conf = kv.second;
+            if (CameraController::getInstance()->early_warning_process(camera_id, cur_point, cur_light_flag, dt, conf)) {
                 any_new_alarm = true;
-                WTALOGI("[damage] 点位[%d] L%d 已拍照并告警: %s (损伤类型: %s, 累积检测数: %zu)",
-                        cur_point, cur_light_flag, saved_path.c_str(), dt.c_str(), accumulated.size());
+                WTALOGI("[damage] 点位[%d] L%d 已拍照并告警: %s (损伤类型: %s, 置信度: %.2f, 累积检测数: %zu)",
+                        cur_point, cur_light_flag, saved_path.c_str(), dt.c_str(), conf, accumulated.size());
             }
         }
 
