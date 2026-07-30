@@ -53,19 +53,24 @@ namespace {
     }
 
     // phaseCorrelate 平移对齐：抗云台机械重复定位的像素级漂移
-    static cv::Mat align_translation(const cv::Mat& cur_gray, const cv::Mat& base_gray)
+    static cv::Mat align_translation(const cv::Mat& cur_gray, const cv::Mat& base_gray,
+                                     cv::Point2d& out_shift, bool& out_ok)
     {
+        out_ok = false;
+        out_shift = cv::Point2d(0.0, 0.0);
         try {
             cv::Mat cF, bF;
             cur_gray.convertTo(cF, CV_32F);
             base_gray.convertTo(bF, CV_32F);
             cv::Point2d sh = cv::phaseCorrelate(cF, bF);
+            out_shift = sh;
             if (std::abs(sh.x) > base_gray.cols * 0.1 ||
                 std::abs(sh.y) > base_gray.rows * 0.1) {
                 return cur_gray.clone();
             }
+            out_ok = true;
             cv::Mat warp = (cv::Mat_<float>(2, 3) <<
-                1, 0, (float)sh.x, 0, 1, (float)sh.y);
+                1.f, 0.f, (float)sh.x, 0.f, 1.f, (float)sh.y);
             cv::Mat aligned;
             cv::warpAffine(cur_gray, aligned, warp, base_gray.size(),
                            cv::INTER_LINEAR, cv::BORDER_REPLICATE);
@@ -97,14 +102,20 @@ namespace {
         return ssim;
     }
 
-    struct DiffRegion { cv::Rect bbox; float score; };
+    struct DiffRegion {
+        cv::Rect      bbox;   // 嵌套抑制/标签位置
+        cv::RotatedRect rbox; // 倾斜框（cv::minAreaRect）
+        float         score;
+    };
 
-    // diff 门控全局阈值（默认值即原硬编码值）。由 wt_rtsp.json 模型配置在 init 时覆盖，全局生效。
+    // diff 门控全局阈值（默认值与 Python diff_compare.py 对齐）
     struct DiffThresholds {
-        float ssim_th    = 0.45f; // 严格：改小  宽松：改大
-        float absd_ratio = 0.30f; // 像素差 > 该比例才算
-        int   block      = 96;    // 分块尺寸
-        int   min_area   = 2000;  // 过滤小区域噪点
+        float ssim_th    = 0.75f;
+        float absd_ratio = 0.05f; // 块内强变化像素占比阈值
+        int   block      = 24;    // 分块尺寸
+        int   min_area   = 100;   // 过滤小区域噪点
+        int   pix_diff   = 75;    // 单像素强变化阈值（颜色/灰度）
+        bool  use_clahe  = false; // 默认关闭 CLAHE
     };
     static DiffThresholds g_diff_th;
 
@@ -117,23 +128,46 @@ namespace {
 
         const float SSIM_TH    = g_diff_th.ssim_th;
         const float ABSD_RATIO = g_diff_th.absd_ratio;
-        const int   BLOCK      = g_diff_th.block > 0 ? g_diff_th.block : 96;
+        const int   BLOCK      = g_diff_th.block > 0 ? g_diff_th.block : 24;
         const int   MIN_AREA   = g_diff_th.min_area;
+        const int   PIX_DIFF   = g_diff_th.pix_diff;
 
         cv::Mat cur = cur_bgr;
         if (cur.size() != base_bgr.size())
             cv::resize(cur, cur, base_bgr.size());
 
-        cv::Mat curN  = clahe_bgr(cur);
-        cv::Mat baseN = clahe_bgr(base_bgr);
+        // CLAHE 可开关（默认关闭，与 --no-clahe 对应）
+        cv::Mat curN  = g_diff_th.use_clahe ? clahe_bgr(cur) : cur;
+        cv::Mat baseN = g_diff_th.use_clahe ? clahe_bgr(base_bgr) : base_bgr;
 
         cv::Mat curG, baseG;
         cv::cvtColor(curN, curG, cv::COLOR_BGR2GRAY);
         cv::cvtColor(baseN, baseG, cv::COLOR_BGR2GRAY);
-        curG = align_translation(curG, baseG);
 
+        // 平移对齐：基于 CLAHE 灰度求位移，并同步 warping 到彩色图
+        cv::Point2d shift;
+        bool aligned_ok = false;
+        curG = align_translation(curG, baseG, shift, aligned_ok);
+        if (aligned_ok && (std::abs(shift.x) > 0.0 || std::abs(shift.y) > 0.0)) {
+            cv::Mat warp = (cv::Mat_<float>(2, 3) <<
+                1.f, 0.f, (float)shift.x, 0.f, 1.f, (float)shift.y);
+            cv::Mat aligned;
+            cv::warpAffine(cur, aligned, warp, base_bgr.size(),
+                           cv::INTER_LINEAR, cv::BORDER_REPLICATE);
+            cur = aligned;
+        }
+
+        // SSIM(结构, 基于 CLAHE 灰度) + 三通道最大差(颜色差)
         cv::Mat ssim = ssim_map(curG, baseG);
-        cv::Mat absd; cv::absdiff(curG, baseG, absd);
+        cv::Mat diff_bgr;
+        cv::absdiff(cur, base_bgr, diff_bgr);
+        std::vector<cv::Mat> chs;
+        cv::split(diff_bgr, chs);
+        cv::Mat absd = cv::max(chs[0], cv::max(chs[1], chs[2]));
+
+        // 强变化像素掩码：原始颜色/灰度最大差 > pix_diff
+        cv::Mat strong;
+        cv::threshold(absd, strong, (double)PIX_DIFF, 1.0, cv::THRESH_BINARY);
 
         const int H = baseG.rows, W = baseG.cols;
         cv::Mat susp = cv::Mat::zeros(H, W, CV_8U);
@@ -141,8 +175,9 @@ namespace {
             for (int x = 0; x < W; x += BLOCK) {
                 cv::Rect r(x, y, std::min(BLOCK, W - x), std::min(BLOCK, H - y));
                 float s = (float)cv::mean(ssim(r))[0];
-                float d = (float)cv::mean(absd(r))[0] / 255.f;
-                if (s < SSIM_TH && d > ABSD_RATIO) susp(r).setTo(255);
+                float frac = (float)cv::mean(strong(r))[0];
+                // OR 门控：结构差异 或 颜色/曝光差异
+                if (s < SSIM_TH || frac > ABSD_RATIO) susp(r).setTo(255);
             }
         }
         cv::Mat k = cv::getStructuringElement(cv::MORPH_RECT, {5, 5});
@@ -157,12 +192,32 @@ namespace {
             b &= cv::Rect(0, 0, W, H);
             if (b.area() <= 0) continue;
             float s = (float)cv::mean(ssim(b))[0];
-            float d = (float)cv::mean(absd(b))[0] / 255.f;
-            float score = std::max(0.f, std::min(1.f, (1.f - s) * 0.5f + d * 0.5f));
-            out.push_back({b, score});
+            float frac = (float)cv::mean(strong(b))[0];
+            float d = (float)cv::mean(absd(b))[0] / 255.0f;
+            float score = std::max(0.f, std::min(1.f,
+                (1.f - s) * 0.4f + frac * 0.3f + d * 0.3f));
+            cv::RotatedRect rbox = cv::minAreaRect(c);
+            out.push_back({b, rbox, score});
         }
         std::sort(out.begin(), out.end(),
                   [](const DiffRegion& a, const DiffRegion& b){ return a.score > b.score; });
+
+        // 抑制完全套在大框内的小框（小框 80% 以上被大框包含则丢弃）
+        auto is_nested = [](const DiffRegion& inner, const DiffRegion& outer) {
+            cv::Rect inter = inner.bbox & outer.bbox;
+            if (inter.area() <= 0) return false;
+            if (outer.bbox.area() <= inner.bbox.area()) return false;
+            return inter.area() >= 0.8 * inner.bbox.area();
+        };
+        std::vector<DiffRegion> filtered;
+        for (const auto& r : out) {
+            bool nest = false;
+            for (const auto& a : filtered) {
+                if (is_nested(r, a)) { nest = true; break; }
+            }
+            if (!nest) filtered.push_back(r);
+        }
+        out.swap(filtered);
         return out;
     }
 }
@@ -998,7 +1053,19 @@ void run_post_patrol_diff(Camera* cam, bool update_baseline)
                                    (int)(r.bbox.width * sx), (int)(r.bbox.height * sy));
                         b &= cv::Rect(0, 0, show.cols, show.rows);
                         if (b.area() <= 0) continue;
-                        cv::rectangle(show, b, cv::Scalar(0, 255, 255), 2);
+                        // 倾斜框贴合轮廓
+                        cv::RotatedRect rb = r.rbox;
+                        rb.center.x *= sx;
+                        rb.center.y *= sy;
+                        rb.size.width  *= sx;
+                        rb.size.height *= sy;
+                        cv::Point2f pts2f[4];
+                        rb.points(pts2f);
+                        cv::Point pts[4];
+                        for (int k = 0; k < 4; ++k) pts[k] = cv::Point((int)pts2f[k].x, (int)pts2f[k].y);
+                        std::vector<std::vector<cv::Point>> poly =
+                            { std::vector<cv::Point>(pts, pts + 4) };
+                        cv::polylines(show, poly, true, cv::Scalar(0, 255, 255), 2);
                         char lbl[64];
                         snprintf(lbl, sizeof(lbl), "diff %.2f", r.score);
                         cv::putText(show, lbl, cv::Point(b.x, std::max(0, b.y - 4)),

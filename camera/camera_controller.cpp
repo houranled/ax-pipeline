@@ -1218,7 +1218,7 @@ std::string Camera::captureSnapshot(const cv::Mat& image, int point_id, int ligh
     size_t len = strlen(filepath);
     if (len >= 4 && filepath[len - 4] == '.' && filepath[len - 3] == 'p' && filepath[len - 2] == 'n' && filepath[len - 1] == 'g') {
         // PNG 文件使用 PNG 压缩参数
-        params = { cv::IMWRITE_PNG_COMPRESSION, 4 };  // 压缩级别 0-9，9 为最高压缩
+        params = { cv::IMWRITE_PNG_COMPRESSION, 1 };  // 压缩级别 0-9，9 为最高压缩
     } else {
         // JPEG 文件使用 JPEG 质量参数
         params = { cv::IMWRITE_JPEG_QUALITY, 90 };
