@@ -181,10 +181,11 @@ namespace {
     // diff 门控全局阈值（默认值与 Python diff_compare.py 对齐）
     struct DiffThresholds {
         float ssim_th    = 0.75f;
-        float absd_ratio = 0.05f; // 块内强变化像素占比阈值
+        float ssim_lo_th = 0.5f;  // 块内 SSIM 5% 低分位阈值，捕捉细线/小点（不被均值稀释）
+        float absd_ratio = 0.005f;// 块内强变化像素占比阈值
         int   block      = 24;    // 分块尺寸
-        int   min_area   = 100;   // 过滤小区域噪点
-        int   pix_diff   = 75;    // 单像素强变化阈值（颜色/灰度）
+        int   min_area   = 20;    // 过滤小区域噪点
+        int   pix_diff   = 15;    // 单像素强变化阈值（颜色/灰度）
         bool  use_clahe  = false; // 默认关闭 CLAHE
         bool  use_warp   = true;  // 默认开启几何对齐（旋转/角度配准）
     };
@@ -198,6 +199,7 @@ namespace {
         if (cur_bgr.empty() || base_bgr.empty()) return out;
 
         const float SSIM_TH    = g_diff_th.ssim_th;
+        const float SSIM_LO_TH = g_diff_th.ssim_lo_th;
         const float ABSD_RATIO = g_diff_th.absd_ratio;
         const int   BLOCK      = g_diff_th.block > 0 ? g_diff_th.block : 24;
         const int   MIN_AREA   = g_diff_th.min_area;
@@ -273,9 +275,15 @@ namespace {
             for (int x = 0; x < W; x += BLOCK) {
                 cv::Rect r(x, y, std::min(BLOCK, W - x), std::min(BLOCK, H - y));
                 float s = (float)cv::mean(ssim(r))[0];
+                // 5% 低分位（比 min 抗噪）：细线/小点会被均值稀释，但逃不过低分位
+                cv::Mat sb = ssim(r).clone(); // clone 保证连续
+                std::vector<float> vals(sb.begin<float>(), sb.end<float>());
+                size_t k = (size_t)(vals.size() * 0.05f);
+                std::nth_element(vals.begin(), vals.begin() + k, vals.end());
+                float s_lo = vals[k];
                 float frac = (float)cv::mean(strong(r))[0];
-                // OR 门控：结构差异 或 颜色/曝光差异
-                if (s < SSIM_TH || frac > ABSD_RATIO) susp(r).setTo(255);
+                // OR 门控：均值结构差异 或 局部低分位差异（细线/小点）或 颜色/曝光差异
+                if (s < SSIM_TH || s_lo < SSIM_LO_TH || frac > ABSD_RATIO) susp(r).setTo(255);
             }
         }
         cv::Mat k = cv::getStructuringElement(cv::MORPH_RECT, {5, 5});
@@ -1482,11 +1490,14 @@ int wt_damage_multi_model_recognize::init(void *json_obj)
 
     // diff 门控全局阈值（可选，缺省用默认值）。放在 wt_rtsp.json，全局生效。
     if (jsondata.contains("DIFF_SSIM_TH"))    g_diff_th.ssim_th    = jsondata["DIFF_SSIM_TH"].get<float>();
+    if (jsondata.contains("DIFF_SSIM_LO_TH")) g_diff_th.ssim_lo_th = jsondata["DIFF_SSIM_LO_TH"].get<float>();
     if (jsondata.contains("DIFF_ABSD_RATIO")) g_diff_th.absd_ratio = jsondata["DIFF_ABSD_RATIO"].get<float>();
     if (jsondata.contains("DIFF_BLOCK"))      g_diff_th.block      = jsondata["DIFF_BLOCK"].get<int>();
     if (jsondata.contains("DIFF_MIN_AREA"))   g_diff_th.min_area   = jsondata["DIFF_MIN_AREA"].get<int>();
-    WTALOGI("diff 阈值: SSIM_TH=%.3f ABSD_RATIO=%.3f BLOCK=%d MIN_AREA=%d",
-            g_diff_th.ssim_th, g_diff_th.absd_ratio, g_diff_th.block, g_diff_th.min_area);
+    if (jsondata.contains("DIFF_PIX_DIFF"))   g_diff_th.pix_diff   = jsondata["DIFF_PIX_DIFF"].get<int>();
+    WTALOGI("diff 阈值: SSIM_TH=%.3f SSIM_LO_TH=%.3f ABSD_RATIO=%.3f BLOCK=%d MIN_AREA=%d PIX_DIFF=%d",
+            g_diff_th.ssim_th, g_diff_th.ssim_lo_th, g_diff_th.absd_ratio, g_diff_th.block,
+            g_diff_th.min_area, g_diff_th.pix_diff);
 
     // 部位名称：根据云台类型自动选择（big=大云台→outside，small=小云台→inside），
     // 无需在配置里冗余指定 POSITION。取不到相机时回退到配置中的 POSITION（可选，用于覆盖/调试）。
