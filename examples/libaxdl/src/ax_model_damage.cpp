@@ -102,6 +102,76 @@ namespace {
         return ssim;
     }
 
+    // 几何对齐（旋转+平移，不含缩放）。
+    // 由于此 OpenCV 构建精简（无 features2d/calib3d），改用多角度搜索：
+    // 尝试若干旋转角度，对每个角度做 phaseCorrelate 平移对齐，选 SSIM 最高的组合。
+    // 抗基线图与当前图之间的拍摄角度/旋转差异。
+    // 失败时 ok=false，返回原图。
+    static cv::Mat align_geometric(const cv::Mat& cur_bgr, const cv::Mat& base_bgr,
+                                   cv::Mat& out_M, bool& out_ok, int& out_inliers)
+    {
+        out_ok = false;
+        out_inliers = 0;
+        out_M = cv::Mat();
+        try {
+            const int h = base_bgr.rows, w = base_bgr.cols;
+            cv::Mat base_gray;
+            cv::cvtColor(base_bgr, base_gray, cv::COLOR_BGR2GRAY);
+
+            // 相机与基线最大 ±3° 角误差，故在 [-3, 3] 内以 0.5° 步进搜索
+            const float angles[] = {-3.f, -2.5f, -2.f, -1.5f, -1.f, -0.5f, 0.f,
+                                    0.5f, 1.f, 1.5f, 2.f, 2.5f, 3.f};
+            const int n_angles = sizeof(angles) / sizeof(angles[0]);
+
+            float best_score = -1.f;
+            cv::Mat best_aligned;
+            cv::Mat best_M;
+
+            const cv::Point2f center(w * 0.5f, h * 0.5f);
+            for (int i = 0; i < n_angles; ++i) {
+                // 生成纯旋转矩阵（不缩放）
+                cv::Mat rot = cv::getRotationMatrix2D(center, angles[i], 1.0);
+                cv::Mat rotated;
+                cv::warpAffine(cur_bgr, rotated, rot, base_bgr.size(),
+                               cv::INTER_LINEAR, cv::BORDER_REPLICATE);
+
+                // 转灰度后做平移对齐
+                cv::Mat rot_gray;
+                cv::cvtColor(rotated, rot_gray, cv::COLOR_BGR2GRAY);
+                cv::Point2d shift;
+                bool t_ok = false;
+                cv::Mat aligned_gray = align_translation(rot_gray, base_gray, shift, t_ok);
+
+                // 平移矩阵（在旋转矩阵基础上叠加平移）
+                cv::Mat M = rot.clone();
+                if (t_ok) {
+                    M.at<float>(0, 2) += (float)shift.x;
+                    M.at<float>(1, 2) += (float)shift.y;
+                }
+
+                // 用全图 SSIM 均值评估对齐质量
+                cv::Mat ssim = ssim_map(aligned_gray, base_gray);
+                float score = (float)cv::mean(ssim)[0];
+                if (score > best_score) {
+                    best_score = score;
+                    best_aligned = rotated;
+                    best_M = M;
+                }
+            }
+
+            // 全图 SSIM 足够高才认为对齐成功（阈值可调整）
+            if (best_score > 0.85f) {
+                out_M = best_M;
+                out_ok = true;
+                out_inliers = (int)(best_score * 100);  // 用 SSIM 百分比近似表示质量
+                return best_aligned;
+            }
+            return cur_bgr;
+        } catch (const cv::Exception&) {
+            return cur_bgr;
+        }
+    }
+
     struct DiffRegion {
         cv::Rect      bbox;   // 嵌套抑制/标签位置
         cv::RotatedRect rbox; // 倾斜框（cv::minAreaRect）
@@ -116,6 +186,7 @@ namespace {
         int   min_area   = 100;   // 过滤小区域噪点
         int   pix_diff   = 75;    // 单像素强变化阈值（颜色/灰度）
         bool  use_clahe  = false; // 默认关闭 CLAHE
+        bool  use_warp   = true;  // 默认开启几何对齐（旋转/角度配准）
     };
     static DiffThresholds g_diff_th;
 
@@ -136,6 +207,24 @@ namespace {
         if (cur.size() != base_bgr.size())
             cv::resize(cur, cur, base_bgr.size());
 
+        const int H = base_bgr.rows, W = base_bgr.cols;
+        // 有效区域掩膜：记录 cur 中经 warp 后仍是真实内容的像素（露出的边缘置 0，不参与比较）
+        cv::Mat valid_mask = cv::Mat::ones(H, W, CV_8U);
+
+        // 几何对齐（旋转/角度错位 → 先配准到基线坐标系，再走平移+分块）
+        cv::Mat warp_M;
+        bool warp_ok = false;
+        int warp_inliers = 0;
+        if (g_diff_th.use_warp) {
+            cur = align_geometric(cur, base_bgr, warp_M, warp_ok, warp_inliers);
+            if (warp_ok && !warp_M.empty()) {
+                cv::Mat wm;
+                cv::warpAffine(valid_mask, wm, warp_M, base_bgr.size(),
+                               cv::INTER_NEAREST, cv::BORDER_CONSTANT, 0);
+                valid_mask = wm;
+            }
+        }
+
         // CLAHE 可开关（默认关闭，与 --no-clahe 对应）
         cv::Mat curN  = g_diff_th.use_clahe ? clahe_bgr(cur) : cur;
         cv::Mat baseN = g_diff_th.use_clahe ? clahe_bgr(base_bgr) : base_bgr;
@@ -155,6 +244,9 @@ namespace {
             cv::warpAffine(cur, aligned, warp, base_bgr.size(),
                            cv::INTER_LINEAR, cv::BORDER_REPLICATE);
             cur = aligned;
+            // 平移同样会露出边缘，同步更新有效掩膜
+            cv::warpAffine(valid_mask, valid_mask, warp, base_bgr.size(),
+                           cv::INTER_NEAREST, cv::BORDER_CONSTANT, 0);
         }
 
         // SSIM(结构, 基于 CLAHE 灰度) + 三通道最大差(颜色差)
@@ -165,11 +257,17 @@ namespace {
         cv::split(diff_bgr, chs);
         cv::Mat absd = cv::max(chs[0], cv::max(chs[1], chs[2]));
 
+        // 屏蔽 warp 露出的无效边缘：无效区 SSIM 视为完全匹配、颜色差置 0，不参与差异判定
+        cv::Mat invalid = (valid_mask == 0);
+        if (cv::countNonZero(invalid) > 0) {
+            ssim.setTo(1.0, invalid);
+            absd.setTo(0, invalid);
+        }
+
         // 强变化像素掩码：原始颜色/灰度最大差 > pix_diff
         cv::Mat strong;
         cv::threshold(absd, strong, (double)PIX_DIFF, 1.0, cv::THRESH_BINARY);
 
-        const int H = baseG.rows, W = baseG.cols;
         cv::Mat susp = cv::Mat::zeros(H, W, CV_8U);
         for (int y = 0; y < H; y += BLOCK) {
             for (int x = 0; x < W; x += BLOCK) {
