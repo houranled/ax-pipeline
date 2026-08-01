@@ -869,6 +869,80 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
 {
     auto *cam = CameraController::getInstance()->getCamera(camera_id);
 
+    // === 小云台活体互检抓拍（检查方在自身流上抓两帧：被检查方转动前/后）===
+    if (cam && (cam->peer_capture_state.load() == 1 || cam->peer_capture_state.load() == 3)) {
+        int req = cam->peer_capture_state.load();
+        long long pc_phase = cam->peer_capture_phase.load();
+        if (pc_phase > 0 && m_cached_phase_ms == pc_phase && !m_cached_frame_bgr.empty()) {
+            // 取当前相位帧，去 letterbox 黑边后缩放到叠加层尺寸
+            cv::Mat raw_bgr;
+            {
+                std::lock_guard<std::mutex> lk(m_frame_mutex);
+                int src_h = m_cached_frame_bgr.rows, src_w = m_cached_frame_bgr.cols;
+                int dst_h = HEIGHT_DET_BBOX_RESTORE, dst_w = WIDTH_DET_BBOX_RESTORE;
+                float scale = std::min((float)src_w / dst_w, (float)src_h / dst_h);
+                int new_w = (int)(dst_w * scale);
+                int new_h = (int)(dst_h * scale);
+                int pad_x = (src_w - new_w) / 2;
+                int pad_y = (src_h - new_h) / 2;
+                cv::Rect valid_roi(pad_x, pad_y, new_w, new_h);
+                valid_roi &= cv::Rect(0, 0, src_w, src_h);
+                cv::Mat cropped = m_cached_frame_bgr(valid_roi);
+                cv::resize(cropped, raw_bgr, cv::Size(image.cols, image.rows));
+            }
+
+            int peer_point = cam->find_peer_check_point_id();
+
+            if (req == 1) {
+                // 第一帧：被检查方转动前，仅缓存
+                cam->peer_frame1 = raw_bgr.clone();
+                cam->peer_capture_state.store(2);
+                cam->peer_capture_cv.notify_all();
+            } else { // req == 3
+                // 第二帧：被检查方转动后，与第一帧 diff，检出运动=正常
+                int result = 2; // 默认无运动=异常
+                cv::Mat show_bgr = raw_bgr.clone();
+                if (!cam->peer_frame1.empty()) {
+                    auto regions = diff_against_baseline(raw_bgr, cam->peer_frame1);
+                    if (!regions.empty()) {
+                        result = 1; // 检出运动=正常
+                        for (const auto& r : regions) {
+                            cv::Rect b = r.bbox & cv::Rect(0, 0, show_bgr.cols, show_bgr.rows);
+                            if (b.area() <= 0) continue;
+                            cv::rectangle(show_bgr, b, cv::Scalar(0, 255, 0), 2);
+                        }
+                        cv::putText(show_bgr, "peer ALIVE (motion)", cv::Point(10, 30),
+                                    cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 0), 2);
+                        cam->captureSnapshot(show_bgr, peer_point > 0 ? peer_point : 0, 0);
+                        WTALOGI("[peer] 摄像机[%d] 互检检出被检查方运动(区域数=%zu)，判正常",
+                                cam->get_id(), regions.size());
+                    } else {
+                        // 无运动：被检查方疑似脱落/卡死，告警
+                        cv::putText(show_bgr, "peer NO-MOTION!", cv::Point(10, 30),
+                                    cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 0, 255), 2);
+                        cam->captureSnapshot(show_bgr, peer_point > 0 ? peer_point : 0, 0);
+                        if (CameraController::getInstance()->early_warning_process(
+                                cam->get_id(), peer_point > 0 ? peer_point : 0, 0, "互检异常")) {
+                            WTALOGI("[peer] 摄像机[%d] 互检未检出被检查方运动，告警",
+                                    cam->get_id());
+                        }
+                    }
+                } else {
+                    WTALOGI("[peer] 摄像机[%d] 互检第一帧缺失，无法判定，判异常", cam->get_id());
+                }
+                cam->peer_frame1.release();
+                {
+                    std::lock_guard<std::mutex> lk(cam->peer_capture_mtx);
+                    cam->peer_capture_result = result;
+                }
+                cam->peer_capture_state.store(4);
+                cam->peer_capture_cv.notify_all();
+            }
+        }
+        // 互检抓拍期间跳过常规绘制，避免叠加异常
+        return;
+    }
+
     // 仅在到达点位且灯光相位就绪时绘制当前帧 AI 检测框；移动/回位/灯光切换中不绘制
     if (cam && cam->posture_completed.load() && cam->phase_ready_ms.load() > 0) {
         draw_bbox(image, results, fontscale, thickness, offset_x, offset_y);
