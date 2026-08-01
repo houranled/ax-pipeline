@@ -1,5 +1,10 @@
 #include "camera_controller.hpp"
 #include <iostream>
+#include <algorithm>
+#include <future>
+#include <tuple>
+#include <cstdio>
+#include <cstdlib>
 #include <curl/curl.h>
 #include <curl/easy.h>
 #include "../examples/utilities/json.hpp"
@@ -586,26 +591,106 @@ int CameraController::all_cameras_patrol()
     // 统一本轮巡检时间基准：所有相机共用同一时间戳，避免各相机启动时刻恰好跨分钟而落到不同目录。
     time_t unified_start = time(nullptr);
 
-    // 遍历所有摄像机，设置不标定模式并启动巡逻
-    std::vector<std::thread> threads;
-    bool res = false;
+    // 区分大云台/小云台；小云台才需要组内互检与轮流监视
+    std::vector<Camera*> big_cams;
+    std::vector<Camera*> small_cams;
     for (auto& pair : cameras) {
-        // 为每个摄像机创建一个线程执行patrol_with_calibration_loop
         if (!pair.second->m_pipeline)
             continue;
-
-        threads.emplace_back([camera = pair.second, &res, unified_start]() {
-            // 一次巡检：每个点位内部分为无灯照和有灯照两阶段拍照
-            res = camera->patrol_with_calibration_loop(false, unified_start);
-        });
+        if (pair.second->ptz_type == "small")
+            small_cams.push_back(pair.second);
+        else
+            big_cams.push_back(pair.second);
     }
 
-    // 等待所有线程完成
-    for (auto& thread : threads) {
-        if (thread.joinable()) {
-            thread.join();
-        }
+    // 小云台按 ptz_ip 排序后两两相邻成组
+    auto ip_to_tuple = [](const std::string& ip) {
+        int a = 0, b = 0, c = 0, d = 0;
+        sscanf(ip.c_str(), "%d.%d.%d.%d", &a, &b, &c, &d);
+        return std::make_tuple(a, b, c, d);
+    };
+
+    std::sort(small_cams.begin(), small_cams.end(),
+              [&](Camera* x, Camera* y) { return ip_to_tuple(x->ptz_ip) < ip_to_tuple(y->ptz_ip); });
+
+    // 大云台并行巡检
+    std::vector<std::future<int>> big_futures;
+    for (auto* cam : big_cams) {
+        big_futures.push_back(std::async(std::launch::async, [cam, unified_start]() {
+            return cam->patrol_with_calibration_loop(false, unified_start);
+        }));
     }
+
+    // 小云台按组成对并行：先互检，再交替巡检/监视
+    std::vector<std::future<int>> small_futures;
+    for (size_t i = 0; i + 1 < small_cams.size(); i += 2) {
+        Camera* a = small_cams[i];
+        Camera* b = small_cams[i + 1];
+        small_futures.push_back(std::async(std::launch::async, [a, b, unified_start]() -> int {
+            // 1) 轮流互检：a 作检查方检视 b，再 b 作检查方检视 a
+            int ra = a->inspect_peer(b, unified_start);
+            if (ra != 0) {
+                WTALOGI("小云台组 %s(检查) / %s(被检查) 互检未通过（%d），跳过本组巡检",
+                        a->getName().c_str(), b->getName().c_str(), ra);
+                return 1;
+            }
+            int rb = b->inspect_peer(a, unified_start);  // b检查a
+            if (rb != 0) {
+                WTALOGI("小云台组 %s(检查) / %s(被检查) 互检未通过（%d），跳过本组巡检",
+                        b->getName().c_str(), a->getName().c_str(), rb);
+                return 1;
+            }
+
+            // 2) 第一轮：a 巡检，b 定检
+            std::atomic<bool> a_patrol_done(false);
+            std::future<int> f_patrol = std::async(std::launch::async, [a, unified_start, &a_patrol_done]() {
+                int r = a->patrol_with_calibration_loop(false, unified_start);
+                a_patrol_done.store(true);
+                return r;
+            });
+            std::future<int> f_monitor = std::async(std::launch::async, [b, unified_start, &a_patrol_done]() {
+                return b->monitor_at_point(a_patrol_done, unified_start);
+            });
+            int r1 = f_patrol.get();
+            int r2 = f_monitor.get();
+            if (r1 != 0 || r2 != 0) {
+                WTALOGI("小云台组 %s / %s 第一轮巡检/监视异常（%d/%d）",a->getName().c_str(), b->getName().c_str(), r1, r2);
+                return 1;
+            }
+
+            // 3) 第二轮：b 巡检，a 定检
+            std::atomic<bool> b_patrol_done(false);
+            f_patrol = std::async(std::launch::async, [b, unified_start, &b_patrol_done]() {
+                int r = b->patrol_with_calibration_loop(false, unified_start);
+                b_patrol_done.store(true);
+                return r;
+            });
+            f_monitor = std::async(std::launch::async, [a, unified_start, &b_patrol_done]() {
+                return a->monitor_at_point(b_patrol_done, unified_start);
+            });
+            r1 = f_patrol.get();
+            r2 = f_monitor.get();
+            if (r1 != 0 || r2 != 0) {
+                WTALOGI("小云台组 %s / %s 第二轮巡检/监视异常（%d/%d）",
+                        a->getName().c_str(), b->getName().c_str(), r1, r2);
+                return 1;
+            }
+            return 0;
+        }));
+    }
+
+    // 若小云台数量为奇数，最后一台单独按普通巡检处理
+    if (small_cams.size() % 2 == 1) {
+        Camera* last = small_cams.back();
+        big_futures.push_back(std::async(std::launch::async, [last, unified_start]() {
+            return last->patrol_with_calibration_loop(false, unified_start);
+        }));
+    }
+
+    // 等待所有任务完成并汇总结果
+    int res = 0;
+    for (auto& f : big_futures)    if (f.get() != 0) res = 1;
+    for (auto& f : small_futures)  if (f.get() != 0) res = 1;
 
     return res;
 }
@@ -708,6 +793,14 @@ int CameraController::load_config_from_file(const std::string& config_file_path)
                 // 云台大小类型（big/small），影响点位 y 值 clamp 范围
                 if (config.contains("ptz_type")) {
                     camera->ptz_type = config["ptz_type"];
+                }
+
+                // 小云台互检/监视点位配置
+                if (camera_config.contains("peer_check_point_id")) {
+                    camera->peer_check_point_id = std::stoi(camera_config["peer_check_point_id"].get<std::string>());
+                }
+                if (camera_config.contains("monitor_point_id")) {
+                    camera->monitor_point_id = std::stoi(camera_config["monitor_point_id"].get<std::string>());
                 }
 
                 // 设置 PTZ IP
@@ -1720,6 +1813,268 @@ END:
     flush_pending_snapshots();
 
     return res;
+}
+
+int Camera::find_peer_check_point_id() const
+{
+    if (peer_check_point_id > 0) return peer_check_point_id;
+    for (const auto& p : preset_positions) {
+        if (p.name.find("互检") != std::string::npos) return p.id;
+    }
+    return -1;
+}
+
+int Camera::move_to_random_posture()
+{
+    if (modbus_ctx == nullptr) {
+        WTALOGI("摄像机[%d] Modbus 未连接，无法转随机姿态", id);
+        return 1;
+    }
+    // 以当前姿态为基准，取一个足够可见但受限的随机偏移，保证物理上确实发生转动
+    auto rand_delta = []() {
+        int mag = 5 + (std::rand() % 16);        // 5~20 度
+        return (std::rand() % 2 == 0) ? mag : -mag;
+    };
+    int nx = ((web_rotation_x + rand_delta()) % 360 + 360) % 360;
+    int ny = web_rotation_y + rand_delta();
+    if (ny < 0)  ny = 0;
+    if (ny > 85) ny = 85;   // 垂直角度限幅，避免越界
+    int rand_bright = 200;  //
+
+    posture_completed = false;
+    auto px = (360 + nx) % 360 * 100;
+    auto py = (360 + ny) % 360 * 100;
+    set_ptz(px, py, rand_bright);
+    web_rotation_x = nx;
+    web_rotation_y = ny;
+
+    auto wait_start = std::chrono::steady_clock::now();
+    while (!posture_completed && !stop_requested.load() &&
+           std::chrono::duration_cast<std::chrono::seconds>(
+               std::chrono::steady_clock::now() - wait_start).count() < 30) {
+        interruptible_sleep_ms(200);
+    }
+    if (stop_requested.load()) return 2;
+    if (!posture_completed) {
+        WTALOGI("摄像机[%d] 被检查方转随机姿态超时", id);
+        return 1;
+    }
+    WTALOGI("摄像机[%d] 被检查方已转到随机姿态(x=%d,y=%d,亮度=%d)", id, nx, ny, rand_bright);
+    return 0;
+}
+
+int Camera::inspect_peer(Camera* checked, time_t start_time)
+{
+    // this = 检查方，checked = 被检查方
+    if (modbus_ctx == nullptr) {
+        WTALOGI("摄像机[%d] Modbus 未连接，无法互检", id);
+        return 1;
+    }
+    if (checked == nullptr) return 1;
+
+    int point_id = find_peer_check_point_id();
+    if (point_id < 0) {
+        WTALOGI("摄像机[%d] 未配置互检点（peer_check_point_id 或 name 含'互检'）", id);
+        return 1;
+    }
+    auto it = std::find_if(preset_positions.begin(), preset_positions.end(),
+                           [point_id](const PresetPosition& p){ return p.id == point_id; });
+    if (it == preset_positions.end()) {
+        WTALOGI("摄像机[%d] 互检点 %d 不在预置点位列表中", id, point_id);
+        return 1;
+    }
+
+    // 初始化本轮时间/目录，captureSnapshot 需要
+    stop_requested.store(false);
+    patrol_start_time = start_time;
+    prepare_snapshot_dir();
+
+    // 1) 检查方转向互检点，观察被检查方
+    now_point_id = point_id;
+    posture_completed = false;
+    phase_ready_ms.store(0);
+    frame_should_capture.store(0);
+    photo_fired_keys.clear();
+    {
+        auto px = (360 + it->web_rotation_x) % 360 * 100;
+        auto py = (360 + it->web_rotation_y) % 360 * 100;
+        set_ptz(px, py, it->brightness);
+        web_rotation_x = it->web_rotation_x;
+        web_rotation_y = it->web_rotation_y;
+        set_zoom_and_focus(it->zoom, it->focus);
+    }
+
+    auto wait_start = std::chrono::steady_clock::now();
+    while (!posture_completed && !stop_requested.load() &&
+           std::chrono::duration_cast<std::chrono::seconds>(
+               std::chrono::steady_clock::now() - wait_start).count() < 30) {
+        interruptible_sleep_ms(200);
+    }
+    if (stop_requested.load()) { now_point_id = 0; return 2; }
+    if (!posture_completed) {
+        WTALOGI("摄像机[%d] 互检转点超时", id);
+        now_point_id = 0;
+        return 1;
+    }
+
+    // 2) 检查方就位后抓第一帧（被检查方转动前）
+    auto request_peer_capture = [this](int req_state, int done_state) -> bool {
+        long long phase = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        {
+            std::lock_guard<std::mutex> lk(peer_capture_mtx);
+            peer_capture_state.store(req_state);
+            peer_capture_phase.store(phase);
+        }
+        phase_ready_ms.store(phase);
+        std::unique_lock<std::mutex> lk(peer_capture_mtx);
+        peer_capture_cv.wait_for(lk, std::chrono::milliseconds(10000),
+            [this, done_state]{ return peer_capture_state.load() == done_state || stop_requested.load(); });
+        return peer_capture_state.load() == done_state;
+    };
+
+    if (!request_peer_capture(1, 2)) {
+        WTALOGI("摄像机[%d] 互检第一帧抓拍超时", id);
+        peer_capture_state.store(0);
+        phase_ready_ms.store(0);
+        now_point_id = 0;
+        return 1;
+    }
+
+    // 3) 令被检查方转到随机姿态
+    int mret = checked->move_to_random_posture();
+    if (mret == 2 || stop_requested.load()) {
+        peer_capture_state.store(0);
+        phase_ready_ms.store(0);
+        now_point_id = 0;
+        return 2;
+    }
+    if (mret != 0) {
+        // 被检查方无法响应转动指令，直接判异常
+        WTALOGI("摄像机[%d] 被检查方[%d] 未能转到随机姿态，判异常", id, checked->get_id());
+        peer_capture_state.store(0);
+        phase_ready_ms.store(0);
+        now_point_id = 0;
+        return 1;
+    }
+
+    // 稳定等待，确保流缓冲刷新到被检查方新姿态
+    if (!interruptible_sleep_ms(800)) { now_point_id = 0; return 2; }
+
+    // 4) 抓第二帧并与第一帧 diff（检出运动=正常）
+    if (!request_peer_capture(3, 4)) {
+        WTALOGI("摄像机[%d] 互检第二帧抓拍超时", id);
+        peer_capture_state.store(0);
+        phase_ready_ms.store(0);
+        now_point_id = 0;
+        return 1;
+    }
+
+    int result = peer_capture_result;
+    peer_capture_state.store(0);
+    phase_ready_ms.store(0);
+    now_point_id = 0;
+
+    if (result == 2) {
+        WTALOGI("摄像机[%d] 互检：被检查方[%d] 转动前后无明显变化，疑似脱落/卡死，判异常",
+                id, checked->get_id());
+        return 1;
+    }
+    WTALOGI("摄像机[%d] 互检通过：检出被检查方[%d]运动", id, checked->get_id());
+    return 0;
+}
+
+int Camera::monitor_at_point(const std::atomic<bool>& peer_done, time_t start_time)
+{
+    if (modbus_ctx == nullptr) {
+        WTALOGI("摄像机[%d] Modbus 未连接，无法监视", id);
+        return 1;
+    }
+    auto it = std::find_if(preset_positions.begin(), preset_positions.end(),
+                           [this](const PresetPosition& p){ return p.id == monitor_point_id; });
+    if (it == preset_positions.end()) {
+        WTALOGI("摄像机[%d] 监视点 %d 不在预置点位列表中", id, monitor_point_id);
+        return 1;
+    }
+
+    // 进入巡逻/录像状态
+    stop_requested.store(false);
+    patrolling = true;
+    calibrating.store(false);
+    photo_fired_keys.clear();
+    phase_infer_decision.clear();
+    patrol_start_time = start_time;
+    prepare_snapshot_dir();
+    generateCustomVideoPath();
+    start_record_video();
+
+    now_point_id = monitor_point_id;
+    posture_completed = false;
+    phase_ready_ms.store(0);
+    frame_should_capture.store(0);
+    auto px = (360 + it->web_rotation_x) % 360 * 100;
+    auto py = (360 + it->web_rotation_y) % 360 * 100;
+    set_ptz(px, py, it->brightness);
+    web_rotation_x = it->web_rotation_x;
+    web_rotation_y = it->web_rotation_y;
+    set_zoom_and_focus(it->zoom, it->focus);
+
+    auto wait_start = std::chrono::steady_clock::now();
+    while (!posture_completed && !stop_requested.load() &&
+           std::chrono::duration_cast<std::chrono::seconds>(
+               std::chrono::steady_clock::now() - wait_start).count() < 30) {
+        interruptible_sleep_ms(200);
+    }
+    if (stop_requested.load()) {
+        finish_patrolling();
+        return 2;
+    }
+    if (!posture_completed) {
+        finish_patrolling();
+        return 1;
+    }
+
+    on_arrived_at_point();
+    if (!interruptible_sleep_ms(800)) {
+        set_brighten(0);
+        on_leaving_point();
+        finish_patrolling();
+        return 2;
+    }
+
+    long long phase = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    phase_ready_ms.store(phase);
+    frame_should_capture.store(1); // L0 抓拍
+    light_phase_changed = false;
+    WTALOGI("摄像机[%d] 监视点 %d 开灯拍摄 L0", id, monitor_point_id);
+
+    int wait_ms = 0;
+    while (frame_should_capture.load() != 0 && !stop_requested.load() && wait_ms < 5000) {
+        interruptible_sleep_ms(50);
+        wait_ms += 50;
+    }
+
+    if (stop_requested.load()) {
+        set_brighten(0);
+        on_leaving_point();
+        finish_patrolling();
+        return 2;
+    }
+
+    // 持续监视，直到同伴巡检完成
+    while (!peer_done.load() && !stop_requested.load()) {
+        interruptible_sleep_ms(200);
+    }
+
+    set_brighten(0);
+    on_leaving_point();
+
+    // 立即处理监视点 diff（不等到下一轮巡检）
+    run_post_patrol_diff(this, false);
+
+    finish_patrolling();
+    return 0;
 }
 
 bool Camera::interruptible_sleep_ms(int ms)

@@ -121,6 +121,21 @@ public:
     std::atomic<int> frame_should_capture{0}; // 0=不拍照, 1=L0, 2=L1，由巡检线程设置
     std::set<int> photo_fired_keys; // 已拍照点位+灯光状态（key = point_id * 10 + light_flag）
 
+    // ===== 小云台组内互检/轮巡监视（仅 ptz_type == "small"） =====
+    // 互检点位：rt.json 显式指定 peer_check_point_id；未指定则按 name 含"互检"自动匹配
+    int peer_check_point_id = -1;
+    // 叶根监视点：默认 point 1，可用 monitor_point_id 覆盖
+    int monitor_point_id = 1;
+    // 互检活体检测抓拍同步（检查方在自身流上抓两帧：被检查方转动前/后）：
+    //   inspect_peer 设 state=1 抓第一帧 → draw_custom 存 peer_frame1 后置 state=2
+    //   被检查方转到随机姿态后，inspect_peer 设 state=3 抓第二帧 → draw_custom diff(帧2,帧1) 后置 state=4/result
+    std::atomic<int> peer_capture_state{0};   // 0=空闲,1=请求帧1,2=帧1完成,3=请求帧2+判定,4=完成
+    std::atomic<long long> peer_capture_phase{0};
+    int peer_capture_result = 0;              // 0=未判, 1=正常(检出运动), 2=异常(无运动)
+    cv::Mat peer_frame1;                      // 检查方抓到的第一帧（仅 draw_custom 线程读写）
+    std::mutex peer_capture_mtx;
+    std::condition_variable peer_capture_cv;
+
     // 每相位 diff 推理门控决策：key = point_id * 10 + light_flag，值：1=有变化需推理, 0=与基线一致可跳过。
     // 每个(点位,灯光)相位只计算一次 diff 并缓存，避免每帧重复 diff；巡检开始时清空。
     std::map<int,int> phase_infer_decision;
@@ -217,6 +232,15 @@ public:
     void enqueue_diff_task(int point_id, int light_flag, const cv::Mat& raw_image, const std::string& display_path);
     // 取走并清空当前队列；由 patrol_with_calibration_loop 末尾的批量处理消费
     std::vector<PendingDiffTask> drain_diff_queue();
+
+    // 小云台组内互检/监视接口（仅 ptz_type == "small" 时启用）
+    int find_peer_check_point_id() const;
+    // 活体互检：this 为检查方，checked 为被检查方。检查方转到互检点，抓第一帧后令被检查方
+    // 转到随机姿态，再抓第二帧并 diff；检出运动=正常返回 0，无运动=异常返回非 0。
+    int inspect_peer(Camera* checked, time_t start_time);
+    // 被检查方转到随机 xy/亮度姿态（供检查方观察其是否响应）
+    int move_to_random_posture();
+    int monitor_at_point(const std::atomic<bool>& peer_done, time_t start_time);
 
 private:
     int id;
