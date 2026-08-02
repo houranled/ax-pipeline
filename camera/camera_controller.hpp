@@ -9,6 +9,8 @@
 #include <mutex>
 #include <atomic>
 #include <condition_variable>
+#include <future>
+#include <memory>
 #include <ctime>
 #include <sys/stat.h>
 #include "../alarm/alarm.hpp"
@@ -126,15 +128,16 @@ public:
     int peer_check_point_id = -1;
     // 叶根监视点：默认 point 1，可用 monitor_point_id 覆盖
     int monitor_point_id = 1;
-    // 互检活体检测抓拍同步（检查方在自身流上抓两帧：被检查方转动前/后）：
-    //   inspect_peer 设 state=1 抓第一帧 → draw_custom 存 peer_frame1 后置 state=2
-    //   被检查方转到随机姿态后，inspect_peer 设 state=3 抓第二帧 → draw_custom diff(帧2,帧1) 后置 state=4/result
-    std::atomic<int> peer_capture_state{0};   // 0=空闲,1=请求帧1,2=帧1完成,3=请求帧2+判定,4=完成
-    std::atomic<long long> peer_capture_phase{0};
-    int peer_capture_result = 0;              // 0=未判, 1=正常(检出运动), 2=异常(无运动)
-    cv::Mat peer_frame1;                      // 检查方抓到的第一帧（仅 draw_custom 线程读写）
-    std::mutex peer_capture_mtx;
-    std::condition_variable peer_capture_cv;
+    // 互检活体检测抓拍：inspect_peer(巡检线程)向渲染线程投递一个抓拍任务并等待其 future，
+    // draw_custom(渲染线程)每帧检查是否有待处理任务、相位匹配后执行并 set_value 回传结果。
+    struct PeerCaptureTask {
+        int              kind = 0;   // 1=抓第一帧(转动前), 3=抓第二帧并 diff(转动后)
+        long long        phase = 0;  // 期望的相位时间戳(需与 m_cached_phase_ms 一致)
+        std::promise<int> prom;      // 结果回传：kind=1 返回 0；kind=3 返回 1=正常(有运动)/2=异常(无运动)
+    };
+    std::mutex peer_task_mtx;
+    std::shared_ptr<PeerCaptureTask> peer_task; // 当前待处理任务(空表示无)
+    cv::Mat peer_frame1;                        // 检查方抓到的第一帧（仅 draw_custom 线程读写）
 
     // 每相位 diff 推理门控决策：key = point_id * 10 + light_flag，值：1=有变化需推理, 0=与基线一致可跳过。
     // 每个(点位,灯光)相位只计算一次 diff 并缓存，避免每帧重复 diff；巡检开始时清空。

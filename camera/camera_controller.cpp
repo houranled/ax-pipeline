@@ -1889,6 +1889,16 @@ int Camera::inspect_peer(Camera* checked, time_t start_time)
     patrol_start_time = start_time;
     prepare_snapshot_dir();
 
+    // 定义匿名函数: 互检结束/中断时统一复位状态
+    auto reset_peer = [this]() {
+        {
+            std::lock_guard<std::mutex> lk(peer_task_mtx);
+            peer_task.reset();
+        }
+        phase_ready_ms.store(0);
+        now_point_id = 0;
+    };
+
     // 1) 检查方转向互检点，观察被检查方
     now_point_id = point_id;
     posture_completed = false;
@@ -1910,70 +1920,78 @@ int Camera::inspect_peer(Camera* checked, time_t start_time)
                std::chrono::steady_clock::now() - wait_start).count() < 30) {
         interruptible_sleep_ms(200);
     }
-    if (stop_requested.load()) { now_point_id = 0; return 2; }
+    if (stop_requested.load()) { reset_peer(); return 2; }
     if (!posture_completed) {
         WTALOGI("摄像机[%d] 互检转点超时", id);
-        now_point_id = 0;
+        reset_peer();
         return 1;
     }
 
     // 2) 检查方就位后抓第一帧（被检查方转动前）
-    auto request_peer_capture = [this](int req_state, int done_state) -> bool {
-        long long phase = std::chrono::duration_cast<std::chrono::milliseconds>(
+    // 向渲染线程投递一个抓拍任务，返回该任务结果的 future。
+    auto request_peer_capture = [this](int kind) -> std::future<int> {
+        auto task = std::make_shared<PeerCaptureTask>();
+        task->kind = kind;
+        task->phase = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
+        std::future<int> fut = task->prom.get_future();
         {
-            std::lock_guard<std::mutex> lk(peer_capture_mtx);
-            peer_capture_state.store(req_state);
-            peer_capture_phase.store(phase);
+            std::lock_guard<std::mutex> lk(peer_task_mtx);
+            peer_task = task;
         }
-        phase_ready_ms.store(phase);
-        std::unique_lock<std::mutex> lk(peer_capture_mtx);
-        peer_capture_cv.wait_for(lk, std::chrono::milliseconds(10000),
-            [this, done_state]{ return peer_capture_state.load() == done_state || stop_requested.load(); });
-        return peer_capture_state.load() == done_state;
+        phase_ready_ms.store(task->phase);
+        return fut;
+    };
+    // 等待 future 就绪：每 200ms 检查 stop，最多 10s；返回值 <0 表示超时/中断
+    auto wait_capture = [this](std::future<int>& fut) -> int {
+        auto t0 = std::chrono::steady_clock::now();
+        while (true) {
+            if (stop_requested.load()) return -2;
+            if (fut.wait_for(std::chrono::milliseconds(200)) == std::future_status::ready)
+                return fut.get();
+            if (std::chrono::duration_cast<std::chrono::seconds>(
+                    std::chrono::steady_clock::now() - t0).count() >= 10)
+                return -1;
+        }
     };
 
-    if (!request_peer_capture(1, 2)) {
-        WTALOGI("摄像机[%d] 互检第一帧抓拍超时", id);
-        peer_capture_state.store(0);
-        phase_ready_ms.store(0);
-        now_point_id = 0;
-        return 1;
+    {
+        auto fut = request_peer_capture(1);
+        if (wait_capture(fut) < 0) {
+            WTALOGI("摄像机[%d] 互检第一帧抓拍超时/中断", id);
+            reset_peer();
+            return 1;
+        }
     }
 
     // 3) 令被检查方转到随机姿态
     int mret = checked->move_to_random_posture();
     if (mret == 2 || stop_requested.load()) {
-        peer_capture_state.store(0);
-        phase_ready_ms.store(0);
-        now_point_id = 0;
+        reset_peer();
         return 2;
     }
     if (mret != 0) {
         // 被检查方无法响应转动指令，直接判异常
         WTALOGI("摄像机[%d] 被检查方[%d] 未能转到随机姿态，判异常", id, checked->get_id());
-        peer_capture_state.store(0);
-        phase_ready_ms.store(0);
-        now_point_id = 0;
+        reset_peer();
         return 1;
     }
 
     // 稳定等待，确保流缓冲刷新到被检查方新姿态
-    if (!interruptible_sleep_ms(800)) { now_point_id = 0; return 2; }
+    if (!interruptible_sleep_ms(800)) { reset_peer(); return 2; }
 
     // 4) 抓第二帧并与第一帧 diff（检出运动=正常）
-    if (!request_peer_capture(3, 4)) {
-        WTALOGI("摄像机[%d] 互检第二帧抓拍超时", id);
-        peer_capture_state.store(0);
-        phase_ready_ms.store(0);
-        now_point_id = 0;
-        return 1;
+    int result;
+    {
+        auto fut = request_peer_capture(3);
+        result = wait_capture(fut);
+        if (result < 0) {
+            WTALOGI("摄像机[%d] 互检第二帧抓拍超时/中断", id);
+            reset_peer();
+            return 1;
+        }
     }
-
-    int result = peer_capture_result;
-    peer_capture_state.store(0);
-    phase_ready_ms.store(0);
-    now_point_id = 0;
+    reset_peer();
 
     if (result == 2) {
         WTALOGI("摄像机[%d] 互检：被检查方[%d] 转动前后无明显变化，疑似脱落/卡死，判异常",
