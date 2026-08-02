@@ -46,6 +46,9 @@ if [ "$(git status | grep -E "Your branch is behind|Your branch and")" != "" ]; 
 	echo "there is a new revision!"
 	sleep 2
     git reset --hard @{upstream}
+elif [ "$(git status | grep "HEAD detached")" != "" ]; then
+        echo "now is detached.."
+        sleep 2
 else
 	echo "no new revision"
 #	exit 1
