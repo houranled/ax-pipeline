@@ -7,11 +7,86 @@
 #include "../examples/utilities/sample_log.h"
 #include <unistd.h>
 #include <pthread.h>
+#include <deque>
+#include <condition_variable>
 
 // 巡检结束后的"点位前后对比"批量处理函数（实现位于 examples/libaxdl/src/ax_model_damage.cpp）
 // 这里前置声明，链接期解析。把重型 OpenCV 计算从渲染热路径移到巡检结束后统一执行。
 // update_baseline: true=标定模式更新基线，false=巡检模式不更新基线
 void run_post_patrol_diff(class Camera* cam, bool update_baseline);
+
+// ============================ 异步存图 ============================
+// 快照的 JPEG/PNG 编码与磁盘写入较重（PNG 尤甚），若在渲染线程（draw_custom）中同步执行，
+// 会在"到点位拍照"的瞬间卡住画面输出，表现为丢帧、左上角时间戳跳变。
+// 这里用单个后台线程串行消费存图任务：渲染线程只负责把图入队后立即返回。
+// FIFO 顺序保证同一路径"先拍照图、后 diff 覆盖图"的写入次序正确；析构时写完剩余任务，不丢图。
+namespace {
+struct SnapshotJob {
+    cv::Mat          image;
+    std::string      path;
+    std::vector<int> params;
+};
+
+class AsyncImageWriter {
+public:
+    static AsyncImageWriter& instance() { static AsyncImageWriter w; return w; }
+
+    void enqueue(cv::Mat image, std::string path, std::vector<int> params) {
+        {
+            std::lock_guard<std::mutex> lk(mtx_);
+            jobs_.push_back({std::move(image), std::move(path), std::move(params)});
+        }
+        cv_.notify_one();
+    }
+
+    // 阻塞直到队列清空且当前任务写完（供巡检结束后确保所有快照已落盘）
+    void flush() {
+        std::unique_lock<std::mutex> lk(mtx_);
+        done_cv_.wait(lk, [this]{ return jobs_.empty() && !busy_; });
+    }
+
+private:
+    AsyncImageWriter() : worker_([this]{ run(); }) {}
+    ~AsyncImageWriter() {
+        { std::lock_guard<std::mutex> lk(mtx_); stop_ = true; }
+        cv_.notify_all();
+        if (worker_.joinable()) worker_.join();
+    }
+
+    void run() {
+        for (;;) {
+            SnapshotJob job;
+            {
+                std::unique_lock<std::mutex> lk(mtx_);
+                cv_.wait(lk, [this]{ return stop_ || !jobs_.empty(); });
+                if (jobs_.empty()) { if (stop_) return; else continue; }
+                job = std::move(jobs_.front());
+                jobs_.pop_front();
+                busy_ = true;
+            }
+            if (!cv::imwrite(job.path, job.image, job.params)) {
+                WTALOGI("[Camera] 异步存图失败: %s", job.path.c_str());
+            }
+            {
+                std::lock_guard<std::mutex> lk(mtx_);
+                busy_ = false;
+            }
+            done_cv_.notify_all();
+        }
+    }
+
+    std::deque<SnapshotJob>  jobs_;
+    std::mutex               mtx_;
+    std::condition_variable  cv_;
+    std::condition_variable  done_cv_;
+    bool                     stop_ = false;
+    bool                     busy_ = false;
+    std::thread              worker_;
+};
+} // namespace
+
+// 供本文件巡检结束流程调用：等待所有异步快照落盘
+static void flush_pending_snapshots() { AsyncImageWriter::instance().flush(); }
 
 // 解析点位专用模型字段 pointModels：逗号分隔的模型名字符串（如 "a,b,c"），
 // 按逗号拆分并去除每项首尾空白后追加到 out（空项忽略）。
@@ -1223,10 +1298,10 @@ std::string Camera::captureSnapshot(const cv::Mat& image, int point_id, int ligh
         // JPEG 文件使用 JPEG 质量参数
         params = { cv::IMWRITE_JPEG_QUALITY, 90 };
     }
-    if (!cv::imwrite(filepath, image, params)) {
-        WTALOGI("[Camera] 点位[%d] cv::imwrite 失败: %s", now_point_id, filepath);
-        return "";
-    }
+    // 编码+写盘交给后台线程异步执行，避免阻塞渲染线程（draw_custom）造成拍照瞬间丢帧。
+    // clone 一份图交给队列，调用方随后可安全复用/释放 image。文件路径此处即确定并返回，
+    // 不依赖写盘完成；FIFO 队列保证同路径先后写入次序（拍照图 → diff 覆盖图）。
+    AsyncImageWriter::instance().enqueue(image.clone(), filepath, params);
 
     // 写回 pipeline，让 generateAlarm 拿到本张快照路径
     if (auto *pipe = get_pipeline()) {
@@ -1621,6 +1696,9 @@ END:
         WTALOGI("摄像机[%d] 被停止中断，跳过 run_post_patrol_diff 以尽快退出", id);
         drain_diff_queue(); // 仍然清空队列，避免下轮残留
     }
+
+    // 等待本轮异步快照全部落盘，保证下游（上传/展示）能读到完整文件
+    flush_pending_snapshots();
 
     return res;
 }

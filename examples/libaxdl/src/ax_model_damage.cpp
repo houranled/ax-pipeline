@@ -192,8 +192,7 @@ namespace {
     static DiffThresholds g_diff_th;
 
     // 当前帧 vs 基线帧 → 差异区域（基线坐标系）
-    static std::vector<DiffRegion> diff_against_baseline(
-        const cv::Mat& cur_bgr, const cv::Mat& base_bgr)
+    static std::vector<DiffRegion> diff_against_baseline(const cv::Mat& cur_bgr, const cv::Mat& base_bgr)
     {
         std::vector<DiffRegion> out;
         if (cur_bgr.empty() || base_bgr.empty()) return out;
@@ -972,6 +971,11 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
     // 2. 带框图（原图+叠加层）→ .png，用于展示告警
     cv::Mat raw_image;      // 不带框的原图（裁剪 letterbox 黑边后 resize）
     cv::Mat merged_image;   // 带框的合并图
+
+    // 临界区仅负责从共享缓存帧裁剪黑边并 resize 出一份独立的原图（base_resized），
+    // 随后的 cvtColor / Alpha 混合全部移出锁，避免长时间占用 m_frame_mutex
+    // 阻塞每帧刷新缓存的 cache_source_frame（推理线程），这是"到点位拍照瞬间卡顿"的关键。
+    cv::Mat base_resized;
     {
         std::lock_guard<std::mutex> lk(m_frame_mutex);
         if (!m_cached_frame_bgr.empty()) {
@@ -994,38 +998,37 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
             valid_roi &= cv::Rect(0, 0, src_w, src_h); // 确保不越界
             cv::Mat cropped = m_cached_frame_bgr(valid_roi);
 
-            // resize 到与 overlay (IVPS) 相同尺寸
-            cv::Mat base_resized;
+            // resize 到与 overlay (IVPS) 相同尺寸（resize 输出为独立内存，锁外可安全使用）
             cv::resize(cropped, base_resized, cv::Size(image.cols, image.rows));
-            raw_image = base_resized.clone();
-
-            // 将 resize 后的原图转换为 BGRA（4通道）
-            cv::Mat base_bgra;
-            cv::cvtColor(base_resized, base_bgra, cv::COLOR_BGR2BGRA);
-
-            // Alpha 混合：将 RGBA 叠加层合并到原图上
-            cv::Mat overlay_bgra;
-            cv::cvtColor(image, overlay_bgra, cv::COLOR_RGBA2BGRA);
-
-            // 逐像素 Alpha 混合
-            merged_image = base_bgra.clone();
-            for (int y = 0; y < merged_image.rows; ++y) {
-                for (int x = 0; x < merged_image.cols; ++x) {
-                    cv::Vec4b& dst = merged_image.at<cv::Vec4b>(y, x);
-                    const cv::Vec4b& src = overlay_bgra.at<cv::Vec4b>(y, x);
-                    float alpha = src[3] / 255.0f;
-                    if (alpha > 0.01f) {
-                        dst[0] = cv::saturate_cast<uchar>(src[0] * alpha + dst[0] * (1 - alpha));
-                        dst[1] = cv::saturate_cast<uchar>(src[1] * alpha + dst[1] * (1 - alpha));
-                        dst[2] = cv::saturate_cast<uchar>(src[2] * alpha + dst[2] * (1 - alpha));
-                    }
-                }
-            }
-            cv::cvtColor(merged_image, merged_image, cv::COLOR_BGRA2BGR);
-        } else {
-            cv::cvtColor(image, raw_image, cv::COLOR_RGBA2BGR);
-            merged_image = raw_image.clone();
         }
+    }
+
+    if (!base_resized.empty()) {
+        raw_image = base_resized; // resize 输出已是独立数据
+
+        // 将 RGBA 叠加层拆出 BGR 与 alpha 通道
+        cv::Mat overlay_bgra;
+        cv::cvtColor(image, overlay_bgra, cv::COLOR_RGBA2BGRA);
+        std::vector<cv::Mat> ch;
+        cv::split(overlay_bgra, ch); // ch[0..2]=BGR, ch[3]=alpha
+
+        cv::Mat alpha1;
+        ch[3].convertTo(alpha1, CV_32FC1, 1.0 / 255.0); // 归一化 alpha ∈ [0,1]
+        cv::Mat alpha3;
+        cv::Mat alphas[] = { alpha1, alpha1, alpha1 };
+        cv::merge(alphas, 3, alpha3);
+
+        cv::Mat overlay_bgr, overlay_f, base_f;
+        cv::merge(std::vector<cv::Mat>{ ch[0], ch[1], ch[2] }, overlay_bgr);
+        overlay_bgr.convertTo(overlay_f, CV_32FC3);
+        base_resized.convertTo(base_f, CV_32FC3);
+
+        // out = overlay*alpha + base*(1-alpha)，向量化替代逐像素循环（快 1~2 个数量级）
+        cv::Mat out_f = overlay_f.mul(alpha3) + base_f.mul(cv::Scalar::all(1.0) - alpha3);
+        out_f.convertTo(merged_image, CV_8UC3);
+    } else {
+        cv::cvtColor(image, raw_image, cv::COLOR_RGBA2BGR);
+        merged_image = raw_image.clone();
     }
 
     // ★ 差异 diff 与模型并行：此处只处理模型检测结果与告警；
@@ -1137,8 +1140,7 @@ void run_post_patrol_diff(Camera* cam, bool update_baseline)
         }
         const cv::Mat& raw_bgr = t.raw_image;
 
-        std::string base_path = make_baseline_path(cam->orga_name, cam->getName(),
-                                                   t.point_id, t.light_flag);
+        std::string base_path = make_baseline_path(cam->orga_name, cam->getName(), t.point_id, t.light_flag);
         bool base_exists = (access(base_path.c_str(), 0) == 0);
 
         // ★ 巡检模式且已有基线 → 统一 diff 比对，检出差异则单独告警（与模型告警并列）
@@ -1174,8 +1176,8 @@ void run_post_patrol_diff(Camera* cam, bool update_baseline)
                         cv::polylines(show, poly, true, cv::Scalar(0, 255, 255), 2);
                         char lbl[64];
                         snprintf(lbl, sizeof(lbl), "diff %.2f", r.score);
-                        cv::putText(show, lbl, cv::Point(b.x, std::max(0, b.y - 4)),
-                                    cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 255), 1);
+                        cv::putText(show, lbl, cv::Point(b.x, std::max(0, b.y - 4)), cv::FONT_HERSHEY_SIMPLEX,
+                                    0.5, cv::Scalar(0, 255, 255), 1);
                     }
                     // 覆盖保存展示图并写回 pic_filename（captureSnapshot 命名与 display_path 一致）
                     cam->captureSnapshot(show, t.point_id, t.light_flag);
