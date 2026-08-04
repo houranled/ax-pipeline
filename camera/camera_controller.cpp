@@ -615,9 +615,9 @@ int CameraController::all_cameras_patrol()
 
     // 大云台并行巡检
     std::vector<std::future<int>> big_futures;
-    for (auto* cam : big_cams) {
-        big_futures.push_back(std::async(std::launch::async, [cam, unified_start]() {
-            return cam->patrol_with_calibration_loop(false, unified_start);
+    for (auto* big_cam : big_cams) {
+        big_futures.push_back(std::async(std::launch::async, [big_cam, unified_start]() {
+            return big_cam->patrol_with_calibration_loop(false, unified_start);
         }));
     }
 
@@ -681,9 +681,9 @@ int CameraController::all_cameras_patrol()
 
     // 若小云台数量为奇数，最后一台单独按普通巡检处理
     if (small_cams.size() % 2 == 1) {
-        Camera* last = small_cams.back();
-        big_futures.push_back(std::async(std::launch::async, [last, unified_start]() {
-            return last->patrol_with_calibration_loop(false, unified_start);
+        Camera* last_single = small_cams.back();
+        big_futures.push_back(std::async(std::launch::async, [last_single, unified_start]() {
+            return last_single->patrol_with_calibration_loop(false, unified_start);
         }));
     }
 
@@ -795,10 +795,7 @@ int CameraController::load_config_from_file(const std::string& config_file_path)
                     camera->ptz_type = config["ptz_type"];
                 }
 
-                // 小云台互检/监视点位配置
-                if (camera_config.contains("peer_check_point_id")) {
-                    camera->peer_check_point_id = std::stoi(camera_config["peer_check_point_id"].get<std::string>());
-                }
+                // 小云台监视点位配置（检视点位在下方点位循环中按 name 识别并缓存）
                 if (camera_config.contains("monitor_point_id")) {
                     camera->monitor_point_id = std::stoi(camera_config["monitor_point_id"].get<std::string>());
                 }
@@ -817,7 +814,7 @@ int CameraController::load_config_from_file(const std::string& config_file_path)
                     camera->set_camera_rtsp_url(camera_rtsp_url);
                 }
 
-                // 从配置文件中读取并加载点位列表
+                // 从配置文件中读取并加载点位列表：预置点位（巡检用）+ 检视点位（互检用）
                 if (camera_config.contains("points") && camera_config["points"].is_array()) {
                     std::vector<Camera::PresetPosition> preset_positions;
                     for (const auto& point : camera_config["points"]) {
@@ -835,7 +832,15 @@ int CameraController::load_config_from_file(const std::string& config_file_path)
                         if (point.contains("pointModels") && point["pointModels"].is_string()) {
                             parse_point_models(point["pointModels"].get<std::string>(), pos.models);
                         }
-                        camera->add_preset_position(pos); // 设置点位信息
+
+                        // 区分预置点位与检视点位：检视点位直接缓存到 peer_point，不加入 preset_positions
+                        if (pos.name == PEERPOINTNAME) {
+                            camera->clamp_preset_y(pos);
+                            camera->peer_point = pos;
+                            WTALOGI("相机[id:%d] 检视点位已加载: id=%d", camera->id, pos.id);
+                        } else {
+                            camera->add_preset_position(pos); // 预置巡检点位
+                        }
                     }
                 }
 
@@ -882,15 +887,14 @@ int CameraController::reload_config()
         config_file >> config;
 
         // 全局字段：告警冷却时间
-        if (config.contains("cooldown")) {
+        if (config.contains("cooldown"))
             alarm_manager.cooldown = config["cooldown"];
-        }
 
         // 全局字段：风场名称
         std::string orga_name = "";
-        if (config.contains("org_name")) {
+        if (config.contains("org_name"))
             orga_name = config["org_name"];
-        }
+
 
         if (!config.contains("chl_list") || !config["chl_list"].is_array()) {
             WTALOGI("热加载: chl_list 不存在或非数组");
@@ -901,9 +905,8 @@ int CameraController::reload_config()
         for (const auto& camera_config : config["chl_list"]) {
             auto type = camera_config["type"];
             auto enable = camera_config["enable"];
-            if (type != "Webcam" || enable != "1") {
+            if (type != "Webcam" || enable != "1")
                 continue;
-            }
 
             int cam_id = std::stoi(camera_config["id"].get<std::string>());
             auto it = cameras.find(cam_id);
@@ -922,23 +925,25 @@ int CameraController::reload_config()
             // 更新基础字段
             camera->name = camera_config["name"];
             camera->orga_name = orga_name;
-            if (camera_config.contains("ptz_ip")) {
+            if (camera_config.contains("ptz_ip"))
                 camera->ptz_ip = camera_config["ptz_ip"];
-            }
-            if (config.contains("ptz_type")) {
+
+            if (config.contains("ptz_type"))
                 camera->ptz_type = config["ptz_type"];
-            }
+
 
             // 检测 IP 变化（本方案不重连 RTSP，仅记录日志提示）
             if (camera_config.contains("ip")) {
                 std::string new_ip = camera_config["ip"];
                 if (new_ip != camera->ip) {
                     WTALOGI("热加载: 相机[%d] IP 变化 %s -> %s，需要重启生效",
-                            cam_id, camera->ip.c_str(), new_ip.c_str());
+                                cam_id, camera->ip.c_str(), new_ip.c_str());
                 }
             }
 
-            // 重建点位列表
+            // 重建点位列表：预置点位（巡检用）+ 检视点位（互检用）
+            // 先清空检视点，随点位重建时再按新配置重新设置，避免残留上一次的旧检视点
+            camera->peer_point = Camera::PresetPosition{}; // id 默认 -1，表示暂无检视点
             std::vector<Camera::PresetPosition> new_positions;
             if (camera_config.contains("points") && camera_config["points"].is_array()) {
                 for (const auto& point : camera_config["points"]) {
@@ -953,11 +958,18 @@ int CameraController::reload_config()
                     pos.focus = point["focus"];
                     pos.brightness = point["brightness"];
                     // 该点位专用模型（可选）：pointModels 为逗号分隔的模型名字符串，在通用模型之上额外叠加
-                    if (point.contains("pointModels") && point["pointModels"].is_string()) {
+                    if (point.contains("pointModels") && point["pointModels"].is_string())
                         parse_point_models(point["pointModels"].get<std::string>(), pos.models);
-                    }
+
                     camera->clamp_preset_y(pos);
-                    new_positions.push_back(pos);
+
+                    // 区分预置点位与检视点位：检视点位直接缓存到 peer_point，不加入 preset_positions
+                    if (pos.name == PEERPOINTNAME) {
+                        camera->peer_point = pos;
+                        WTALOGI("热加载: 相机[%d] 检视点位已更新: id=%d", cam_id, pos.id);
+                    } else {
+                        new_positions.push_back(pos);
+                    }
                 }
             }
             camera->preset_positions = std::move(new_positions);
@@ -1296,9 +1308,10 @@ void Camera::clamp_preset_y(Camera::PresetPosition& pos) const
 
 int Camera::add_preset_position(Camera::PresetPosition pos)
 {
+    // 检视点位已在配置加载时单独处理并缓存到 peer_point，不应调用此函数
     clamp_preset_y(pos);
     this->preset_positions.push_back(pos);
-    return 0;
+    return this->preset_positions.size();
 }
 
 void Camera::setPipe(pipeline_t * pipe)
@@ -1815,15 +1828,6 @@ END:
     return res;
 }
 
-int Camera::find_peer_check_point_id() const
-{
-    if (peer_check_point_id > 0) return peer_check_point_id;
-    for (const auto& p : preset_positions) {
-        if (p.name.find("互检") != std::string::npos) return p.id;
-    }
-    return -1;
-}
-
 int Camera::move_to_random_posture()
 {
     if (modbus_ctx == nullptr) {
@@ -1872,17 +1876,13 @@ int Camera::inspect_peer(Camera* checked, time_t start_time)
     }
     if (checked == nullptr) return 1;
 
-    int point_id = find_peer_check_point_id();
-    if (point_id < 0) {
-        WTALOGI("摄像机[%d] 未配置互检点（peer_check_point_id 或 name 含'互检'）", id);
+    // peer_point 已在配置加载/热加载时解析并缓存，此处直接使用；id<0 表示未配置检视点
+    if (peer_point.id < 0) {
+        WTALOGI("摄像机[%d] 未配置有效互检点（需在配置中提供 name 为\"检视点位\"的点位）", id);
         return 1;
     }
-    auto it = std::find_if(preset_positions.begin(), preset_positions.end(),
-                           [point_id](const PresetPosition& p){ return p.id == point_id; });
-    if (it == preset_positions.end()) {
-        WTALOGI("摄像机[%d] 互检点 %d 不在预置点位列表中", id, point_id);
-        return 1;
-    }
+    int point_id = peer_point.id;
+    const PresetPosition& pp = peer_point; // 缓存的完整互检点信息
 
     // 初始化本轮时间/目录，captureSnapshot 需要
     stop_requested.store(false);
@@ -1906,12 +1906,12 @@ int Camera::inspect_peer(Camera* checked, time_t start_time)
     frame_should_capture.store(0);
     photo_fired_keys.clear();
     {
-        auto px = (360 + it->web_rotation_x) % 360 * 100;
-        auto py = (360 + it->web_rotation_y) % 360 * 100;
-        set_ptz(px, py, it->brightness);
-        web_rotation_x = it->web_rotation_x;
-        web_rotation_y = it->web_rotation_y;
-        set_zoom_and_focus(it->zoom, it->focus);
+        auto px = (360 + pp.web_rotation_x) % 360 * 100;
+        auto py = (360 + pp.web_rotation_y) % 360 * 100;
+        set_ptz(px, py, pp.brightness);
+        web_rotation_x = pp.web_rotation_x;
+        web_rotation_y = pp.web_rotation_y;
+        set_zoom_and_focus(pp.zoom, pp.focus);
     }
 
     auto wait_start = std::chrono::steady_clock::now();
@@ -1929,9 +1929,10 @@ int Camera::inspect_peer(Camera* checked, time_t start_time)
 
     // 2) 检查方就位后抓第一帧（被检查方转动前）
     // 向渲染线程投递一个抓拍任务，返回该任务结果的 future。
-    auto request_peer_capture = [this](int kind) -> std::future<int> {
+    auto request_peer_capture = [this, point_id](int kind) -> std::future<int> {
         auto task = std::make_shared<PeerCaptureTask>();
         task->kind = kind;
+        task->point_id = point_id; // 携带互检点号，渲染线程无需再查
         task->phase = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
         std::future<int> fut = task->prom.get_future();

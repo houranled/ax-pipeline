@@ -90,6 +90,8 @@ class Camera {
     friend CameraController;  // 允许CameraController类访问Camera类的私有成员
     friend AlarmManager;      // 允许AlarmManager类访问Camera类的私有成员
 
+    #define PEERPOINTNAME "检视点位"
+
 public:
     enum class VideoPathType {
         PERSON,       // 人物识别视频路径
@@ -98,7 +100,7 @@ public:
     };
 
     struct PresetPosition {
-        int id;
+        int id = -1;
         std::string name;
         int distance;
         int duration; // 时间间隔
@@ -124,16 +126,20 @@ public:
     std::set<int> photo_fired_keys; // 已拍照点位+灯光状态（key = point_id * 10 + light_flag）
 
     // ===== 小云台组内互检/轮巡监视（仅 ptz_type == "small"） =====
-    // 互检点位：rt.json 显式指定 peer_check_point_id；未指定则按 name 含"互检"自动匹配
-    int peer_check_point_id = -1;
+    // 检视点位：配置加载/热加载时 name 为"检视点位"的点位直接缓存到 peer_point，供互检使用；
+    //           id<0 表示该相机未配置检视点位。
+    PresetPosition peer_point;
+
     // 叶根监视点：默认 point 1，可用 monitor_point_id 覆盖
     int monitor_point_id = 1;
+
     // 互检活体检测抓拍：inspect_peer(巡检线程)向渲染线程投递一个抓拍任务并等待其 future，
     // draw_custom(渲染线程)每帧检查是否有待处理任务、相位匹配后执行并 set_value 回传结果。
     struct PeerCaptureTask {
-        int              kind = 0;   // 1=抓第一帧(转动前), 3=抓第二帧并 diff(转动后)
-        long long        phase = 0;  // 期望的相位时间戳(需与 m_cached_phase_ms 一致)
-        std::promise<int> prom;      // 结果回传：kind=1 返回 0；kind=3 返回 1=正常(有运动)/2=异常(无运动)
+        int              kind = 0;     // 1=抓第一帧(转动前), 3=抓第二帧并 diff(转动后)
+        int              point_id = 0; // 互检点号，用于快照/告警归档命名(由 inspect_peer 填入)
+        long long        phase = 0;    // 期望的相位时间戳(需与 m_cached_phase_ms 一致)
+        std::promise<int> prom;        // 结果回传：kind=1 返回 0；kind=3 返回 1=正常(有运动)/2=异常(无运动)
     };
     std::mutex peer_task_mtx;
     std::shared_ptr<PeerCaptureTask> peer_task; // 当前待处理任务(空表示无)
@@ -237,7 +243,6 @@ public:
     std::vector<PendingDiffTask> drain_diff_queue();
 
     // 小云台组内互检/监视接口（仅 ptz_type == "small" 时启用）
-    int find_peer_check_point_id() const;
     // 活体互检：this 为检查方，checked 为被检查方。检查方转到互检点，抓第一帧后令被检查方
     // 转到随机姿态，再抓第二帧并 diff；检出运动=正常返回 0，无运动=异常返回非 0。
     int inspect_peer(Camera* checked, time_t start_time);
