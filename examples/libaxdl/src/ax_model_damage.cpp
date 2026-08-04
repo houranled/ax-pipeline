@@ -896,7 +896,7 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
                     cv::resize(cropped, raw_bgr, cv::Size(image.cols, image.rows));
                 }
 
-                int peer_point = cam->find_peer_check_point_id();
+                int peer_point = task->point_id; // 互检点号随任务传入，无需在渲染线程重新查询
 
                 if (task->kind == 1) {
                     // 第一帧：被检查方转动前，仅缓存
