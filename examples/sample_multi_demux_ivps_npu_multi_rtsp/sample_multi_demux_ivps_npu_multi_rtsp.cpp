@@ -591,7 +591,8 @@ static bool damage_spawn_writer_locked(pipeline_t* pipe, std::vector<std::vector
     args->frames = std::move(frames);
     strncpy(args->filename, filename, sizeof(args->filename) - 1);
     args->filename[sizeof(args->filename) - 1] = '\0';
-    sprintf(args->ffmpeg_cmd, "ffmpeg -y -loglevel quiet -f hevc -i - -c:v copy -f mp4 %s 2>/dev/null", args->filename);
+    snprintf(args->ffmpeg_cmd, sizeof(args->ffmpeg_cmd),
+             "ffmpeg -y -loglevel quiet -f hevc -i - -c:v copy -f mp4 %s 2>/dev/null", args->filename);
 
     size_t total_frames = args->frames.size();
     WTALOGI("损伤片段触发落盘 %zu 帧 (%.2f MB) -> %s",
@@ -652,20 +653,16 @@ static void damage_finalize_clip(pipeline_t* pipe)
 }
 
 /**
- * @brief 损伤片段写入线程：与 batch_write_thread 同构，但更新 damage_writer_running。
+ * @brief 将一个损伤片段帧集合编码落盘并生成封面。不涉及任何 damage_* 共享状态，
+ *        因此无需持锁；popen 失败时直接返回跳过本片段（不写任何共享标志）。
  */
-static void* damage_writer_thread_fn(void* arg)
+static void damage_write_one_clip(std::vector<std::vector<uint8_t>>& frames,
+                                  const char* filename, const char* ffmpeg_cmd)
 {
-    writer_thread_args_t* args = (writer_thread_args_t*)arg;
-    std::vector<std::vector<uint8_t>>& frames = args->frames;
-    pipeline_t* pipe = args->pipe;
-
-    FILE* ffmpeg_pipe = popen(args->ffmpeg_cmd, "w");
+    FILE* ffmpeg_pipe = popen(ffmpeg_cmd, "w");
     if (!ffmpeg_pipe) {
-        WTALOGI("创建 ffmpeg 管道失败(损伤): %s", args->ffmpeg_cmd);
-        delete args;
-        pipe->damage_writer_running = false;
-        return NULL;
+        WTALOGI("创建 ffmpeg 管道失败(损伤): %s", ffmpeg_cmd);
+        return;
     }
 
     size_t total_written = 0;
@@ -686,21 +683,43 @@ static void* damage_writer_thread_fn(void* arg)
     WTALOGI("损伤片段写入完成: %zu 帧, %zu 字节", frame_count, total_written);
 
     // 生成首帧封面图
-    generate_video_cover(frames, args->filename);
+    generate_video_cover(frames, filename);
+}
 
+/**
+ * @brief 损伤片段写入线程：处理首个任务后，在本线程内串行消费待写队列直至清空。
+ *        全程不 detach、不覆盖线程句柄，保证 cleanup_damage_buffer 可安全 join，
+ *        避免旧实现中 "detach 自身 + 新线程覆盖句柄" 导致的 join 未定义行为。
+ *        damage_writer_running 仅在持有 damage_mutex 时修改。
+ */
+static void* damage_writer_thread_fn(void* arg)
+{
+    writer_thread_args_t* args = (writer_thread_args_t*)arg;
+    pipeline_t* pipe = args->pipe;
+
+    // 首个任务（由 damage_spawn_writer_locked 传入）
+    damage_write_one_clip(args->frames, args->filename, args->ffmpeg_cmd);
     delete args;
 
-    pthread_mutex_lock(&pipe->damage_mutex);
-    pipe->damage_writer_running = false;
-    // 链式落盘：若队列还有待写片段，取出下一个立即启动写盘。
-    // 先 detach 当前线程，避免其结束后 joinable 句柄被新线程覆盖导致资源泄漏。
-    if (!pipe->damage_pending.empty()) {
-        pthread_detach(pthread_self());
-        damage_clip_task_t task = std::move(pipe->damage_pending.front());
-        pipe->damage_pending.pop_front();
-        damage_spawn_writer_locked(pipe, std::move(task.frames), task.filename, task.total_size);
+    // 链式落盘：本线程串行取走并写完全部待写片段。
+    for (;;) {
+        damage_clip_task_t task;
+        {
+            pthread_mutex_lock(&pipe->damage_mutex);
+            if (pipe->damage_pending.empty()) {
+                pipe->damage_writer_running = false;   // 仅此处（持锁）复位
+                pthread_mutex_unlock(&pipe->damage_mutex);
+                break;
+            }
+            task = std::move(pipe->damage_pending.front());
+            pipe->damage_pending.pop_front();
+            pthread_mutex_unlock(&pipe->damage_mutex);
+        }
+        char ffmpeg_cmd[512];
+        snprintf(ffmpeg_cmd, sizeof(ffmpeg_cmd),
+                 "ffmpeg -y -loglevel quiet -f hevc -i - -c:v copy -f mp4 %s 2>/dev/null", task.filename);
+        damage_write_one_clip(task.frames, task.filename, ffmpeg_cmd);
     }
-    pthread_mutex_unlock(&pipe->damage_mutex);
     return NULL;
 }
 
@@ -711,9 +730,17 @@ void cleanup_damage_buffer(pipeline_t *pipe)
 {
     if (pipe == NULL) return;
 
-    if (pipe->damage_writer_running) {
+    // 持锁读取运行标志与线程句柄的快照，再释放锁后 join：
+    // 1) 不在持锁状态下 join，避免与写盘线程末尾的加锁复位互相死锁；
+    // 2) 线程从不 detach，故即使其在读取后瞬间结束，join 仍安全（立即返回）。
+    pthread_mutex_lock(&pipe->damage_mutex);
+    bool running = pipe->damage_writer_running;
+    pthread_t writer_th = pipe->damage_writer_thread;
+    pthread_mutex_unlock(&pipe->damage_mutex);
+
+    if (running) {
         ALOGI("等待损伤片段写入线程完成...");
-        pthread_join(pipe->damage_writer_thread, NULL);
+        pthread_join(writer_th, NULL);
     }
 
     pthread_mutex_lock(&pipe->damage_mutex);

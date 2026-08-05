@@ -29,14 +29,26 @@ struct SnapshotJob {
 
 class AsyncImageWriter {
 public:
-    static AsyncImageWriter& instance() { static AsyncImageWriter w; return w; }
+    static AsyncImageWriter& instance() {
+        // 单例永不析构。同时避免 std::thread 在 joinable 状态被析构
+        // 触发 std::terminate。进程退出时后台线程由 OS 回收。
+        static AsyncImageWriter* w = new AsyncImageWriter();
+        return *w;
+    }
 
     void enqueue(cv::Mat image, std::string path, std::vector<int> params) {
         {
             std::lock_guard<std::mutex> lk(mtx_);
-            jobs_.push_back({std::move(image), std::move(path), std::move(params)});
+            if (!stop_) {
+                jobs_.push_back({std::move(image), std::move(path), std::move(params)});
+                cv_.notify_one();
+                return;
+            }
         }
-        cv_.notify_one();
+        // 已停机：退化为同步落盘，避免丢图（此路径极少触发）
+        if (!cv::imwrite(path, image, params)) {
+            WTALOGI("[Camera] 同步存图失败: %s", path.c_str());
+        }
     }
 
     // 阻塞直到队列清空且当前任务写完（供巡检结束后确保所有快照已落盘）
@@ -45,13 +57,21 @@ public:
         done_cv_.wait(lk, [this]{ return jobs_.empty() && !busy_; });
     }
 
-private:
-    AsyncImageWriter() : worker_([this]{ run(); }) {}
-    ~AsyncImageWriter() {
-        { std::lock_guard<std::mutex> lk(mtx_); stop_ = true; }
+    // 写完剩余任务后停止后台线程（幂等）。供进程退出前显式调用。
+    void shutdown() {
+        {
+            std::unique_lock<std::mutex> lk(mtx_);
+            if (stop_) return;
+            done_cv_.wait(lk, [this]{ return jobs_.empty() && !busy_; });
+            stop_ = true;
+        }
         cv_.notify_all();
         if (worker_.joinable()) worker_.join();
     }
+
+private:
+    AsyncImageWriter() : worker_([this]{ run(); }) {}
+    ~AsyncImageWriter() = default;  // 对象被泄漏，析构不会执行；停机请显式调用 shutdown()
 
     void run() {
         for (;;) {
@@ -1369,7 +1389,7 @@ std::string Camera::generateCustomVideoPath(VideoPathType type= VideoPathType::V
     tm *t = &tmbuf;
 
     char dateStr[16] = {0};
-    sprintf(dateStr, "%04d%02d%02d", t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
+    snprintf(dateStr, sizeof(dateStr), "%04d%02d%02d", t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
 
     // 生成目录路径
     std::string dirname;
@@ -1382,28 +1402,28 @@ std::string Camera::generateCustomVideoPath(VideoPathType type= VideoPathType::V
         dirname = base_path;
 
         // 生成文件名 - 增加到秒级
-        sprintf(filename, "%s/%s-%d-%02d-%02d_%02d%02d%02d.mp4", dirname.c_str(), name.c_str(),
+        snprintf(filename, sizeof(filename), "%s/%s-%d-%02d-%02d_%02d%02d%02d.mp4", dirname.c_str(), name.c_str(),
             t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
 
     } else if (type == VideoPathType::DAMAGE_CLIP) {
         // 损伤片段视频：按 风场/年月日/小时/damage 分目录，文件名与快照前缀一致（不带开关灯标识）
         base_path = "/wt_tech/data/";
         char hourMinStr[8] = {0};
-        sprintf(hourMinStr, "%02d%02d", t->tm_hour, t->tm_min);
+        snprintf(hourMinStr, sizeof(hourMinStr), "%02d%02d", t->tm_hour, t->tm_min);
         dirname = base_path + orga_name.c_str() + "/" + std::string(dateStr) + "/" + std::string(dateStr) + "_"
             + hourMinStr + "/damage";
 
-        sprintf(filename, "%s/%s_%02d%02d_%s_%s_%d.mp4", dirname.c_str(),
+        snprintf(filename, sizeof(filename), "%s/%s_%02d%02d_%s_%s_%d.mp4", dirname.c_str(),
             dateStr, t->tm_hour, t->tm_min, orga_name.c_str(), name.c_str(), now_point_id);
     } else {
         base_path = "/wt_tech/data/";
         char hourMinStr[8] = {0};
-        sprintf(hourMinStr, "%02d%02d", t->tm_hour, t->tm_min);
+        snprintf(hourMinStr, sizeof(hourMinStr), "%02d%02d", t->tm_hour, t->tm_min);
         dirname = base_path + orga_name.c_str() + "/" + std::string(dateStr) + "/" + std::string(dateStr) + "_"
             + hourMinStr + "/video";
 
         // 生成文件名
-        sprintf(filename, "%s/%d-%02d-%02d_%02d%02d_%s_%s.mp4", dirname.c_str(), t->tm_year + 1900,
+        snprintf(filename, sizeof(filename), "%s/%d-%02d-%02d_%02d%02d_%s_%s.mp4", dirname.c_str(), t->tm_year + 1900,
             t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, orga_name.c_str(), name.c_str());
     }
 
@@ -1413,11 +1433,10 @@ std::string Camera::generateCustomVideoPath(VideoPathType type= VideoPathType::V
         m_pipeline->video_filename[sizeof(m_pipeline->video_filename)-1] = '\0';
     }
 
-    // 创建目录
+    // 创建目录（用 std::string 拼接命令，避免长路径被固定缓冲截断）
     if (access(dirname.c_str(), 0) != 0) {
-        char cmd[256] = {0};
-        sprintf(cmd, "mkdir -p %s", dirname.c_str());
-        system(cmd);
+        std::string cmd = "mkdir -p " + dirname;
+        system(cmd.c_str());
     }
 
     return filename;
