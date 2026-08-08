@@ -16,6 +16,37 @@
 
 // ---------- 点位前后对比（同光照↔同光照）小工具 ----------
 namespace {
+    // 将 BGRA 文字位图 bmp 以 (x,y) 为左上角 alpha 合成到 dst 上（dst 可为 BGR 或 BGRA）。
+    // 合成前先绘制白色不透明底框，保持"白底深色字"的可读性（与旧英文标签观感一致）。
+    static void draw_label_bmp(cv::Mat& dst, const cv::Mat& bmp, int x, int y)
+    {
+        if (bmp.empty() || dst.empty()) return;
+        if (x < 0) x = 0;
+        if (y < 0) y = 0;
+        int w = std::min(bmp.cols, dst.cols - x);
+        int h = std::min(bmp.rows, dst.rows - y);
+        if (w <= 0 || h <= 0) return;
+
+        const int ch = dst.channels(); // 3=BGR, 4=BGRA
+        // 白色底框
+        cv::rectangle(dst, cv::Rect(x, y, w, h),
+                      ch == 4 ? cv::Scalar(255, 255, 255, 255) : cv::Scalar(255, 255, 255), -1);
+
+        for (int j = 0; j < h; ++j) {
+            const cv::Vec4b* src = bmp.ptr<cv::Vec4b>(j);
+            uint8_t* drow = dst.ptr<uint8_t>(y + j) + (size_t)x * ch;
+            for (int i = 0; i < w; ++i) {
+                uint8_t a = src[i][3];
+                if (!a) continue;
+                float fa = a / 255.f;
+                uint8_t* p = drow + (size_t)i * ch;
+                for (int c = 0; c < 3; ++c)
+                    p[c] = cv::saturate_cast<uint8_t>(src[i][c] * fa + p[c] * (1 - fa));
+                if (ch == 4) p[3] = std::max(p[3], a);
+            }
+        }
+    }
+
     // 基线图永久路径：/wt_tech/conf/baseline/<orga>/<camera>/point<id>_L<flag>.png
     static std::string make_baseline_path(const std::string& orga,
                                           const std::string& cam_name,
@@ -766,23 +797,34 @@ int ax_model_damage::post_process(axdl_image_t *pstFrame, axdl_bbox_t *crop_resi
     }
 }
 
-// 预览检测框：在基类绘制风格基础上，标签追加置信度（隐藏基类同名函数）。
+// 预览检测框：在基类绘制风格基础上，标签改用 FreeType 预渲染的中文损伤名位图
+// （不显示置信度；映射表缺失时回退英文原文）。隐藏基类同名函数。
 void ax_model_damage::draw_bbox(cv::Mat &image, axdl_results_t *results, float fontscale, int thickness, int offset_x, int offset_y)
 {
     int baseLine = 0;
     for (int i = 0; i < results->nObjSize; i++)
     {
         auto &o = results->mObjects[i];
-        char label_buf[128];
-        if (o.prob > 0.f)
-            snprintf(label_buf, sizeof(label_buf), "%s %.2f", o.objname, o.prob);
-        else
-            snprintf(label_buf, sizeof(label_buf), "%s", o.objname);
-        std::string label_str = label_buf;
-        if (b_track)
-            label_str += " " + std::to_string(o.track_id);
 
-        cv::Size label_size = cv::getTextSize(label_str, cv::FONT_HERSHEY_SIMPLEX, fontscale, thickness, &baseLine);
+        // 中文损伤名用 FreeType 预渲染位图；缺失映射时回退英文原文
+        cv::Mat label_bmp = getDamageLabelBmp(o.objname);
+        int label_w = label_bmp.empty() ? 0 : label_bmp.cols;
+        int label_h = label_bmp.empty() ? 0 : label_bmp.rows;
+
+        // 置信度（含 track_id）仍沿用原 cv::putText 方式绘制，紧跟中文名之后
+        char conf_buf[64] = {0};
+        if (o.prob > 0.f)
+            snprintf(conf_buf, sizeof(conf_buf), " %.2f", o.prob);
+        std::string conf_str = conf_buf;
+        if (b_track)
+            conf_str += " " + std::to_string(o.track_id);
+        cv::Size conf_size = conf_str.empty()
+            ? cv::Size(0, 0)
+            : cv::getTextSize(conf_str, cv::FONT_HERSHEY_SIMPLEX, fontscale, thickness, &baseLine);
+
+        int bar_h = std::max(label_h, conf_size.height + baseLine);
+        int total_w = label_w + conf_size.width;
+
         int x, y;
         if (o.bHasBoxVertices)
         {
@@ -792,7 +834,7 @@ void ax_model_damage::draw_bbox(cv::Mat &image, axdl_results_t *results, float f
                          cv::Point(o.bbox_vertices[(j + 1) % 4].x * image.cols + offset_x, o.bbox_vertices[(j + 1) % 4].y * image.rows + offset_y),
                          cv::Scalar(128, 0, 0, 255), thickness * 2, 8, 0);
             x = o.bbox_vertices[0].x * image.cols + offset_x;
-            y = o.bbox_vertices[0].y * image.rows + offset_y - label_size.height - baseLine;
+            y = o.bbox_vertices[0].y * image.rows + offset_y - bar_h;
         }
         else
         {
@@ -800,16 +842,26 @@ void ax_model_damage::draw_bbox(cv::Mat &image, axdl_results_t *results, float f
                           o.bbox.w * image.cols, o.bbox.h * image.rows);
             cv::rectangle(image, rect, COCO_COLORS[o.label % COCO_COLORS.size()], thickness);
             x = rect.x;
-            y = rect.y - label_size.height - baseLine;
+            y = rect.y - bar_h;
         }
 
         if (y < 0) y = 0;
-        if (x + label_size.width > image.cols) x = image.cols - label_size.width;
+        if (x + total_w > image.cols) x = image.cols - total_w;
+        if (x < 0) x = 0;
 
-        cv::rectangle(image, cv::Rect(cv::Point(x, y), cv::Size(label_size.width, label_size.height + baseLine)),
-                      cv::Scalar(255, 255, 255, 255), -1);
-        cv::putText(image, label_str, cv::Point(x, y + label_size.height), cv::FONT_HERSHEY_SIMPLEX, fontscale,
-                    cv::Scalar(0, 0, 0, 255), thickness);
+        // 中文损伤名位图（白底深色字）alpha 合成
+        if (!label_bmp.empty())
+            draw_label_bmp(image, label_bmp, x, y);
+
+        // 置信度：白底黑字，紧跟在中文名右侧，垂直居中于标签条
+        if (!conf_str.empty()) {
+            int cx = x + label_w;
+            cv::rectangle(image, cv::Rect(cx, y, conf_size.width, bar_h),
+                          cv::Scalar(255, 255, 255, 255), -1);
+            int ty = y + (bar_h + conf_size.height) / 2;
+            cv::putText(image, conf_str, cv::Point(cx, ty), cv::FONT_HERSHEY_SIMPLEX, fontscale,
+                        cv::Scalar(0, 0, 0, 255), thickness);
+        }
     }
 }
 
@@ -1047,14 +1099,36 @@ void ax_model_damage::draw_custom(cv::Mat &image, axdl_results_t *results, float
             int y2 = (int)((obj.bbox.y + obj.bbox.h) * merged_image.rows);
             cv::rectangle(merged_image, cv::Point(x1, y1), cv::Point(x2, y2), cv::Scalar(0, 0, 255), 2);
 
-            // 绘制标签
-            char label[128];
-            snprintf(label, sizeof(label), "%s %.2f", obj.objname, obj.prob);
+            // 中文损伤名用 FreeType 位图；缺失映射时回退英文原文
+            cv::Mat label_bmp = getDamageLabelBmp(obj.objname);
+            int label_w = label_bmp.empty() ? 0 : label_bmp.cols;
+            int label_h = label_bmp.empty() ? 0 : label_bmp.rows;
+
+            // 置信度仍沿用原 cv::putText 方式（红底白字），紧跟中文名之后
+            char conf_buf[32] = {0};
+            snprintf(conf_buf, sizeof(conf_buf), " %.2f", obj.prob);
+            std::string conf_str = conf_buf;
             int baseline = 0;
-            cv::Size text_size = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseline);
-            cv::rectangle(merged_image, cv::Point(x1, y1 - text_size.height - 4),
-                          cv::Point(x1 + text_size.width, y1), cv::Scalar(0, 0, 255), -1);
-            cv::putText(merged_image, label, cv::Point(x1, y1 - 2),
+            cv::Size conf_size = cv::getTextSize(conf_str, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseline);
+
+            int bar_h = std::max(label_h, conf_size.height + baseline);
+            int total_w = label_w + conf_size.width;
+
+            int ly = y1 - bar_h;
+            if (ly < 0) ly = 0;
+            int lx = x1;
+            if (lx + total_w > merged_image.cols) lx = merged_image.cols - total_w;
+            if (lx < 0) lx = 0;
+
+            if (!label_bmp.empty())
+                draw_label_bmp(merged_image, label_bmp, lx, ly);
+
+            // 置信度：红底白字，紧跟中文名右侧，垂直居中于标签条
+            int cx = lx + label_w;
+            cv::rectangle(merged_image, cv::Rect(cx, ly, conf_size.width, bar_h),
+                          cv::Scalar(0, 0, 255), -1);
+            int ty = ly + (bar_h + conf_size.height) / 2;
+            cv::putText(merged_image, conf_str, cv::Point(cx, ty),
                         cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255), 1);
         }
     }
@@ -1294,6 +1368,72 @@ cv::Mat ax_model_damage::getPointTextBmp(int point_id, bool is_moving)
     }
 
     m_point_text_bmp_cache[key] = bmp;
+    return bmp;
+}
+
+cv::Mat ax_model_damage::getDamageLabelBmp(const std::string &objname)
+{
+    // 跨实例共享：映射表（英文键->中文名）与已渲染中文位图缓存，惰性加载一次。
+    static std::mutex s_mtx;
+    static bool s_map_loaded = false;
+    static std::map<std::string, std::string> s_name_map;   // 英文键 -> 中文名
+    static std::map<std::string, cv::Mat>     s_bmp_cache;  // 英文键 -> BGRA 位图
+
+    if (objname.empty()) return cv::Mat();
+
+    std::lock_guard<std::mutex> lk(s_mtx);
+
+    // 首次调用加载映射表 /wt_tech/conf/damage_names.txt
+    if (!s_map_loaded) {
+        s_map_loaded = true;
+        std::ifstream fin("/wt_tech/conf/damage_names.txt");
+        if (fin.is_open()) {
+            std::string line;
+            while (std::getline(fin, line)) {
+                // 去除尾部回车（兼容 CRLF）
+                while (!line.empty() && (line.back() == '\r' || line.back() == '\n'))
+                    line.pop_back();
+                // 跳过空行与注释
+                size_t s = line.find_first_not_of(" \t");
+                if (s == std::string::npos || line[s] == '#') continue;
+                // 第一个空白分隔符前为英文键，之后（去首尾空白）为中文名
+                size_t sep = line.find_first_of(" \t", s);
+                if (sep == std::string::npos) continue;
+                std::string key = line.substr(s, sep - s);
+                size_t vs = line.find_first_not_of(" \t", sep);
+                if (vs == std::string::npos) continue;
+                size_t ve = line.find_last_not_of(" \t");
+                std::string val = line.substr(vs, ve - vs + 1);
+                if (!key.empty() && !val.empty()) s_name_map[key] = val;
+            }
+            WTALOGI("[FreeType] 损伤中文映射表加载完成: %zu 条", s_name_map.size());
+        } else {
+            WTALOGI("[FreeType] 未找到损伤中文映射表 /wt_tech/conf/damage_names.txt, 标签回退英文原文");
+        }
+    }
+
+    // 命中位图缓存直接返回
+    auto cit = s_bmp_cache.find(objname);
+    if (cit != s_bmp_cache.end()) return cit->second;
+
+    // 查中文名，缺失则以英文原文兜底（占位）
+    auto nit = s_name_map.find(objname);
+    const std::string& text = (nit != s_name_map.end()) ? nit->second : objname;
+
+    cv::Mat bmp;
+    auto& ft = FreeTypeOverlay::instance();
+    if (!ft.ready()) {
+        ft.init("/wt_tech/conf/simsun.ttc", 20);
+    }
+    if (ft.ready()) {
+        // 深色字（白底），关闭置信度显示，仅渲染中文名
+        bmp = ft.renderTextRGBA(text, cv::Scalar(0, 0, 0, 255), 2);
+        if (bmp.empty()) {
+            WTALOGI("[FreeType] render damage label failed: '%s'", text.c_str());
+        }
+    }
+
+    s_bmp_cache[objname] = bmp; // 即使为空也缓存，避免反复尝试
     return bmp;
 }
 
