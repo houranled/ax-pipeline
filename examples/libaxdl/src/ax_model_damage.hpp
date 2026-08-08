@@ -73,6 +73,11 @@ private:
     std::map<std::pair<int, bool>, cv::Mat> m_point_text_bmp_cache;
     cv::Mat getPointTextBmp(int point_id, bool is_moving);
 
+    // 损伤类型英文名 -> 预渲染中文标签位图（BGRA，跨实例共享缓存）。
+    // 映射表 /wt_tech/conf/damage_names.txt：每行"英文键 中文名"（空格/制表符分隔，
+    // # 开头为注释）。首次调用时惰性加载映射并按需 FreeType 渲染，缺失映射时以英文原文兜底。
+    static cv::Mat getDamageLabelBmp(const std::string &objname);
+
     friend class wt_damage_multi_model_recognize;
 };
 REGISTER(MT_DAMAGE_MODEL, ax_model_damage)
