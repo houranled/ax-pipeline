@@ -475,9 +475,9 @@ public:
                     }
                     rtspClient->closeURL();
                 }
-                ALOGW("rtsp open failed, retry %d/%d after %ds: %s",
-                      retry + 1, max_retry_on_start, reconnect_interval, url.c_str());
-                for (int i = 0; i < reconnect_interval && !gLoopExit; i++)
+
+                // 重试间隔 8秒
+                for (int i = 0; i < 8 && !gLoopExit; i++)
                 {
                     std::this_thread::sleep_for(std::chrono::seconds(1));
                 }
