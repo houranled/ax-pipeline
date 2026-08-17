@@ -1004,6 +1004,7 @@ int Camera::start()
     auto res_code = 1;
 
     auto rc = connect_modbus();  //云台连接
+    m_modbus_broken.store(!rc);  // 首次连不上也触发后台重连
 
     // 启动后台 modbus 重连线程：业务函数只置 m_modbus_broken 标志，重连由此线程异步处理
     if (!m_modbus_reconnect_thread.joinable() && !ptz_ip.empty()) {
