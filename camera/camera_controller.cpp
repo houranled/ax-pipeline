@@ -1858,47 +1858,43 @@ static size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* use
 
 int Camera::set_zoom_and_focus(int zoom, int focus)
 {
-    //调用libcurl库
-    // 构造包含缩放参数的URL
-    std::string url = "http://" + ip + "/cgi-bin/param.cgi?action=update&group=CAMPOS&channel=0";
+    const int ZOOM_MAX  = 16384;
+    const int FOCUS_MIN = 80;
+    const int FOCUS_MAX = 16384;
 
-    bool todo = false;
-    // 仅当zoom > -1时添加zoom参数
-    if (zoom > -1) {
-        url += "&CAMPOS.zoompos=" + std::to_string(zoom);
-        todo = true;
-    }
-
-    // 仅当focus > -1时添加focus参数
-    if (focus > -1) {
-        // 0~80 段不生效，统一 clamp 到 80；>=80 保持原值（避免整体 +80 顶穿上限）
-        url += "&CAMPOS.focuspos=" + std::to_string(focus < 80 ? 80 : focus);
-        todo = true;
-    }
-
-    if (!todo)
+    if (zoom < 0 && focus < 0)
         return 0;
+
+    // 目标值：-1 时沿用当前值，保持另一参数不被重置
+    int send_zoom  = (zoom  >= 0) ? zoom  : this->zoom;
+    int send_focus = (focus >= 0) ? focus : this->focus;
+
+    // 钳制到设备有效范围（依据 CAMPOS 参数表：0~16384）
+    if (send_zoom  < 0)          send_zoom  = 0;
+    if (send_zoom  > ZOOM_MAX)   send_zoom  = ZOOM_MAX;
+    if (send_focus < FOCUS_MIN)  send_focus = FOCUS_MIN;  // 0~80 段不生效
+    if (send_focus > FOCUS_MAX)  send_focus = FOCUS_MAX;
+
+    std::string url = "http://" + ip + "/cgi-bin/param.cgi?action=update&group=CAMPOS&channel=0";
+    url += "&CAMPOS.zoompos="  + std::to_string(send_zoom);
+    url += "&CAMPOS.focuspos=" + std::to_string(send_focus);
 
     WTALOGI("摄像头[%d]设置镜头url串: %s", id, url.c_str());
 
     std::lock_guard<std::mutex> curl_lk(m_curl_mtx);
-    // 设置请求URL
     curl_easy_setopt(curl_handle, CURLOPT_URL, url.c_str());
-
     curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteCallback);
 
     std::string response_data;
     curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, &response_data);
 
-    // 执行请求
     CURLcode res = curl_easy_perform(curl_handle);
-    if(res != CURLE_OK) {
+    if (res != CURLE_OK)
         return -1;
-    }
 
-    // 更新成员变量
-    if (zoom > -1) this->zoom = zoom;
-    if (focus > -1) this->focus = focus;
+    // 仅更新传入的有效值，并保存实际下发的钳制后数值
+    if (zoom  >= 0) this->zoom  = send_zoom;
+    if (focus >= 0) this->focus = send_focus;
 
     return 0;
 }
